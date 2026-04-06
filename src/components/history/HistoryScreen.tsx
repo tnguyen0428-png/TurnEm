@@ -14,10 +14,13 @@ function groupServices(services: string[]): [string, number][] {
   return Array.from(map.entries());
 }
 
-function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' {
+function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'red' {
   if (value <= 0.5) return 'green';
   if (value <= 1.0) return 'blue';
-  return 'amber';
+  if (value <= 1.5) return 'amber';
+  if (value <= 2.0) return 'orange';
+  if (value <= 2.5) return 'purple';
+  return 'red';
 }
 
 type SortMode = 'time' | 'client' | 'manicurist';
@@ -74,27 +77,20 @@ function HistoryTable({ entries, manicurists, showTurnsChart }: HistoryTableProp
     return list;
   }, [entries, sortMode, manicuristFilter]);
 
-  const totalClientsServed = entries.length;
+  const totalServicesRendered = entries.length;
   const totalTurns = entries.reduce((sum, c) => sum + c.turnValue, 0);
 
   const turnsPerManicurist = useMemo(() => {
     if (showTurnsChart) {
       return manicurists
         .filter((m) => m.clockedIn)
+        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity))
         .map((m) => ({
           name: m.name,
           turns: m.totalTurns,
           color: m.color,
           clockInTime: m.clockInTime ? formatTime(m.clockInTime) : ''
-        }))
-        .sort((a, b) => {
-          const aTime = a.clockInTime;
-          const bTime = b.clockInTime;
-          if (aTime && bTime) {
-            return aTime.localeCompare(bTime);
-          }
-          return 0;
-        });
+        }));
     }
     const map = new Map<string, { name: string; turns: number; color: string; clockInTime: string }>();
     for (const e of entries) {
@@ -110,8 +106,8 @@ function HistoryTable({ entries, manicurists, showTurnsChart }: HistoryTableProp
     <>
       <div className="grid grid-cols-2 sm:grid-cols-2 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-100 p-4 text-center">
-          <p className="font-bebas text-3xl text-gray-900">{totalClientsServed}</p>
-          <p className="font-mono text-[10px] text-gray-400 tracking-wider">CLIENTS SERVED</p>
+          <p className="font-bebas text-3xl text-gray-900">{totalServicesRendered}</p>
+          <p className="font-mono text-[10px] text-gray-400 tracking-wider">SERVICES RENDERED</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-100 p-4 text-center">
           <p className="font-bebas text-3xl text-gray-900">{totalTurns.toFixed(1)}</p>

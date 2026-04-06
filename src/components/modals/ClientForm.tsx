@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { CalendarCheck, ChevronDown, ChevronUp, Plus, X, MessageSquare } from 'lucide-react';
+import { CalendarCheck, ChevronDown, ChevronUp, X, MessageSquare } from 'lucide-react';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import type { SalonService, ServiceType, Manicurist, ServiceRequest } from '../../types';
 
@@ -67,23 +67,6 @@ export default function ClientForm({
     const value = s.requestedManicuristIds.length > 0 && s.turnValue > 0 ? 0.5 : s.turnValue;
     return sum + value;
   }, 0);
-
-  function handleAddService() {
-    const svc = sorted.find((s) => s.id === selectedServiceId);
-    if (!svc) return;
-
-    setSelectedServices((prev) => [
-      ...prev,
-      {
-        serviceId: svc.id,
-        serviceName: svc.name,
-        turnValue: svc.turnValue,
-        requestedManicuristIds: [],
-      },
-    ]);
-    setSelectedServiceId('');
-    setSelectedCategory('');
-  }
 
   function handleRemoveService(index: number) {
     setSelectedServices((prev) => prev.filter((_, i) => i !== index));
@@ -215,7 +198,21 @@ export default function ClientForm({
           <div className="flex-1">
             <select
               value={selectedServiceId}
-              onChange={(e) => setSelectedServiceId(e.target.value)}
+              onChange={(e) => {
+                const svc = sorted.find((s) => s.id === e.target.value);
+                if (!svc) return;
+                setSelectedServices((prev) => [
+                  ...prev,
+                  {
+                    serviceId: svc.id,
+                    serviceName: svc.name,
+                    turnValue: svc.turnValue,
+                    requestedManicuristIds: [],
+                  },
+                ]);
+                setSelectedServiceId('');
+                setSelectedCategory('');
+              }}
               disabled={!selectedCategory}
               className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
             >
@@ -227,14 +224,6 @@ export default function ClientForm({
               ))}
             </select>
           </div>
-          <button
-            type="button"
-            onClick={handleAddService}
-            disabled={!selectedServiceId}
-            className="px-3 py-2.5 rounded-xl bg-pink-500 text-white hover:bg-pink-600 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all flex-shrink-0"
-          >
-            <Plus size={16} />
-          </button>
         </div>
 
         {selectedServices.length === 0 ? (

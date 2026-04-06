@@ -63,8 +63,9 @@ export default function AppointmentsScreen() {
   function handleCheckIn(appt: Appointment) {
     dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'checked-in' } });
     const service = appt.service as ServiceType;
-    const turnValue = SERVICE_TURN_VALUES[service] ?? 1;
     const isRequested = !!appt.manicuristId;
+    const baseTurn = SERVICE_TURN_VALUES[service] ?? 1;
+    const turnValue = isRequested && baseTurn > 0 ? 0.5 : baseTurn;
     const serviceRequests = [{ service, manicuristIds: appt.manicuristId ? [appt.manicuristId] : [] }];
     const newClient: QueueEntry = {
       id: crypto.randomUUID(),

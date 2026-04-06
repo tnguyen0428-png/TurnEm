@@ -112,14 +112,18 @@ export function getPriorityQueue(
 ): (QueueEntry & { suggestedManicurist: Manicurist | null })[] {
   const waiting = queue.filter((c) => c.status === 'waiting');
 
+  function hasRequestedManicurist(c: QueueEntry): boolean {
+    return (c.serviceRequests || []).some(r => r.manicuristIds && r.manicuristIds.length > 0);
+  }
+
   const sorted = [...waiting].sort((a, b) => {
+    // 1. Appointments always first
     if (a.isAppointment !== b.isAppointment) return a.isAppointment ? -1 : 1;
-    const aTurnVal = getHighestServiceTurnValue(a.services, salonServices);
-    const bTurnVal = getHighestServiceTurnValue(b.services, salonServices);
-    if (aTurnVal !== bTurnVal) return bTurnVal - aTurnVal;
-    const aSortOrder = getLowestSortOrder(a.services, salonServices);
-    const bSortOrder = getLowestSortOrder(b.services, salonServices);
-    if (aSortOrder !== bSortOrder) return aSortOrder - bSortOrder;
+    // 2. Requested clients before non-requested
+    const aReq = hasRequestedManicurist(a);
+    const bReq = hasRequestedManicurist(b);
+    if (aReq !== bReq) return aReq ? -1 : 1;
+    // 3. Within each tier: earliest arrival first
     return a.arrivedAt - b.arrivedAt;
   });
 

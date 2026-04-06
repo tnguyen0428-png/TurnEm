@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
 import Badge from '../shared/Badge';
+import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
 
@@ -14,6 +15,7 @@ interface ManicuristCardProps {
   turnRank: number | null;
   totalRanked: number;
   isNextSuggested: boolean;
+  clientDurationMs?: number;
 }
 
 function getStatusConfig(status: Manicurist['status']) {
@@ -27,7 +29,7 @@ function getStatusConfig(status: Manicurist['status']) {
   }
 }
 
-export default function ManicuristCard({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, isNextSuggested }: ManicuristCardProps) {
+export default function ManicuristCard({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, isNextSuggested, clientDurationMs = 0 }: ManicuristCardProps) {
   const { dispatch } = useApp();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
@@ -256,6 +258,13 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
               >
                 <Edit size={12} className="text-red-500" />
               </button>
+            </div>
+            <div className="mb-1">
+              <CountdownBadge
+                startedAt={currentClient.startedAt}
+                totalDurationMs={clientDurationMs}
+                status={manicurist.status}
+              />
             </div>
             {currentClient.services.length > 0 && (
               <div className="flex flex-wrap gap-0.5 mt-1">

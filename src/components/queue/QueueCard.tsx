@@ -23,10 +23,13 @@ function groupServices(services: string[], salonServices: SalonService[]): [stri
   );
 }
 
-function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' {
+function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'red' {
   if (value <= 0.5) return 'green';
   if (value <= 1.0) return 'blue';
-  return 'amber';
+  if (value <= 1.5) return 'amber';
+  if (value <= 2.0) return 'orange';
+  if (value <= 2.5) return 'purple';
+  return 'red';
 }
 
 export default function QueueCard({ client, rank, isNext = false, manicurists, salonServices, onAssign, onEdit, onRemove }: QueueCardProps) {
@@ -37,12 +40,27 @@ export default function QueueCard({ client, rank, isNext = false, manicurists, s
     return m ? m.name : '?';
   }
 
+  const isAppt = client.isAppointment;
+
+  // Distinct requested manicurist IDs from serviceRequests
+  const requestedManicuristIds = [...new Set(
+    (client.serviceRequests || []).flatMap(r => r.manicuristIds || [])
+  )];
+  const hasRequested = requestedManicuristIds.length > 0;
+
   return (
-    <div className={`group rounded-xl border p-4 hover:shadow-md transition-all duration-200 ${
-      isNext
-        ? 'bg-emerald-50/60 border-emerald-300 hover:border-emerald-400 shadow-sm'
-        : 'bg-white border-gray-100 hover:border-pink-200'
-    }`}>
+    <div
+      className={`group rounded-xl border p-4 hover:shadow-md transition-all duration-200 ${
+        isAppt
+          ? ''
+          : hasRequested
+          ? 'bg-purple-50/50 border-purple-300 hover:border-purple-400 shadow-sm'
+          : isNext
+            ? 'bg-emerald-50/60 border-emerald-300 hover:border-emerald-400 shadow-sm'
+            : 'bg-white border-gray-100 hover:border-pink-200'
+      }`}
+      style={isAppt ? { background: '#e6f1fb', border: '0.5px solid #85b7eb' } : undefined}
+    >
       <div className="flex items-start gap-3">
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
           isNext ? 'bg-emerald-100' : 'bg-gray-50'
@@ -51,11 +69,30 @@ export default function QueueCard({ client, rank, isNext = false, manicurists, s
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <h3 className="font-mono text-sm font-semibold text-gray-900 truncate">
+            <h3
+              className={`font-mono text-sm font-semibold truncate ${isAppt ? '' : 'text-gray-900'}`}
+              style={isAppt ? { color: '#0c447c' } : undefined}
+            >
               {client.clientName}
             </h3>
             {isNext && <Badge label="NEXT" variant="green" />}
-            {client.isAppointment && <Badge label="APPT" variant="blue" />}
+            {requestedManicuristIds.map(id => {
+              const name = manicurists.find(m => m.id === id)?.name;
+              if (!name) return null;
+              return (
+                <span key={id} className="inline-flex items-center rounded font-mono font-bold tracking-wide uppercase text-[9px] px-2 py-0.5 bg-purple-500 text-white">
+                  WAITING FOR {name}
+                </span>
+              );
+            })}
+            {isAppt && (
+              <span
+                className="inline-flex items-center rounded-full font-mono font-semibold tracking-wide uppercase text-[10px] px-2 py-0.5"
+                style={{ background: '#378add', color: 'white' }}
+              >
+                APPT
+              </span>
+            )}
             {client.isRequested && <Badge label="REQ" variant="pink" />}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -70,11 +107,17 @@ export default function QueueCard({ client, rank, isNext = false, manicurists, s
               label={`${client.turnValue} turns`}
               variant={getTurnBadgeVariant(client.turnValue)}
             />
-            <span className="flex items-center gap-1 text-[10px] font-mono text-gray-400">
+            <span
+              className={`flex items-center gap-1 text-[10px] font-mono ${isAppt ? '' : 'text-gray-400'}`}
+              style={isAppt ? { color: '#185fa5' } : undefined}
+            >
               <Clock size={10} />
               {formatWaitTime(client.arrivedAt)}
             </span>
-            <span className="text-[10px] font-mono text-gray-300">
+            <span
+              className={`text-[10px] font-mono ${isAppt ? '' : 'text-gray-300'}`}
+              style={isAppt ? { color: '#185fa5' } : undefined}
+            >
               {formatTime(client.arrivedAt)}
             </span>
           </div>

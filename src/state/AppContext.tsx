@@ -3,91 +3,18 @@ import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, App
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
 import { supabase } from '../lib/supabase';
-import { ALL_SERVICES } from '../constants/services';
+import { defaultSalonServices } from '../constants/salonServices';
+import { defaultManicurists } from '../constants/manicurists';
 
 interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
   saveTodayHistory: () => Promise<void>;
-  resetForNewDay: () => Promise<void>;
+  archiveTodayIfNeeded: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
 
-const SEED_MANICURISTS: Manicurist[] = [
-  {
-    id: crypto.randomUUID(),
-    name: 'Lisa',
-    color: '#10b981',
-    phone: '',
-    skills: [...ALL_SERVICES],
-    clockedIn: true,
-    clockInTime: Date.now() - 3600000,
-    totalTurns: 0,
-    currentClient: null,
-    status: 'available',
-    hasFourthPositionSpecial: false,
-    hasCheck2: false,
-    hasCheck3: false,
-    hasWax: false,
-    hasWax2: false,
-    hasWax3: false,
-  },
-  {
-    id: crypto.randomUUID(),
-    name: 'Maria',
-    color: '#6366f1',
-    phone: '',
-    skills: ['Manicure', 'Pedicure', 'Fills'],
-    clockedIn: true,
-    clockInTime: Date.now() - 3000000,
-    totalTurns: 0,
-    currentClient: null,
-    status: 'available',
-    hasFourthPositionSpecial: false,
-    hasCheck2: false,
-    hasCheck3: false,
-    hasWax: false,
-    hasWax2: false,
-    hasWax3: false,
-  },
-  {
-    id: crypto.randomUUID(),
-    name: 'Jenny',
-    color: '#f59e0b',
-    phone: '',
-    skills: ['Acrylics/Full', 'Fills', 'Manicure'],
-    clockedIn: true,
-    clockInTime: Date.now() - 2400000,
-    totalTurns: 0,
-    currentClient: null,
-    status: 'available',
-    hasFourthPositionSpecial: false,
-    hasCheck2: false,
-    hasCheck3: false,
-    hasWax: false,
-    hasWax2: false,
-    hasWax3: false,
-  },
-  {
-    id: crypto.randomUUID(),
-    name: 'Rosa',
-    color: '#ec4899',
-    phone: '',
-    skills: [...ALL_SERVICES],
-    clockedIn: false,
-    clockInTime: null,
-    totalTurns: 0,
-    currentClient: null,
-    status: 'available',
-    hasFourthPositionSpecial: false,
-    hasCheck2: false,
-    hasCheck3: false,
-    hasWax: false,
-    hasWax2: false,
-    hasWax3: false,
-  },
-];
 
 function mapDbManicurist(row: Record<string, unknown>): Manicurist {
   return {
@@ -221,7 +148,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ]);
 
     const appointments = (appointmentRows || []).map(mapDbAppointment);
-    const salonServices = (serviceRows || []).map(mapDbSalonService);
+    if (!serviceRows || serviceRows.length === 0) {
+      for (const s of defaultSalonServices) {
+        const { error } = await supabase.from('salon_services').upsert({
+          id: s.id,
+          name: s.name,
+          category: s.category,
+          price: s.price,
+          sort_order: s.sortOrder,
+          turn_value: s.turnValue,
+          duration: s.duration,
+          is_active: s.isActive,
+          is_fourth_position_special: s.isFourthPositionSpecial,
+        }, { onConflict: 'id' });
+        if (error) console.error('[loadInitialData] salon_services seed error:', error);
+      }
+    }
+    const salonServices = (serviceRows && serviceRows.length > 0)
+      ? serviceRows.map(mapDbSalonService)
+      : defaultSalonServices;
     const turnCriteria = (criteriaRows || []).map(mapDbTurnCriteria);
     const calendarDays = (calendarRows || []).map(mapDbCalendarDay);
     const dailyHistory: DailyHistory[] = (dailyHistoryRows || []).map((row: Record<string, unknown>) => ({
@@ -230,101 +175,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
       entries: (row.entries as CompletedEntry[]) || [],
     }));
 
-    if (staffRows && staffRows.length > 0) {
-      const manicurists = staffRows.map(mapDbManicurist);
-      const queue = (queueRows || []).map(mapDbQueueEntry);
-      const completed = (completedRows || []).map((row: Record<string, unknown>) => {
-        const dbSvcs = row.services as string[] | null;
-        const fallbackSvc = row.service as string;
-        return {
-          id: row.id as string,
-          clientName: row.client_name as string,
-          services: (dbSvcs && dbSvcs.length > 0 ? dbSvcs : [fallbackSvc]).filter(Boolean) as ServiceType[],
-          turnValue: Number(row.turn_value) || 0,
-          manicuristId: row.manicurist_id as string,
-          manicuristName: row.manicurist_name as string,
-          manicuristColor: row.manicurist_color as string,
-          startedAt: new Date(row.started_at as string).getTime(),
-          completedAt: new Date(row.completed_at as string).getTime(),
-        };
-      });
-      dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory } });
-    } else {
-      for (const m of SEED_MANICURISTS) {
-        await supabase.from('manicurists').insert({
+    let manicurists = (staffRows || []).map(mapDbManicurist);
+    if (manicurists.length === 0) {
+      for (const m of defaultManicurists) {
+        const { error } = await supabase.from('manicurists').insert({
           id: m.id,
           name: m.name,
           color: m.color,
+          phone: m.phone,
           skills: m.skills,
           clocked_in: m.clockedIn,
           clock_in_time: m.clockInTime ? new Date(m.clockInTime).toISOString() : null,
           total_turns: m.totalTurns,
           current_client_id: m.currentClient,
           status: m.status,
+          has_fourth_position_special: m.hasFourthPositionSpecial,
+          has_check2: m.hasCheck2,
+          has_check3: m.hasCheck3,
+          has_wax: m.hasWax,
+          has_wax2: m.hasWax2,
+          has_wax3: m.hasWax3,
         });
+        if (error) console.error('[loadInitialData] manicurists seed error:', error);
       }
-      const walkIn: QueueEntry = {
-        id: crypto.randomUUID(),
-        clientName: 'Walk-in',
-        services: ['Pedicure'],
-        turnValue: 1.0,
-        serviceRequests: [],
-        requestedManicuristId: null,
-        isRequested: false,
-        isAppointment: false,
-        assignedManicuristId: null,
-        status: 'waiting',
-        arrivedAt: Date.now() - 900000,
-        startedAt: null,
-        completedAt: null,
-      };
-      const sarah: QueueEntry = {
-        id: crypto.randomUUID(),
-        clientName: 'Sarah',
-        services: ['Manicure'],
-        turnValue: 0.5,
-        serviceRequests: [],
-        requestedManicuristId: null,
-        isRequested: false,
-        isAppointment: false,
-        assignedManicuristId: null,
-        status: 'waiting',
-        arrivedAt: Date.now() - 480000,
-        startedAt: null,
-        completedAt: null,
-      };
-      for (const c of [walkIn, sarah]) {
-        await supabase.from('queue_entries').insert({
-          id: c.id,
-          client_name: c.clientName,
-          service: c.services[0],
-          services: c.services,
-          turn_value: c.turnValue,
-          service_requests: c.serviceRequests,
-          requested_manicurist_id: c.requestedManicuristId,
-          is_requested: c.isRequested,
-          is_appointment: c.isAppointment,
-          assigned_manicurist_id: c.assignedManicuristId,
-          status: c.status,
-          arrived_at: new Date(c.arrivedAt).toISOString(),
-          started_at: c.startedAt ? new Date(c.startedAt).toISOString() : null,
-          completed_at: c.completedAt ? new Date(c.completedAt).toISOString() : null,
-        });
-      }
-      dispatch({
-        type: 'LOAD_STATE',
-        state: {
-          manicurists: SEED_MANICURISTS,
-          queue: [walkIn, sarah],
-          completed: [],
-          appointments,
-          salonServices,
-          turnCriteria,
-          calendarDays,
-          dailyHistory,
-        },
-      });
+      manicurists = defaultManicurists;
     }
+    const queue = (queueRows || []).map(mapDbQueueEntry);
+    const completed = (completedRows || []).map((row: Record<string, unknown>) => {
+      const dbSvcs = row.services as string[] | null;
+      const fallbackSvc = row.service as string;
+      return {
+        id: row.id as string,
+        clientName: row.client_name as string,
+        services: (dbSvcs && dbSvcs.length > 0 ? dbSvcs : [fallbackSvc]).filter(Boolean) as ServiceType[],
+        turnValue: Number(row.turn_value) || 0,
+        manicuristId: row.manicurist_id as string,
+        manicuristName: row.manicurist_name as string,
+        manicuristColor: row.manicurist_color as string,
+        startedAt: new Date(row.started_at as string).getTime(),
+        completedAt: new Date(row.completed_at as string).getTime(),
+      };
+    });
+    dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory } });
   }
 
   const saveTodayHistory = useCallback(async () => {
@@ -339,31 +231,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SAVE_DAILY_HISTORY', entry });
   }, [state.completed]);
 
-  const resetForNewDay = useCallback(async () => {
+  const archiveTodayIfNeeded = useCallback(async () => {
+    const now = new Date();
+    const laHour = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        hour: '2-digit',
+        hour12: false,
+      }).format(now)
+    );
+    if (laHour < 20 || laHour >= 24) {
+      console.error('[archiveTodayIfNeeded] aborted — not within rollover window', { laHour });
+      return;
+    }
     await saveTodayHistory();
-
-    const resetManicurists = state.manicurists.map(m => ({
-      ...m,
-      totalTurns: 0,
-      currentClient: null,
-      status: 'available' as const,
-      hasFourthPositionSpecial: false,
-      hasCheck2: false,
-      hasCheck3: false,
-      hasWax: false,
-      hasWax2: false,
-      hasWax3: false,
-    }));
-
-    dispatch({
-      type: 'LOAD_STATE',
-      state: {
-        manicurists: resetManicurists,
-        queue: [],
-        completed: [],
-      },
-    });
-  }, [state.manicurists, state.completed, saveTodayHistory]);
+  }, [saveTodayHistory]);
 
   useEffect(() => {
     if (!state.loaded) return;
@@ -381,35 +263,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state.loaded) return;
 
-    function getMillisecondsUntil1159PM() {
+    function getMillisecondsUntilLaSalonClose(): number {
       const now = new Date();
-      const target = new Date(now);
-      target.setHours(23, 59, 0, 0);
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).formatToParts(now);
+      const laHour   = Number(parts.find(p => p.type === 'hour')?.value   ?? '0');
+      const laMinute = Number(parts.find(p => p.type === 'minute')?.value ?? '0');
+      const laSecond = Number(parts.find(p => p.type === 'second')?.value ?? '0');
 
-      if (now.getTime() >= target.getTime()) {
-        target.setDate(target.getDate() + 1);
-      }
-
-      return target.getTime() - now.getTime();
+      const CLOSE_HOUR = 21; // 9pm LA
+      const currentLaSeconds = laHour * 3600 + laMinute * 60 + laSecond;
+      const targetLaSeconds  = CLOSE_HOUR * 3600;
+      let deltaSeconds = targetLaSeconds - currentLaSeconds;
+      if (deltaSeconds <= 0) deltaSeconds += 24 * 3600; // already past 9pm — target tomorrow
+      return deltaSeconds * 1000;
     }
 
     function scheduleReset() {
-      const msUntil1159 = getMillisecondsUntil1159PM();
-
+      const msUntilClose = getMillisecondsUntilLaSalonClose();
       const timeoutId = setTimeout(() => {
-        resetForNewDay();
+        archiveTodayIfNeeded();
         scheduleReset();
-      }, msUntil1159);
-
+      }, msUntilClose);
       return timeoutId;
     }
 
     const timeoutId = scheduleReset();
     return () => clearTimeout(timeoutId);
-  }, [state.loaded, resetForNewDay]);
+  }, [state.loaded, archiveTodayIfNeeded]);
 
   return (
-    <AppContext.Provider value={{ state, dispatch, saveTodayHistory, resetForNewDay }}>
+    <AppContext.Provider value={{ state, dispatch, saveTodayHistory, archiveTodayIfNeeded }}>
       {children}
     </AppContext.Provider>
   );
@@ -417,7 +306,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 async function syncManicurists(manicurists: Manicurist[]) {
   for (const m of manicurists) {
-    await supabase.from('manicurists').upsert({
+    const { error } = await supabase.from('manicurists').upsert({
       id: m.id,
       name: m.name,
       color: m.color,
@@ -434,7 +323,8 @@ async function syncManicurists(manicurists: Manicurist[]) {
       has_wax: m.hasWax,
       has_wax2: m.hasWax2,
       has_wax3: m.hasWax3,
-    });
+    }, { onConflict: 'id' });
+    if (error) console.error('[syncManicurists] error:', error);
   }
 }
 
@@ -443,10 +333,11 @@ async function syncQueue(queue: QueueEntry[]) {
   const currentIds = new Set(queue.map((c) => c.id));
   const toDelete = (existing || []).filter((r: { id: string }) => !currentIds.has(r.id));
   for (const r of toDelete) {
-    await supabase.from('queue_entries').delete().eq('id', r.id);
+    const { error } = await supabase.from('queue_entries').delete().eq('id', r.id);
+    if (error) console.error('[syncQueue] delete error:', error);
   }
   for (const c of queue) {
-    await supabase.from('queue_entries').upsert({
+    const { error } = await supabase.from('queue_entries').upsert({
       id: c.id,
       client_name: c.clientName,
       service: c.services[0] || '',
@@ -461,7 +352,8 @@ async function syncQueue(queue: QueueEntry[]) {
       arrived_at: new Date(c.arrivedAt).toISOString(),
       started_at: c.startedAt ? new Date(c.startedAt).toISOString() : null,
       completed_at: c.completedAt ? new Date(c.completedAt).toISOString() : null,
-    });
+    }, { onConflict: 'id' });
+    if (error) console.error('[syncQueue] upsert error:', error);
   }
 }
 
@@ -469,7 +361,7 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
   const prevIds = new Set(prev.map((c) => c.id));
   const newEntries = completed.filter((c) => !prevIds.has(c.id));
   for (const c of newEntries) {
-    await supabase.from('completed_services').upsert({
+    const { error } = await supabase.from('completed_services').upsert({
       id: c.id,
       client_name: c.clientName,
       service: c.services[0] || '',
@@ -480,10 +372,12 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
       manicurist_color: c.manicuristColor,
       started_at: new Date(c.startedAt).toISOString(),
       completed_at: new Date(c.completedAt).toISOString(),
-    });
+    }, { onConflict: 'id' });
+    if (error) console.error('[syncCompleted] upsert error:', error);
   }
   if (completed.length === 0 && prev.length > 0) {
-    await supabase.from('completed_services').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    const { error } = await supabase.from('completed_services').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    if (error) console.error('[syncCompleted] delete error:', error);
   }
 }
 
@@ -492,11 +386,12 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
 
   const deleted = prev.filter((a) => !currentIds.has(a.id));
   for (const a of deleted) {
-    await supabase.from('appointments').delete().eq('id', a.id);
+    const { error } = await supabase.from('appointments').delete().eq('id', a.id);
+    if (error) console.error('[syncAppointments] delete error:', error);
   }
 
   for (const a of appointments) {
-    await supabase.from('appointments').upsert({
+    const { error } = await supabase.from('appointments').upsert({
       id: a.id,
       client_name: a.clientName,
       client_phone: a.clientPhone,
@@ -507,7 +402,8 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
       notes: a.notes,
       status: a.status,
       created_at: new Date(a.createdAt).toISOString(),
-    });
+    }, { onConflict: 'id' });
+    if (error) console.error('[syncAppointments] upsert error:', error);
   }
 }
 
@@ -516,11 +412,12 @@ async function syncSalonServices(services: SalonService[], prev: SalonService[])
 
   const deleted = prev.filter((s) => !currentIds.has(s.id));
   for (const s of deleted) {
-    await supabase.from('salon_services').delete().eq('id', s.id);
+    const { error } = await supabase.from('salon_services').delete().eq('id', s.id);
+    if (error) console.error('[syncSalonServices] delete error:', error);
   }
 
   for (const s of services) {
-    await supabase.from('salon_services').upsert({
+    const { error } = await supabase.from('salon_services').upsert({
       id: s.id,
       name: s.name,
       turn_value: s.turnValue,
@@ -530,13 +427,14 @@ async function syncSalonServices(services: SalonService[], prev: SalonService[])
       category: s.category,
       sort_order: s.sortOrder,
       is_fourth_position_special: s.isFourthPositionSpecial,
-    });
+    }, { onConflict: 'id' });
+    if (error) console.error('[syncSalonServices] upsert error for', s.id, error);
   }
 }
 
 async function syncTurnCriteria(criteria: TurnCriteria[]) {
   for (const c of criteria) {
-    await supabase.from('turn_criteria').upsert({
+    const { error } = await supabase.from('turn_criteria').upsert({
       id: c.id,
       name: c.name,
       description: c.description,
@@ -544,7 +442,8 @@ async function syncTurnCriteria(criteria: TurnCriteria[]) {
       enabled: c.enabled,
       type: c.type,
       value: c.value,
-    });
+    }, { onConflict: 'id' });
+    if (error) console.error('[syncTurnCriteria] error:', error);
   }
 }
 
@@ -553,15 +452,17 @@ async function syncCalendarDays(days: CalendarDay[], prev: CalendarDay[]) {
 
   const deleted = prev.filter((d) => !currentDates.has(d.date));
   for (const d of deleted) {
-    await supabase.from('calendar_days').delete().eq('date', d.date);
+    const { error } = await supabase.from('calendar_days').delete().eq('date', d.date);
+    if (error) console.error('[syncCalendarDays] delete error:', error);
   }
 
   for (const d of days) {
-    await supabase.from('calendar_days').upsert({
+    const { error } = await supabase.from('calendar_days').upsert({
       date: d.date,
       status: d.status,
       note: d.note,
-    });
+    }, { onConflict: 'date' });
+    if (error) console.error('[syncCalendarDays] upsert error:', error);
   }
 }
 

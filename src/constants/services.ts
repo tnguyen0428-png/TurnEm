@@ -30,13 +30,16 @@ export const ALL_SERVICES: ServiceType[] = [
 ];
 
 export const SERVICE_CATEGORIES = [
-  'Acrylics',
+  'Acrylic Fill',
+  'Acrylic Full Set',
   'Healthy Nails',
-  'Manicure & Pedicure',
+  'Manicures',
+  'Pedicures',
   'Combo',
   'Kids Services',
   'A La Carte & Add-Ons',
   'Wax Services',
+  'Special Request',
 ];
 
 export const STAFF_COLORS = [

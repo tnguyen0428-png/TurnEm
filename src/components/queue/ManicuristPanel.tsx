@@ -48,7 +48,7 @@ export default function ManicuristPanel({ nextSuggestedManicuristId }: Manicuris
   const turnOrder = clockedIn
     .filter((m) => m.status === 'available')
     .sort((a, b) => {
-      if (a.totalTurns !== b.totalTurns) return a.totalTurns - b.totalTurns;
+      if (Math.floor(a.totalTurns) !== Math.floor(b.totalTurns)) return Math.floor(a.totalTurns) - Math.floor(b.totalTurns);
       const aTime = a.clockInTime ?? Infinity;
       const bTime = b.clockInTime ?? Infinity;
       return aTime - bTime;
@@ -82,6 +82,16 @@ export default function ManicuristPanel({ nextSuggestedManicuristId }: Manicuris
     const client = state.queue.find((c) => c.id === clientId);
     if (!client) return false;
     return client.services.some((s) => waxServiceNames.has(s));
+  }
+
+  function getClientDurationMs(clientId: string | null): number {
+    if (!clientId) return 0;
+    const client = state.queue.find((c) => c.id === clientId);
+    if (!client) return 0;
+    return client.services.reduce((sum, svcName) => {
+      const svc = state.salonServices.find((s) => s.name === svcName);
+      return sum + (svc?.duration ?? 30);
+    }, 0) * 60000;
   }
 
   return (
@@ -178,7 +188,7 @@ export default function ManicuristPanel({ nextSuggestedManicuristId }: Manicuris
             </p>
           </div>
         ) : (
-          <div className="p-3 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+          <div className="p-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
             {sortedClockedIn.map((m, idx) => {
               const rank = rankMap.get(m.id) ?? null;
               return (
@@ -187,6 +197,7 @@ export default function ManicuristPanel({ nextSuggestedManicuristId }: Manicuris
                   manicurist={m}
                   currentClient={getClientForManicurist(m.currentClient)}
                   clientHasWax={clientHasWaxService(m.currentClient)}
+                  clientDurationMs={getClientDurationMs(m.currentClient)}
                   isFirst={idx === 0}
                   isLast={idx === sortedClockedIn.length - 1}
                   turnRank={rank}
