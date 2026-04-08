@@ -60,7 +60,7 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
           ? 'bg-purple-50/50 border-purple-300 hover:border-purple-400 shadow-sm'
           : isNext
             ? 'bg-emerald-50/60 border-emerald-300 hover:border-emerald-400 shadow-sm'
-            : 'bg-white border-gray-100 hover:border-pink-200'
+            : 'bg-rose-50/50 border-rose-200 hover:border-rose-300 shadow-sm'
       }`}
       style={isAppt && !isDeferred ? { background: '#e6f1fb', border: '0.5px solid #85b7eb' } : undefined}
     >
