@@ -5,8 +5,8 @@ import { useApp } from '../../state/AppContext';
 import Badge from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
-import { formatTime, formatDuration } from '../../utils/time';
-import type { CompletedEntry } from '../../types';
+import { formatTime, formatDuration, getTodayLA, getLocalDateStr } from '../../utils/time';
+import type { CompletedEntry, SalonService } from '../../types';
 
 function groupServices(services: string[]): [string, number][] {
   const map = new Map<string, number>();
@@ -26,7 +26,7 @@ function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orang
 type SortMode = 'time' | 'client' | 'manicurist';
 
 function getTodayDateStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  return getTodayLA();
 }
 
 function getMonthDays(year: number, month: number): Date[] {
@@ -49,10 +49,11 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 interface HistoryTableProps {
   entries: CompletedEntry[];
   manicurists: { id: string; name: string; color: string; totalTurns: number; clockedIn: boolean; clockInTime: number | null }[];
+  salonServices: SalonService[];
   showTurnsChart: boolean;
 }
 
-function HistoryTable({ entries, manicurists, showTurnsChart }: HistoryTableProps) {
+function HistoryTable({ entries, manicurists, salonServices, showTurnsChart }: HistoryTableProps) {
   const [sortMode, setSortMode] = useState<SortMode>('time');
   const [manicuristFilter, setManicuristFilter] = useState<string>('all');
 
@@ -82,15 +83,20 @@ function HistoryTable({ entries, manicurists, showTurnsChart }: HistoryTableProp
 
   const turnsPerManicurist = useMemo(() => {
     if (showTurnsChart) {
-      return manicurists
+      const clockedIn = manicurists
         .filter((m) => m.clockedIn)
-        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity))
-        .map((m) => ({
+        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity));
+
+      // If manicurists are still clocked in, use live totalTurns
+      if (clockedIn.length > 0) {
+        return clockedIn.map((m) => ({
           name: m.name,
           turns: m.totalTurns,
           color: m.color,
           clockInTime: m.clockInTime ? formatTime(m.clockInTime) : ''
         }));
+      }
+      // Fallback: everyone clocked out — build from completed entries
     }
     const map = new Map<string, { name: string; turns: number; color: string; clockInTime: string }>();
     for (const e of entries) {
@@ -119,11 +125,12 @@ function HistoryTable({ entries, manicurists, showTurnsChart }: HistoryTableProp
         <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
           <h3 className="font-bebas text-sm tracking-[2px] text-gray-500 mb-3">TURNS PER MANICURIST</h3>
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={turnsPerManicurist} margin={{ top: 4, right: 0, bottom: 20, left: 0 }}>
+            <BarChart data={turnsPerManicurist} margin={{ top: 4, right: 30, bottom: 20, left: 0 }}>
               <XAxis
                 dataKey="name"
-                tick={({ x, y, payload }) => {
-                  const entry = turnsPerManicurist.find(m => m.name === payload.value);
+                interval={0}
+                tick={({ x, y, payload, index }: { x: number; y: number; payload: { value: string }; index: number }) => {
+                  const entry = turnsPerManicurist[index];
                   return (
                     <g transform={`translate(${x},${y})`}>
                       <text
@@ -252,13 +259,24 @@ function HistoryTable({ entries, manicurists, showTurnsChart }: HistoryTableProp
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      {groupServices(entry.services).map(([s, count]) => (
-                        <Badge
-                          key={s}
-                          label={count > 1 ? `${s} x${count}` : s}
-                          variant={getTurnBadgeVariant(entry.turnValue)}
-                        />
-                      ))}
+                      {groupServices(entry.services).map(([s, count]) => {
+                        // Only show R if the entry explicitly records this service as requested.
+                        // No fallback inference — it produced false positives for deferred/split entries.
+                        const wasRequested = Array.isArray(entry.requestedServices)
+                          && entry.requestedServices.length > 0
+                          && entry.requestedServices.includes(s as typeof entry.requestedServices[number]);
+                        return (
+                          <span key={s} className="inline-flex items-center gap-0.5">
+                            <Badge
+                              label={count > 1 ? `${s} x${count}` : s}
+                              variant={getTurnBadgeVariant(entry.turnValue)}
+                            />
+                            {wasRequested && (
+                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
+                            )}
+                          </span>
+                        );
+                      })}
                       <Badge
                         label={`${entry.turnValue} turns`}
                         variant={getTurnBadgeVariant(entry.turnValue)}
@@ -312,9 +330,18 @@ export default function HistoryScreen() {
     return state.dailyHistory.find((d) => d.date === selectedDate)?.entries ?? null;
   }, [viewingPastDay, selectedDate, state.dailyHistory]);
 
+  // If today's in-memory completed list is empty (e.g. after end-of-day reset),
+  // fall back to today's saved dailyHistory entry so history is never blank.
+  const todayArchivedEntries = useMemo(() => {
+    if (state.completed.length > 0) return null;
+    return state.dailyHistory.find((d) => d.date === today)?.entries ?? null;
+  }, [state.completed, state.dailyHistory, today]);
+
   const displayedEntries = viewingPastDay && pastDayEntries !== null
     ? pastDayEntries
-    : state.completed;
+    : state.completed.length > 0
+      ? state.completed
+      : (todayArchivedEntries ?? []);
 
   async function handleSave() {
     setSaving(true);
@@ -423,7 +450,7 @@ export default function HistoryScreen() {
               <div key={`empty-${i}`} />
             ))}
             {monthDays.map((day) => {
-              const dateStr = day.toISOString().slice(0, 10);
+              const dateStr = getLocalDateStr(day);
               const isToday = dateStr === today;
               const hasSavedHistory = datesWithHistory.has(dateStr);
               const isSelected = dateStr === selectedDate;
@@ -482,6 +509,7 @@ export default function HistoryScreen() {
         <HistoryTable
           entries={displayedEntries}
           manicurists={state.manicurists}
+          salonServices={state.salonServices}
           showTurnsChart={!viewingPastDay}
         />
       )}

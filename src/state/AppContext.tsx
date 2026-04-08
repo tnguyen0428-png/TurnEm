@@ -9,7 +9,7 @@ import { defaultManicurists } from '../constants/manicurists';
 interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
-  saveTodayHistory: () => Promise<void>;
+  saveTodayHistory: (dateOverride?: string) => Promise<void>;
   archiveTodayIfNeeded: () => Promise<void>;
 }
 
@@ -118,6 +118,19 @@ function mapDbCalendarDay(row: Record<string, unknown>): CalendarDay {
   };
 }
 
+function getTodayLA(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const year = parts.find((p) => p.type === 'year')?.value ?? '';
+  const month = parts.find((p) => p.type === 'month')?.value ?? '';
+  const day = parts.find((p) => p.type === 'day')?.value ?? '';
+  return `${year}-${month}-${day}`;
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
   const prevStateRef = useRef<AppState>(INITIAL_STATE);
@@ -214,20 +227,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         manicuristColor: row.manicurist_color as string,
         startedAt: new Date(row.started_at as string).getTime(),
         completedAt: new Date(row.completed_at as string).getTime(),
+        requestedServices: Array.isArray(row.requested_services)
+          ? (row.requested_services as ServiceType[])
+          : undefined,
       };
     });
     dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory } });
   }
 
-  const saveTodayHistory = useCallback(async () => {
+  const saveTodayHistory = useCallback(async (dateOverride?: string) => {
     if (state.completed.length === 0) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const date = dateOverride ?? getTodayLA();
     const entry: DailyHistory = {
       id: crypto.randomUUID(),
-      date: today,
+      date,
       entries: state.completed,
     };
-    await supabase.from('daily_history').upsert({ id: entry.id, date: entry.date, entries: entry.entries }, { onConflict: 'date' });
+    const { error } = await supabase
+      .from('daily_history')
+      .upsert({ id: entry.id, date: entry.date, entries: entry.entries }, { onConflict: 'date' });
+    if (error) console.error('[saveTodayHistory] upsert error:', error);
     dispatch({ type: 'SAVE_DAILY_HISTORY', entry });
   }, [state.completed]);
 
@@ -245,6 +264,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     await saveTodayHistory();
+    dispatch({ type: 'DAILY_RESET' });
   }, [saveTodayHistory]);
 
   useEffect(() => {
@@ -372,6 +392,7 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
       manicurist_color: c.manicuristColor,
       started_at: new Date(c.startedAt).toISOString(),
       completed_at: new Date(c.completedAt).toISOString(),
+      requested_services: c.requestedServices ?? [],
     }, { onConflict: 'id' });
     if (error) console.error('[syncCompleted] upsert error:', error);
   }

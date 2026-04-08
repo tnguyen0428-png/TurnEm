@@ -1,13 +1,16 @@
 import type { Manicurist, QueueEntry, SalonService, ServiceType } from '../types';
+import { getPriorityRank } from './priorityStorage';
 
 function getServiceTurnValue(service: string, salonServices: SalonService[]): number {
   const svc = salonServices.find((s) => s.name === service);
   return svc?.turnValue ?? 0;
 }
 
-function getServiceSortOrder(service: string, salonServices: SalonService[]): number {
+function getServicePriorityOrder(service: string, salonServices: SalonService[]): number {
   const svc = salonServices.find((s) => s.name === service);
-  return svc?.sortOrder ?? Infinity;
+  if (!svc) return Infinity;
+  const allCats = Array.from(new Set(salonServices.map((s) => s.category).filter(Boolean)));
+  return getPriorityRank(svc.name, svc.category, allCats);
 }
 
 function getServicesPrioritySorted(
@@ -15,7 +18,7 @@ function getServicesPrioritySorted(
   salonServices: SalonService[]
 ): ServiceType[] {
   return [...services].sort(
-    (a, b) => getServiceSortOrder(a, salonServices) - getServiceSortOrder(b, salonServices)
+    (a, b) => getServicePriorityOrder(a, salonServices) - getServicePriorityOrder(b, salonServices)
   );
 }
 
@@ -80,30 +83,6 @@ export function getSuggestedManicurist(
   return eligible[0];
 }
 
-function getHighestServiceTurnValue(
-  services: ServiceType[],
-  salonServices: SalonService[]
-): number {
-  let best = 0;
-  for (const s of services) {
-    const tv = getServiceTurnValue(s, salonServices);
-    if (tv > best) best = tv;
-  }
-  return best;
-}
-
-function getLowestSortOrder(
-  services: ServiceType[],
-  salonServices: SalonService[]
-): number {
-  let best = Infinity;
-  for (const s of services) {
-    const svc = salonServices.find((sv) => sv.name === s);
-    const order = svc?.sortOrder ?? Infinity;
-    if (order < best) best = order;
-  }
-  return best;
-}
 
 export function getPriorityQueue(
   queue: QueueEntry[],
@@ -116,14 +95,25 @@ export function getPriorityQueue(
     return (c.serviceRequests || []).some(r => r.manicuristIds && r.manicuristIds.length > 0);
   }
 
+  // A "deferred" entry is waiting for a specific manicurist who is currently busy
+  function isDeferredWaiting(c: QueueEntry): boolean {
+    if (!c.requestedManicuristId) return false;
+    const m = manicurists.find((x) => x.id === c.requestedManicuristId);
+    return !!m && m.status === 'busy';
+  }
+
   const sorted = [...waiting].sort((a, b) => {
-    // 1. Appointments always first
+    // 1. Deferred "waiting for busy staff" entries always first
+    const aDeferred = isDeferredWaiting(a);
+    const bDeferred = isDeferredWaiting(b);
+    if (aDeferred !== bDeferred) return aDeferred ? -1 : 1;
+    // 2. Appointments next
     if (a.isAppointment !== b.isAppointment) return a.isAppointment ? -1 : 1;
-    // 2. Requested clients before non-requested
+    // 3. Requested clients before non-requested
     const aReq = hasRequestedManicurist(a);
     const bReq = hasRequestedManicurist(b);
     if (aReq !== bReq) return aReq ? -1 : 1;
-    // 3. Within each tier: earliest arrival first
+    // 4. Within each tier: earliest arrival first
     return a.arrivedAt - b.arrivedAt;
   });
 
@@ -131,6 +121,6 @@ export function getPriorityQueue(
   return sorted.map((client) => {
     const suggestion = getSuggestedManicurist(client.services, manicurists, salonServices, claimed);
     if (suggestion) claimed.add(suggestion.id);
-    return { ...client, suggestedManicurist: suggestion };
+    return { ...client, suggestedManicurist: suggestion, isDeferred: isDeferredWaiting(client) };
   });
 }

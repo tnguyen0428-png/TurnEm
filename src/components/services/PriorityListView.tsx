@@ -20,8 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { SalonService } from '../../types';
 
-export const CAT_PRIORITY_KEY = 'turnem_category_priority';
-export const SVC_PRIORITY_KEY = 'turnem_service_priority';
+import { CAT_PRIORITY_KEY, SVC_PRIORITY_KEY, loadCatOrder, loadSvcOrders } from '../../utils/priorityStorage';
 
 function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'red' {
   if (value <= 0.5) return 'green';
@@ -30,28 +29,6 @@ function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orang
   if (value <= 2.0) return 'orange';
   if (value <= 2.5) return 'purple';
   return 'red';
-}
-
-function loadCatOrder(allCats: string[]): string[] {
-  try {
-    const raw = localStorage.getItem(CAT_PRIORITY_KEY);
-    if (raw) {
-      const saved: string[] = JSON.parse(raw);
-      const known = new Set(saved);
-      const merged = saved.filter(c => allCats.includes(c));
-      allCats.forEach(c => { if (!known.has(c)) merged.push(c); });
-      return merged;
-    }
-  } catch {}
-  return [...allCats];
-}
-
-export function loadSvcOrders(): Record<string, string[]> {
-  try {
-    const raw = localStorage.getItem(SVC_PRIORITY_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return {};
 }
 
 function getSvcOrder(category: string, defaultNames: string[]): string[] {

@@ -1,4 +1,4 @@
-import { UserPlus, Pencil, X, Clock } from 'lucide-react';
+import { UserPlus, Pencil, X, Clock, Timer } from 'lucide-react';
 import type { QueueEntry, Manicurist, SalonService } from '../../types';
 import Badge from '../shared/Badge';
 import { formatWaitTime, formatTime } from '../../utils/time';
@@ -7,6 +7,7 @@ interface QueueCardProps {
   client: QueueEntry;
   rank: number;
   isNext?: boolean;
+  isDeferred?: boolean;
   manicurists: Manicurist[];
   salonServices: SalonService[];
   onAssign: () => void;
@@ -32,7 +33,7 @@ function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orang
   return 'red';
 }
 
-export default function QueueCard({ client, rank, isNext = false, manicurists, salonServices, onAssign, onEdit, onRemove }: QueueCardProps) {
+export default function QueueCard({ client, rank, isNext = false, isDeferred = false, manicurists, salonServices, onAssign, onEdit, onRemove }: QueueCardProps) {
   const requestedServices = (client.serviceRequests || []).filter((r) => r.manicuristIds && r.manicuristIds.length > 0);
 
   function getManicuristName(id: string) {
@@ -51,7 +52,9 @@ export default function QueueCard({ client, rank, isNext = false, manicurists, s
   return (
     <div
       className={`group rounded-xl border p-4 hover:shadow-md transition-all duration-200 ${
-        isAppt
+        isDeferred
+          ? 'bg-amber-50 border-amber-400 hover:border-amber-500 shadow-sm'
+          : isAppt
           ? ''
           : hasRequested
           ? 'bg-purple-50/50 border-purple-300 hover:border-purple-400 shadow-sm'
@@ -59,7 +62,7 @@ export default function QueueCard({ client, rank, isNext = false, manicurists, s
             ? 'bg-emerald-50/60 border-emerald-300 hover:border-emerald-400 shadow-sm'
             : 'bg-white border-gray-100 hover:border-pink-200'
       }`}
-      style={isAppt ? { background: '#e6f1fb', border: '0.5px solid #85b7eb' } : undefined}
+      style={isAppt && !isDeferred ? { background: '#e6f1fb', border: '0.5px solid #85b7eb' } : undefined}
     >
       <div className="flex items-start gap-3">
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
@@ -77,11 +80,17 @@ export default function QueueCard({ client, rank, isNext = false, manicurists, s
             </h3>
             {isNext && <Badge label="NEXT" variant="green" />}
             {requestedManicuristIds.map(id => {
-              const name = manicurists.find(m => m.id === id)?.name;
-              if (!name) return null;
-              return (
-                <span key={id} className="inline-flex items-center rounded font-mono font-bold tracking-wide uppercase text-[9px] px-2 py-0.5 bg-purple-500 text-white">
-                  WAITING FOR {name}
+              const m = manicurists.find(x => x.id === id);
+              if (!m) return null;
+              const isReady = isDeferred && m.status === 'available';
+              return isReady ? (
+                <span key={id} className="inline-flex items-center gap-1 rounded font-mono font-bold tracking-wide uppercase text-[9px] px-2 py-0.5 bg-amber-500 text-white animate-pulse">
+                  <Timer size={9} />
+                  ASSIGN TO {m.name} NOW
+                </span>
+              ) : (
+                <span key={id} className={`inline-flex items-center rounded font-mono font-bold tracking-wide uppercase text-[9px] px-2 py-0.5 ${isDeferred ? 'bg-amber-400 text-white' : 'bg-purple-500 text-white'}`}>
+                  WAITING FOR {m.name}
                 </span>
               );
             })}

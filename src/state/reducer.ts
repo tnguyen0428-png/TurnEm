@@ -286,6 +286,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (!client) {
         return { ...state, manicurists: updatedManicurists, queue: updatedQueue };
       }
+      const requestedServices = (client.serviceRequests || [])
+        .filter((r) => r.manicuristIds && r.manicuristIds.length > 0)
+        .map((r) => r.service);
       const completedEntry = {
         id: crypto.randomUUID(),
         clientName: client.clientName,
@@ -296,6 +299,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         manicuristColor: manicurist.color,
         startedAt: client.startedAt ?? now,
         completedAt: now,
+        requestedServices: requestedServices.length > 0 ? requestedServices : undefined,
       };
       return {
         ...state,
@@ -475,6 +479,27 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }),
       };
     }
+
+    case 'DAILY_RESET':
+      return {
+        ...state,
+        queue: [],
+        completed: [],
+        manicurists: state.manicurists.map((m) => ({
+          ...m,
+          totalTurns: 0,
+          clockedIn: false,
+          clockInTime: null,
+          currentClient: null,
+          status: 'available' as const,
+          hasFourthPositionSpecial: false,
+          hasCheck2: false,
+          hasCheck3: false,
+          hasWax: false,
+          hasWax2: false,
+          hasWax3: false,
+        })),
+      };
 
     case 'SAVE_DAILY_HISTORY': {
       const existing = state.dailyHistory.findIndex((d) => d.date === action.entry.date);

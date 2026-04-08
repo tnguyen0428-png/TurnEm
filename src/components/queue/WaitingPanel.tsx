@@ -63,6 +63,7 @@ export default function WaitingPanel() {
               client={client}
               rank={idx + 1}
               isNext={idx === 0}
+              isDeferred={client.isDeferred}
               manicurists={state.manicurists}
               salonServices={state.salonServices}
               onAssign={() => handleAssign(client.id)}

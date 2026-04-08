@@ -14,8 +14,13 @@ import { SERVICE_TURN_VALUES } from '../../constants/services';
 import type { QueueEntry, SalonService, ServiceType, Manicurist } from '../../types';
 
 const ACRYLIC_CATS = new Set(['Acrylic Full Set', 'Acrylic Fill']);
+// High-level ServiceType values that map to acrylic categories
+const ACRYLIC_SERVICE_TYPES = new Set<string>(['Acrylics/Full', 'Fills']);
 
 function isAcrylicService(serviceName: string, salonServices: SalonService[]): boolean {
+  // Handle high-level ServiceType values (e.g. 'Acrylics/Full', 'Fills')
+  if (ACRYLIC_SERVICE_TYPES.has(serviceName)) return true;
+  // Handle detailed service names (e.g. 'Full Set Regular') via category lookup
   const svc = salonServices.find(s => s.name === serviceName);
   return !!svc && ACRYLIC_CATS.has(svc.category);
 }
@@ -180,9 +185,8 @@ function SingleServiceAssign({ client }: { client: QueueEntry }) {
   // Sam priority: find Sam if clocked in and client has any acrylic service
   const clientHasAcrylic = client.services.some(s => isAcrylicService(s, state.salonServices));
   const sam = clientHasAcrylic
-    ? state.manicurists.find(m => m.name === 'Sam' && m.clockedIn) ?? null
+    ? state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null
     : null;
-
   const baseList = [...eligible, ...requestedNotEligible]
     .filter(m => !sam || m.id !== sam.id)
     .sort((a, b) => {
@@ -437,6 +441,35 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
   });
 
   const [showConfirm, setShowConfirm] = useState(false);
+  const [dismissedSamPrompt, setDismissedSamPrompt] = useState(false);
+
+  // Wait-for-Sam: check if any of the client's services is acrylic
+  const clientHasAcrylic = client.services.some(s => isAcrylicService(s, state.salonServices));
+  const sam = clientHasAcrylic
+    ? state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null
+    : null;
+  const showSamPrompt = !!sam && sam.status === 'busy' && !dismissedSamPrompt;
+  const samCurrentClient = sam ? state.queue.find(c => c.id === sam.currentClient) ?? null : null;
+  const samDurationMs = sam ? getClientDurationMs(sam, state.queue, state.salonServices) : 0;
+  const { display: samCountdownDisplay } = useCountdown(samCurrentClient?.startedAt ?? null, samDurationMs);
+
+  function handleWaitForSam() {
+    if (!sam) return;
+    // Pre-fill Sam into the assignment slots for all acrylic rows, then dismiss
+    // the prompt so the user can continue assigning the remaining services.
+    setAssignments((prev) => {
+      const updated = { ...prev };
+      for (const row of serviceRows) {
+        if (isAcrylicService(row.service, state.salonServices)) {
+          updated[row.uniqueKey] = sam.id;
+          // Collapse the row so it looks "done"
+          setCollapsedRows((c) => new Set([...c, row.uniqueKey]));
+        }
+      }
+      return updated;
+    });
+    setDismissedSamPrompt(true);
+  }
 
   const assignedManicuristIds = useMemo(() => {
     const ids = new Set<string>();
@@ -457,13 +490,24 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
     );
     const suggested = getSuggestedForService(service, state.manicurists, state.salonServices, takenByOtherIds);
 
+    // Find explicitly requested manicurist for this row (from serviceRequests)
+    const rowReq = (client.serviceRequests || []).find(r => r.service === service);
+    const explicitlyRequestedId = rowReq?.manicuristIds?.[0] ?? null;
+
+    // Sam preferred for acrylic rows that don't already have an explicit request
     const rowIsAcrylic = isAcrylicService(service, state.salonServices);
-    const samForRow = rowIsAcrylic
-      ? state.manicurists.find(m => m.name === 'Sam' && m.clockedIn) ?? null
+    const samForRow = rowIsAcrylic && !explicitlyRequestedId
+      ? state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null
+      : null;
+
+    // The "preferred" manicurist for this row: explicit request takes priority over Sam
+    const preferredId = explicitlyRequestedId ?? samForRow?.id ?? null;
+    const preferredManicurist = preferredId
+      ? state.manicurists.find(m => m.id === preferredId && m.clockedIn) ?? null
       : null;
 
     const baseRows = skilled
-      .filter(m => !samForRow || m.id !== samForRow.id)
+      .filter(m => !preferredManicurist || m.id !== preferredManicurist.id)
       .map(m => ({
         ...m,
         _takenByOther: assignedManicuristIds.has(m.id) && assignments[rowKey] !== m.id,
@@ -472,17 +516,17 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
         _isBusySam: false,
       }));
 
-    if (!samForRow) return baseRows;
+    if (!preferredManicurist) return baseRows;
 
-    const samRow = {
-      ...samForRow,
+    const preferredRow = {
+      ...preferredManicurist,
       _takenByOther: false,
       _isSuggested: false,
-      _isSamPreferred: true,
-      _isBusySam: samForRow.status === 'busy',
+      _isSamPreferred: true,   // reuse flag — means "this person is preferred/pinned to top"
+      _isBusySam: preferredManicurist.status === 'busy',
     };
 
-    return [samRow, ...baseRows];
+    return [preferredRow, ...baseRows];
   }
 
   function handlePickManicurist(rowKey: string, manicuristId: string) {
@@ -696,7 +740,71 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
           );
         })()}
 
-        <div className="space-y-4 mb-5">
+        {/* Wait-for-Sam prompt */}
+        {showSamPrompt && (
+          <div className="mb-4 p-4 rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50">
+            <div className="flex items-center gap-2 mb-2">
+              <Badge label="PREFERRED" variant="indigo" />
+              <span className="font-mono text-xs font-semibold text-indigo-800">Sam is currently busy</span>
+            </div>
+            <p className="font-mono text-xs text-indigo-700 mb-4">
+              Sam has{' '}
+              <span className="font-bold tabular-nums">{samCountdownDisplay || '…'}</span>{' '}
+              remaining on his current client. Wait for Sam, or assign{' '}
+              <span className="font-bold">{client.clientName}</span> to someone else?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleWaitForSam}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-indigo-500 text-white font-mono text-xs font-semibold hover:bg-indigo-600 active:scale-[0.98] transition-all"
+              >
+                <Timer size={13} />
+                WAIT FOR SAM
+              </button>
+              <button
+                onClick={() => setDismissedSamPrompt(true)}
+                className="flex-1 py-2 rounded-xl bg-white border border-gray-200 text-gray-600 font-mono text-xs font-semibold hover:bg-gray-50 active:scale-[0.98] transition-all"
+              >
+                Assign Someone Else
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Deferred services banner — any requested-but-busy manicurist (non-Sam rows) */}
+        {(() => {
+          const deferredItems = serviceRows
+            .filter(row => {
+              const reqId = (client.serviceRequests || []).find(r => r.service === row.service)?.manicuristIds?.[0];
+              if (!reqId) return false;
+              const m = state.manicurists.find(x => x.id === reqId);
+              return !!m && m.status === 'busy' && m.name.toLowerCase() !== 'sam';
+            })
+            .map(row => {
+              const reqId = (client.serviceRequests || []).find(r => r.service === row.service)!.manicuristIds[0];
+              const m = state.manicurists.find(x => x.id === reqId)!;
+              return { service: row.service, manicurist: m };
+            });
+          if (deferredItems.length === 0) return null;
+          return (
+            <div className="mb-4 p-4 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50">
+              <div className="flex items-center gap-2 mb-2">
+                <Timer size={13} className="text-amber-600" />
+                <span className="font-mono text-xs font-semibold text-amber-800">Some staff are currently busy</span>
+              </div>
+              <div className="space-y-1 mb-2">
+                {deferredItems.map(({ service, manicurist }) => (
+                  <p key={service} className="font-mono text-xs text-amber-700">
+                    <span className="font-bold">{service}</span> → waiting for <span className="font-bold">{manicurist.name}</span> — will go back to queue
+                  </p>
+                ))}
+              </div>
+              <p className="font-mono text-[10px] text-amber-600">Assign the remaining services below.</p>
+            </div>
+          );
+        })()}
+
+        <div className={`space-y-4 mb-5 ${showSamPrompt ? 'opacity-50 pointer-events-none' : ''}`}>
           {serviceRows.map((row) => {
             const key = row.uniqueKey;
             const selectedId = assignments[key];
@@ -706,6 +814,7 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
             const rowIs4thSpecial = rowSvc?.isFourthPositionSpecial === true;
             const isCollapsed = collapsedRows.has(key) && !!selectedId;
             const selectedManicurist = selectedId ? state.manicurists.find((m) => m.id === selectedId) : null;
+            const isRowDeferred = !!selectedManicurist && selectedManicurist.status === 'busy';
 
             return (
               <div key={key}>
@@ -730,11 +839,17 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
                 </div>
 
                 {isCollapsed && selectedManicurist ? (
-                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 border-emerald-300 bg-emerald-50/50">
-                    <Check size={14} className="text-emerald-500 flex-shrink-0" />
+                  <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 ${
+                    isRowDeferred ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50/50'
+                  }`}>
+                    {isRowDeferred
+                      ? <Timer size={14} className="text-amber-500 flex-shrink-0" />
+                      : <Check size={14} className="text-emerald-500 flex-shrink-0" />}
                     <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: selectedManicurist.color }} />
                     <span className="font-mono text-sm font-semibold text-gray-900">{selectedManicurist.name}</span>
-                    {requestedId === selectedManicurist.id && <Badge label="REQUESTED" variant="pink" />}
+                    {isRowDeferred
+                      ? <span className="font-mono text-[10px] font-bold text-amber-600 uppercase">Waiting in queue</span>
+                      : requestedId === selectedManicurist.id && <Badge label="REQUESTED" variant="pink" />}
                   </div>
                 ) : eligible.length === 0 ? (
                   <div className="text-center py-4 bg-gray-50 rounded-xl">
