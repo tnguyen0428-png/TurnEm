@@ -5,6 +5,7 @@ import { appReducer, INITIAL_STATE } from './reducer';
 import { supabase } from '../lib/supabase';
 import { defaultSalonServices } from '../constants/salonServices';
 import { defaultManicurists } from '../constants/manicurists';
+import { getLocalDateStr } from '../utils/time';
 
 interface AppContextType {
   state: AppState;
@@ -233,6 +234,94 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
     });
     dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory } });
+
+    // One-time cleanup: a bug caused ALL services on split multi-service entries to get synthetic
+    // requested_services in the DB (even when the client never requested anyone). Clear those now.
+    // Uses a localStorage flag so this only runs once per device.
+    const CLEANUP_KEY = 'turnem_r_badge_cleanup_v1';
+    if (!localStorage.getItem(CLEANUP_KEY)) {
+      // Find entries where requested_services is non-empty AND equals the full services list
+      // (the synthetic bug pattern — only affects entries with 2+ services)
+      const badEntries = completed.filter((c) => {
+        if (!Array.isArray(c.requestedServices) || c.requestedServices.length === 0) return false;
+        if (c.services.length <= 1) return false; // single-service: likely a real request, leave it
+        const svcSet = new Set(c.services as string[]);
+        return (c.requestedServices as string[]).every((r) => svcSet.has(r));
+      });
+      for (const e of badEntries) {
+        await supabase.from('completed_services').update({ requested_services: [] }).eq('id', e.id);
+        e.requestedServices = undefined;
+      }
+      // Also clean up any daily_history entries that have the same problem
+      const cleanedHistory = dailyHistory.map((day) => ({
+        ...day,
+        entries: day.entries.map((e) => {
+          if (!Array.isArray(e.requestedServices) || e.requestedServices.length === 0) return e;
+          if (e.services.length <= 1) return e;
+          const svcSet = new Set(e.services as string[]);
+          const isBad = (e.requestedServices as string[]).every((r) => svcSet.has(r));
+          return isBad ? { ...e, requestedServices: undefined } : e;
+        }),
+      }));
+      for (const day of cleanedHistory) {
+        const orig = dailyHistory.find((d) => d.id === day.id);
+        const changed = orig && JSON.stringify(orig.entries) !== JSON.stringify(day.entries);
+        if (changed) {
+          await supabase.from('daily_history').update({ entries: day.entries }).eq('id', day.id);
+          dispatch({ type: 'SAVE_DAILY_HISTORY', entry: day });
+        }
+      }
+      if (badEntries.length > 0) {
+        // Re-dispatch fixed completed list to in-memory state
+        dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory: cleanedHistory } });
+      }
+      localStorage.setItem(CLEANUP_KEY, '1');
+    }
+
+    // Startup stale-data check: if the app wasn't open at reset time (9pm),
+    // queue/completed entries from a previous day carry over. Detect and reset.
+    const today = getTodayLA();
+    const staleCompleted = completed.filter(c => getLocalDateStr(new Date(c.completedAt)) < today);
+    const staleQueue = queue.filter(c => getLocalDateStr(new Date(c.arrivedAt)) < today);
+
+    if (staleCompleted.length > 0 || staleQueue.length > 0) {
+      console.log('[startup] stale data detected from previous day — archiving and resetting', { staleCompleted: staleCompleted.length, staleQueue: staleQueue.length });
+
+      // Archive stale completed entries grouped by date, update in-memory state too
+      const byDate = new Map<string, typeof completed>();
+      for (const c of staleCompleted) {
+        const d = getLocalDateStr(new Date(c.completedAt));
+        if (!byDate.has(d)) byDate.set(d, []);
+        byDate.get(d)!.push(c);
+      }
+      const updatedHistory = [...dailyHistory];
+      for (const [date, entries] of byDate) {
+        const existingIdx = updatedHistory.findIndex(h => h.date === date);
+        const existing = existingIdx >= 0 ? updatedHistory[existingIdx] : null;
+        const mergedEntries = existing ? [...existing.entries, ...entries] : entries;
+        const historyEntry: DailyHistory = {
+          id: existing?.id ?? crypto.randomUUID(),
+          date,
+          entries: mergedEntries,
+        };
+        await supabase.from('daily_history').upsert(
+          { id: historyEntry.id, date: historyEntry.date, entries: historyEntry.entries },
+          { onConflict: 'date' }
+        );
+        // Update in-memory history so the history screen can find it immediately
+        dispatch({ type: 'SAVE_DAILY_HISTORY', entry: historyEntry });
+      }
+
+      // Clear stale queue entries and completed services from DB
+      for (const c of staleQueue) {
+        await supabase.from('queue_entries').delete().eq('id', c.id);
+      }
+      if (staleCompleted.length > 0) {
+        await supabase.from('completed_services').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      }
+
+      dispatch({ type: 'DAILY_RESET' });
+    }
   }
 
   const saveTodayHistory = useCallback(async (dateOverride?: string) => {
