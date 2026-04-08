@@ -235,11 +235,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory } });
 
-    // One-time cleanup: a bug caused ALL services on split multi-service entries to get synthetic
+    // Cleanup: a bug caused ALL services on split multi-service entries to get synthetic
     // requested_services in the DB (even when the client never requested anyone). Clear those now.
-    // Uses a localStorage flag so this only runs once per device.
-    const CLEANUP_KEY = 'turnem_r_badge_cleanup_v1';
-    if (!localStorage.getItem(CLEANUP_KEY)) {
+    // Safe to run every startup — only touches entries that actually have the bad pattern.
+    {
       // Find entries where requested_services is non-empty AND equals the full services list
       // (the synthetic bug pattern — only affects entries with 2+ services)
       const badEntries = completed.filter((c) => {
@@ -275,7 +274,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Re-dispatch fixed completed list to in-memory state
         dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory: cleanedHistory } });
       }
-      localStorage.setItem(CLEANUP_KEY, '1');
     }
 
     // Startup stale-data check: if the app wasn't open at reset time (9pm),
