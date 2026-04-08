@@ -141,6 +141,17 @@ function getSuggestedForService(service: ServiceType, manicurists: Manicurist[],
   if (svc?.isFourthPositionSpecial) {
     return eligible[3] ?? eligible[eligible.length - 1];
   }
+  // Wax services: prioritise manicurists who haven't had a wax yet, then earliest clock-in.
+  // Turns are irrelevant for wax rotation — it's purely about spreading the wax evenly.
+  if (svc?.category === 'Wax Services') {
+    const waxSorted = [...eligible].sort((a, b) => {
+      const aWax = a.hasWax ? 1 : 0;
+      const bWax = b.hasWax ? 1 : 0;
+      if (aWax !== bWax) return aWax - bWax; // no wax yet → first
+      return (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity); // earliest clock-in → first
+    });
+    return waxSorted[0];
+  }
   return eligible[0];
 }
 
