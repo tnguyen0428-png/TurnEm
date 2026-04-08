@@ -48,4 +48,5 @@ export type AppAction =
   | { type: 'TOGGLE_WAX2'; id: string }
   | { type: 'TOGGLE_WAX3'; id: string }
   | { type: 'SAVE_DAILY_HISTORY'; entry: DailyHistory }
-  | { type: 'LOAD_DAILY_HISTORY'; history: DailyHistory[] };
+  | { type: 'LOAD_DAILY_HISTORY'; history: DailyHistory[] }
+  | { type: 'DAILY_RESET' };

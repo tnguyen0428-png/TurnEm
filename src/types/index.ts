@@ -65,6 +65,7 @@ export interface CompletedEntry {
   manicuristColor: string;
   startedAt: number;
   completedAt: number;
+  requestedServices?: ServiceType[];
 }
 
 export interface Appointment {
