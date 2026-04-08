@@ -6,7 +6,7 @@ import Badge from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { formatTime, formatDuration, getTodayLA, getLocalDateStr } from '../../utils/time';
-import type { CompletedEntry, SalonService } from '../../types';
+import type { CompletedEntry } from '../../types';
 
 function groupServices(services: string[]): [string, number][] {
   const map = new Map<string, number>();
@@ -49,19 +49,16 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 interface HistoryTableProps {
   entries: CompletedEntry[];
   manicurists: { id: string; name: string; color: string; totalTurns: number; clockedIn: boolean; clockInTime: number | null }[];
-  salonServices: SalonService[];
-  showTurnsChart: boolean;
 }
 
-function HistoryTable({ entries, manicurists, salonServices, showTurnsChart }: HistoryTableProps) {
+function HistoryTable({ entries, manicurists }: HistoryTableProps) {
   const [sortMode, setSortMode] = useState<SortMode>('time');
   const [manicuristFilter, setManicuristFilter] = useState<string>('all');
 
   const manicuristNames = useMemo(() => {
     const fromEntries = entries.map((c) => c.manicuristName);
-    const fromClockedIn = showTurnsChart ? manicurists.filter((m) => m.clockedIn).map((m) => m.name) : [];
-    return Array.from(new Set([...fromEntries, ...fromClockedIn])).sort();
-  }, [entries, manicurists, showTurnsChart]);
+    return Array.from(new Set(fromEntries)).sort();
+  }, [entries, manicurists]);
 
   const sortedEntries = useMemo(() => {
     let list = [...entries];
@@ -81,33 +78,6 @@ function HistoryTable({ entries, manicurists, salonServices, showTurnsChart }: H
   const totalServicesRendered = entries.length;
   const totalTurns = entries.reduce((sum, c) => sum + c.turnValue, 0);
 
-  const turnsPerManicurist = useMemo(() => {
-    if (showTurnsChart) {
-      const clockedIn = manicurists
-        .filter((m) => m.clockedIn)
-        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity));
-
-      // If manicurists are still clocked in, use live totalTurns
-      if (clockedIn.length > 0) {
-        return clockedIn.map((m) => ({
-          name: m.name,
-          turns: m.totalTurns,
-          color: m.color,
-          clockInTime: m.clockInTime ? formatTime(m.clockInTime) : ''
-        }));
-      }
-      // Fallback: everyone clocked out — build from completed entries
-    }
-    const map = new Map<string, { name: string; turns: number; color: string; clockInTime: string }>();
-    for (const e of entries) {
-      if (!map.has(e.manicuristId)) {
-        map.set(e.manicuristId, { name: e.manicuristName, turns: 0, color: e.manicuristColor, clockInTime: '' });
-      }
-      map.get(e.manicuristId)!.turns += e.turnValue;
-    }
-    return Array.from(map.values());
-  }, [entries, manicurists, showTurnsChart]);
-
   return (
     <>
       <div className="grid grid-cols-2 sm:grid-cols-2 gap-4 mb-6">
@@ -120,82 +90,6 @@ function HistoryTable({ entries, manicurists, salonServices, showTurnsChart }: H
           <p className="font-mono text-[10px] text-gray-400 tracking-wider">TOTAL TURNS</p>
         </div>
       </div>
-
-      {turnsPerManicurist.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
-          <h3 className="font-bebas text-sm tracking-[2px] text-gray-500 mb-3">TURNS PER MANICURIST</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={turnsPerManicurist} margin={{ top: 4, right: 30, bottom: 20, left: 0 }}>
-              <XAxis
-                dataKey="name"
-                interval={0}
-                tick={({ x, y, payload, index }: { x: number; y: number; payload: { value: string }; index: number }) => {
-                  const entry = turnsPerManicurist[index];
-                  return (
-                    <g transform={`translate(${x},${y})`}>
-                      <text
-                        x={0}
-                        y={0}
-                        dy={8}
-                        textAnchor="middle"
-                        fill="#6b7280"
-                        fontSize={11}
-                        fontFamily="IBM Plex Mono"
-                      >
-                        {payload.value}
-                      </text>
-                      {entry?.clockInTime && (
-                        <text
-                          x={0}
-                          y={0}
-                          dy={20}
-                          textAnchor="middle"
-                          fill="#9ca3af"
-                          fontSize={9}
-                          fontFamily="IBM Plex Mono"
-                        >
-                          {entry.clockInTime}
-                        </text>
-                      )}
-                    </g>
-                  );
-                }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                tick={{ fontSize: 10, fontFamily: 'IBM Plex Mono', fill: '#9ca3af' }}
-                axisLine={false}
-                tickLine={false}
-                width={30}
-                ticks={(() => {
-                  const maxTurns = Math.max(...turnsPerManicurist.map(m => m.turns), 1);
-                  const maxTick = Math.ceil(maxTurns * 2) / 2;
-                  const ticks = [];
-                  for (let i = 0; i <= maxTick * 2; i++) {
-                    ticks.push(i * 0.5);
-                  }
-                  return ticks;
-                })()}
-                domain={[0, 'dataMax']}
-              />
-              <Tooltip
-                contentStyle={{
-                  fontFamily: 'IBM Plex Mono',
-                  fontSize: 12,
-                  borderRadius: 12,
-                  border: '1px solid #e5e7eb',
-                }}
-              />
-              <Bar dataKey="turns" radius={[8, 8, 0, 0]} maxBarSize={48}>
-                {turnsPerManicurist.map((entry, index) => (
-                  <Cell key={index} fill={entry.color} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
 
       <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center gap-3">
@@ -342,6 +236,32 @@ export default function HistoryScreen() {
     : state.completed.length > 0
       ? state.completed
       : (todayArchivedEntries ?? []);
+
+  // Bar chart data — shown whenever manicurists are clocked in, even before any services complete
+  const turnsPerManicurist = useMemo(() => {
+    if (!viewingPastDay) {
+      const clockedIn = state.manicurists
+        .filter((m) => m.clockedIn)
+        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity));
+      if (clockedIn.length > 0) {
+        return clockedIn.map((m) => ({
+          name: m.name,
+          turns: m.totalTurns,
+          color: m.color,
+          clockInTime: m.clockInTime ? formatTime(m.clockInTime) : '',
+        }));
+      }
+    }
+    // Past day view or everyone clocked out: build from displayed entries
+    const map = new Map<string, { name: string; turns: number; color: string; clockInTime: string }>();
+    for (const e of displayedEntries) {
+      if (!map.has(e.manicuristId)) {
+        map.set(e.manicuristId, { name: e.manicuristName, turns: 0, color: e.manicuristColor, clockInTime: '' });
+      }
+      map.get(e.manicuristId)!.turns += e.turnValue;
+    }
+    return Array.from(map.values());
+  }, [viewingPastDay, state.manicurists, displayedEntries]);
 
   async function handleSave() {
     setSaving(true);
@@ -499,6 +419,59 @@ export default function HistoryScreen() {
         </div>
       )}
 
+      {turnsPerManicurist.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
+          <h3 className="font-bebas text-sm tracking-[2px] text-gray-500 mb-3">TURNS PER MANICURIST</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={turnsPerManicurist} margin={{ top: 4, right: 30, bottom: 20, left: 0 }}>
+              <XAxis
+                dataKey="name"
+                interval={0}
+                tick={({ x, y, payload, index }: { x: number; y: number; payload: { value: string }; index: number }) => {
+                  const entry = turnsPerManicurist[index];
+                  return (
+                    <g transform={`translate(${x},${y})`}>
+                      <text x={0} y={0} dy={8} textAnchor="middle" fill="#6b7280" fontSize={11} fontFamily="IBM Plex Mono">
+                        {payload.value}
+                      </text>
+                      {entry?.clockInTime && (
+                        <text x={0} y={0} dy={20} textAnchor="middle" fill="#9ca3af" fontSize={9} fontFamily="IBM Plex Mono">
+                          {entry.clockInTime}
+                        </text>
+                      )}
+                    </g>
+                  );
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fontSize: 10, fontFamily: 'IBM Plex Mono', fill: '#9ca3af' }}
+                axisLine={false}
+                tickLine={false}
+                width={30}
+                ticks={(() => {
+                  const maxTurns = Math.max(...turnsPerManicurist.map((m) => m.turns), 1);
+                  const maxTick = Math.ceil(maxTurns * 2) / 2;
+                  const ticks = [];
+                  for (let i = 0; i <= maxTick * 2; i++) ticks.push(i * 0.5);
+                  return ticks;
+                })()}
+                domain={[0, 'dataMax']}
+              />
+              <Tooltip
+                contentStyle={{ fontFamily: 'IBM Plex Mono', fontSize: 12, borderRadius: 12, border: '1px solid #e5e7eb' }}
+              />
+              <Bar dataKey="turns" radius={[8, 8, 0, 0]} maxBarSize={48}>
+                {turnsPerManicurist.map((entry, index) => (
+                  <Cell key={index} fill={entry.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
       {displayedEntries.length === 0 ? (
         <EmptyState
           icon={<Clock size={48} />}
@@ -509,8 +482,6 @@ export default function HistoryScreen() {
         <HistoryTable
           entries={displayedEntries}
           manicurists={state.manicurists}
-          salonServices={state.salonServices}
-          showTurnsChart={!viewingPastDay}
         />
       )}
 
