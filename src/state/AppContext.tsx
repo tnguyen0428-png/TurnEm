@@ -218,63 +218,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const completed = (completedRows || []).map((row: Record<string, unknown>) => {
       const dbSvcs = row.services as string[] | null;
       const fallbackSvc = row.service as string;
+      const services = (dbSvcs && dbSvcs.length > 0 ? dbSvcs : [fallbackSvc]).filter(Boolean) as ServiceType[];
+      const rawRequested = Array.isArray(row.requested_services) ? (row.requested_services as string[]) : [];
+
+      // Cleanup: a bug caused ALL services on multi-service split entries to get synthetic
+      // requested_services (even when the client never requested anyone). Detect and clear:
+      // bad pattern = every service in the entry is also in requestedServices (all marked requested)
+      // AND there are 2+ services (single-service genuine requests are safe to keep).
+      const reqSet = new Set(rawRequested);
+      const isBadPattern = services.length > 1
+        && rawRequested.length > 0
+        && services.every((s) => reqSet.has(s as string));
+
       return {
         id: row.id as string,
         clientName: row.client_name as string,
-        services: (dbSvcs && dbSvcs.length > 0 ? dbSvcs : [fallbackSvc]).filter(Boolean) as ServiceType[],
+        services,
         turnValue: Number(row.turn_value) || 0,
         manicuristId: row.manicurist_id as string,
         manicuristName: row.manicurist_name as string,
         manicuristColor: row.manicurist_color as string,
         startedAt: new Date(row.started_at as string).getTime(),
         completedAt: new Date(row.completed_at as string).getTime(),
-        requestedServices: Array.isArray(row.requested_services)
-          ? (row.requested_services as ServiceType[])
-          : undefined,
+        requestedServices: isBadPattern ? undefined : (rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined),
       };
     });
-    dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory } });
 
-    // Cleanup: a bug caused ALL services on split multi-service entries to get synthetic
-    // requested_services in the DB (even when the client never requested anyone). Clear those now.
-    // Safe to run every startup — only touches entries that actually have the bad pattern.
-    {
-      // Find entries where requested_services is non-empty AND equals the full services list
-      // (the synthetic bug pattern — only affects entries with 2+ services)
-      const badEntries = completed.filter((c) => {
-        if (!Array.isArray(c.requestedServices) || c.requestedServices.length === 0) return false;
-        if (c.services.length <= 1) return false; // single-service: likely a real request, leave it
-        const svcSet = new Set(c.services as string[]);
-        return (c.requestedServices as string[]).every((r) => svcSet.has(r));
-      });
-      for (const e of badEntries) {
+    // Persist the cleanup to DB for any bad entries we found above
+    for (const e of completed) {
+      const rawRow = (completedRows || []).find((r: Record<string, unknown>) => r.id === e.id);
+      const rawRequested = Array.isArray(rawRow?.requested_services) ? rawRow.requested_services as string[] : [];
+      if (rawRequested.length > 0 && e.requestedServices === undefined) {
+        // This entry had bad data — clear it in the DB too
         await supabase.from('completed_services').update({ requested_services: [] }).eq('id', e.id);
-        e.requestedServices = undefined;
-      }
-      // Also clean up any daily_history entries that have the same problem
-      const cleanedHistory = dailyHistory.map((day) => ({
-        ...day,
-        entries: day.entries.map((e) => {
-          if (!Array.isArray(e.requestedServices) || e.requestedServices.length === 0) return e;
-          if (e.services.length <= 1) return e;
-          const svcSet = new Set(e.services as string[]);
-          const isBad = (e.requestedServices as string[]).every((r) => svcSet.has(r));
-          return isBad ? { ...e, requestedServices: undefined } : e;
-        }),
-      }));
-      for (const day of cleanedHistory) {
-        const orig = dailyHistory.find((d) => d.id === day.id);
-        const changed = orig && JSON.stringify(orig.entries) !== JSON.stringify(day.entries);
-        if (changed) {
-          await supabase.from('daily_history').update({ entries: day.entries }).eq('id', day.id);
-          dispatch({ type: 'SAVE_DAILY_HISTORY', entry: day });
-        }
-      }
-      if (badEntries.length > 0) {
-        // Re-dispatch fixed completed list to in-memory state
-        dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory: cleanedHistory } });
       }
     }
+
+    // Also clean daily_history entries with the same bad pattern
+    const cleanedHistory = dailyHistory.map((day) => ({
+      ...day,
+      entries: day.entries.map((e) => {
+        const rawReq = Array.isArray(e.requestedServices) ? (e.requestedServices as string[]) : [];
+        if (rawReq.length === 0 || e.services.length <= 1) return e;
+        const reqSet2 = new Set(rawReq);
+        const isBad = (e.services as string[]).every((s) => reqSet2.has(s));
+        return isBad ? { ...e, requestedServices: undefined } : e;
+      }),
+    }));
+    for (const day of cleanedHistory) {
+      const orig = dailyHistory.find((d) => d.id === day.id);
+      const changed = orig && JSON.stringify(orig.entries) !== JSON.stringify(day.entries);
+      if (changed) {
+        await supabase.from('daily_history').update({ entries: day.entries }).eq('id', day.id);
+      }
+    }
+
+    dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory: cleanedHistory } });
 
     // Startup stale-data check: if the app wasn't open at reset time (9pm),
     // queue/completed entries from a previous day carry over. Detect and reset.
