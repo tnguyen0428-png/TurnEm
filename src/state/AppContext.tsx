@@ -132,12 +132,19 @@ function getTodayLA(): string {
   return `${year}-${month}-${day}`;
 }
 
+// Module-level guard: prevents loadInitialData from running more than once per page load,
+// even if Vite Fast Refresh re-mounts the component during development.
+let _dataLoadStarted = false;
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
   const prevStateRef = useRef<AppState>(INITIAL_STATE);
 
   useEffect(() => {
-    loadInitialData();
+    if (!_dataLoadStarted) {
+      _dataLoadStarted = true;
+      loadInitialData();
+    }
   }, []);
 
   async function loadInitialData() {

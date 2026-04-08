@@ -293,6 +293,7 @@ export default function HistoryScreen() {
 
   return (
     <div className="max-w-5xl mx-auto p-4 sm:p-6">
+
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <h2 className="font-bebas text-2xl tracking-[3px] text-gray-900">
