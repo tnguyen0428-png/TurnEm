@@ -579,10 +579,11 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
     // Assignable entries — assign immediately
     for (const [mId, group] of manicuristGroups) {
-      const serviceReqs = group.services.map((s) => ({
-        service: s,
-        manicuristIds: [mId],
-      }));
+      // Only preserve service requests the CLIENT originally made — don't synthesize requests
+      // just because we're assigning a manicurist. Otherwise every service ends up with R in history.
+      const serviceReqs = group.services
+        .filter((s) => (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.length > 0))
+        .map((s) => ({ service: s as ServiceType, manicuristIds: [mId] }));
 
       const entry: QueueEntry = {
         id: crypto.randomUUID(),
