@@ -122,11 +122,23 @@ function getDistinctServices(
   return result;
 }
 
-function getEligibleForService(service: ServiceType, manicurists: Manicurist[]): Manicurist[] {
+function isWaxService(service: ServiceType, salonServices: SalonService[]): boolean {
+  return salonServices.find((s) => s.name === service)?.category === 'Wax Services';
+}
+
+function getEligibleForService(service: ServiceType, manicurists: Manicurist[], salonServices?: SalonService[]): Manicurist[] {
+  const wax = salonServices ? isWaxService(service, salonServices) : false;
   return manicurists
     .filter((m) => m.clockedIn && m.status === 'available')
     .filter((m) => m.skills.includes(service))
     .sort((a, b) => {
+      if (wax) {
+        // Wax: prefer no wax yet, then earliest clock-in — turns are irrelevant
+        const aW = a.hasWax ? 1 : 0;
+        const bW = b.hasWax ? 1 : 0;
+        if (aW !== bW) return aW - bW;
+        return (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity);
+      }
       if (Math.floor(a.totalTurns) !== Math.floor(b.totalTurns)) return Math.floor(a.totalTurns) - Math.floor(b.totalTurns);
       const aTime = a.clockInTime ?? Infinity;
       const bTime = b.clockInTime ?? Infinity;
@@ -135,7 +147,7 @@ function getEligibleForService(service: ServiceType, manicurists: Manicurist[]):
 }
 
 function getSuggestedForService(service: ServiceType, manicurists: Manicurist[], salonServices: SalonService[], excludeIds: Set<string> = new Set()): Manicurist | null {
-  const eligible = getEligibleForService(service, manicurists).filter((m) => !excludeIds.has(m.id));
+  const eligible = getEligibleForService(service, manicurists, salonServices).filter((m) => !excludeIds.has(m.id));
   if (eligible.length === 0) return null;
   const svc = salonServices.find((s) => s.name === service);
   if (svc?.isFourthPositionSpecial) {
@@ -198,9 +210,17 @@ function SingleServiceAssign({ client }: { client: QueueEntry }) {
   const sam = clientHasAcrylic
     ? state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null
     : null;
+  const clientIsWax = client.services.length > 0 && isWaxService(client.services[0], state.salonServices);
+
   const baseList = [...eligible, ...requestedNotEligible]
     .filter(m => !sam || m.id !== sam.id)
     .sort((a, b) => {
+      if (clientIsWax) {
+        const aW = a.hasWax ? 1 : 0;
+        const bW = b.hasWax ? 1 : 0;
+        if (aW !== bW) return aW - bW;
+        return (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity);
+      }
       const aReq = requestedIds.has(a.id) ? 0 : 1;
       const bReq = requestedIds.has(b.id) ? 0 : 1;
       if (aReq !== bReq) return aReq - bReq;
@@ -493,7 +513,7 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
   const allAssigned = Object.values(assignments).every((id) => id !== null);
 
   function getEligibleForRow(service: ServiceType, rowKey: string): (Manicurist & { _takenByOther: boolean; _isSuggested: boolean; _isSamPreferred: boolean; _isBusySam: boolean })[] {
-    const skilled = getEligibleForService(service, state.manicurists);
+    const skilled = getEligibleForService(service, state.manicurists, state.salonServices);
     const takenByOtherIds = new Set(
       Object.entries(assignments)
         .filter(([k, id]) => k !== rowKey && id !== null)
