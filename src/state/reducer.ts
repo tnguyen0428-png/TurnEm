@@ -1,12 +1,24 @@
-import type { AppState, SalonService, ServiceType } from '../types';
+import type { AppState, Manicurist, SalonService, ServiceType } from '../types';
 import type { AppAction } from './actions';
 import { getRequestedTurnValue } from '../constants/services';
 
-function isClientFourthPositionSpecial(services: ServiceType[], salonServices: SalonService[]): boolean {
-  return services.some((s) => {
-    const svc = salonServices.find((sv) => sv.name === s);
-    return svc?.isFourthPositionSpecial === true;
-  });
+function isClientWaxService(services: ServiceType[], salonServices: SalonService[]): boolean {
+  const waxNames = new Set(salonServices.filter((s) => s.category === 'Wax Services').map((s) => s.name));
+  return services.some((s) => waxNames.has(s));
+}
+
+function nextWaxSlot(m: Manicurist): 'hasWax' | 'hasWax2' | 'hasWax3' | null {
+  if (!m.hasWax)  return 'hasWax';
+  if (!m.hasWax2) return 'hasWax2';
+  if (!m.hasWax3) return 'hasWax3';
+  return null;
+}
+
+function nextCheckSlot(m: Manicurist): 'hasFourthPositionSpecial' | 'hasCheck2' | 'hasCheck3' | null {
+  if (!m.hasFourthPositionSpecial) return 'hasFourthPositionSpecial';
+  if (!m.hasCheck2)                return 'hasCheck2';
+  if (!m.hasCheck3)                return 'hasCheck3';
+  return null;
 }
 
 export const INITIAL_STATE: AppState = {
@@ -125,7 +137,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (!client) return state;
       const now = Date.now();
       const turns = Number(client.turnValue) || 0;
-      const is4thSpecial = isClientFourthPositionSpecial(client.services, state.salonServices);
+      const isWax = isClientWaxService(client.services, state.salonServices);
       return {
         ...state,
         queue: state.queue.map((c) =>
@@ -133,17 +145,19 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             ? { ...c, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: turns }
             : c
         ),
-        manicurists: state.manicurists.map((m) =>
-          m.id === action.manicuristId
-            ? {
-                ...m,
-                status: 'busy' as const,
-                currentClient: action.clientId,
-                totalTurns: m.totalTurns + turns,
-                hasFourthPositionSpecial: is4thSpecial ? true : m.hasFourthPositionSpecial,
-              }
-            : m
-        ),
+        manicurists: state.manicurists.map((m) => {
+          if (m.id !== action.manicuristId) return m;
+          const waxSlot   = isWax ? nextWaxSlot(m)   : null;
+          const checkSlot = nextCheckSlot(m);
+          return {
+            ...m,
+            status: 'busy' as const,
+            currentClient: action.clientId,
+            totalTurns: m.totalTurns + turns,
+            ...(checkSlot ? { [checkSlot]: true } : {}),
+            ...(waxSlot   ? { [waxSlot]:   true } : {}),
+          };
+        }),
         pendingAssignment: null,
         selectedClient: null,
         modal: null,
@@ -153,19 +167,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'REQUEST_ASSIGN': {
       const now = Date.now();
       const requestTurns = Number(action.client.turnValue) || 0;
+      const isWax = isClientWaxService(action.client.services, state.salonServices);
       return {
         ...state,
         queue: [...state.queue, { ...action.client, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: requestTurns }],
-        manicurists: state.manicurists.map((m) =>
-          m.id === action.manicuristId
-            ? {
-                ...m,
-                status: 'busy' as const,
-                currentClient: action.client.id,
-                totalTurns: m.totalTurns + requestTurns,
-              }
-            : m
-        ),
+        manicurists: state.manicurists.map((m) => {
+          if (m.id !== action.manicuristId) return m;
+          const waxSlot   = isWax ? nextWaxSlot(m)   : null;
+          const checkSlot = nextCheckSlot(m);
+          return {
+            ...m,
+            status: 'busy' as const,
+            currentClient: action.client.id,
+            totalTurns: m.totalTurns + requestTurns,
+            ...(checkSlot ? { [checkSlot]: true } : {}),
+            ...(waxSlot   ? { [waxSlot]:   true } : {}),
+          };
+        }),
       };
     }
 
@@ -177,12 +195,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
         return client;
       });
-      const assignedMap = new Map<string, { clientId: string; turns: number }>();
+      const assignedMap = new Map<string, { clientId: string; turns: number; isWax: boolean }>();
       for (const { client, manicuristId } of action.entries) {
         if (manicuristId) {
           assignedMap.set(manicuristId, {
             clientId: client.id,
             turns: client.turnValue,
+            isWax: isClientWaxService(client.services, state.salonServices),
           });
         }
       }
@@ -191,15 +210,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         queue: [...state.queue, ...newQueueEntries],
         manicurists: state.manicurists.map((m) => {
           const assignment = assignedMap.get(m.id);
-          if (assignment) {
-            return {
-              ...m,
-              status: 'busy' as const,
-              currentClient: assignment.clientId,
-              totalTurns: m.totalTurns + assignment.turns,
-            };
-          }
-          return m;
+          if (!assignment) return m;
+          const waxSlot   = assignment.isWax ? nextWaxSlot(m)   : null;
+          const checkSlot = nextCheckSlot(m);
+          return {
+            ...m,
+            status: 'busy' as const,
+            currentClient: assignment.clientId,
+            totalTurns: m.totalTurns + assignment.turns,
+            ...(checkSlot ? { [checkSlot]: true } : {}),
+            ...(waxSlot   ? { [waxSlot]:   true } : {}),
+          };
         }),
       };
     }
@@ -212,13 +233,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
         return client;
       });
-      const assignMap = new Map<string, { clientId: string; turns: number; is4thSpecial: boolean }>();
+      const assignMap = new Map<string, { clientId: string; turns: number; isWax: boolean }>();
       for (const { client, manicuristId } of action.entries) {
         if (manicuristId) {
           assignMap.set(manicuristId, {
             clientId: client.id,
             turns: client.turnValue,
-            is4thSpecial: isClientFourthPositionSpecial(client.services, state.salonServices),
+            isWax: isClientWaxService(client.services, state.salonServices),
           });
         }
       }
@@ -230,16 +251,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ],
         manicurists: state.manicurists.map((m) => {
           const assignment = assignMap.get(m.id);
-          if (assignment) {
-            return {
-              ...m,
-              status: 'busy' as const,
-              currentClient: assignment.clientId,
-              totalTurns: m.totalTurns + assignment.turns,
-              hasFourthPositionSpecial: assignment.is4thSpecial ? true : m.hasFourthPositionSpecial,
-            };
-          }
-          return m;
+          if (!assignment) return m;
+          const waxSlot   = assignment.isWax ? nextWaxSlot(m)   : null;
+          const checkSlot = nextCheckSlot(m);
+          return {
+            ...m,
+            status: 'busy' as const,
+            currentClient: assignment.clientId,
+            totalTurns: m.totalTurns + assignment.turns,
+            ...(checkSlot ? { [checkSlot]: true } : {}),
+            ...(waxSlot   ? { [waxSlot]:   true } : {}),
+          };
         }),
         pendingAssignment: null,
         selectedClient: null,

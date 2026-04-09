@@ -5,13 +5,13 @@ import { appReducer, INITIAL_STATE } from './reducer';
 import { supabase } from '../lib/supabase';
 import { defaultSalonServices } from '../constants/salonServices';
 import { defaultManicurists } from '../constants/manicurists';
-import { getLocalDateStr } from '../utils/time';
+import { getLocalDateStr, getTodayLA } from '../utils/time';
 
 interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
   saveTodayHistory: (dateOverride?: string) => Promise<boolean>;
-  archiveTodayIfNeeded: () => Promise<void>;
+  archiveTodayIfNeeded: (skipHourCheck?: boolean) => Promise<void>;
   syncError: string | null;
   clearSyncError: () => void;
 }
@@ -121,18 +121,6 @@ function mapDbCalendarDay(row: Record<string, unknown>): CalendarDay {
   };
 }
 
-function getTodayLA(): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Los_Angeles',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date());
-  const year = parts.find((p) => p.type === 'year')?.value ?? '';
-  const month = parts.find((p) => p.type === 'month')?.value ?? '';
-  const day = parts.find((p) => p.type === 'day')?.value ?? '';
-  return `${year}-${month}-${day}`;
-}
 
 // Module-level guard: prevents loadInitialData from running more than once per page load,
 // even if Vite Fast Refresh re-mounts the component during development.
@@ -294,9 +282,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory: cleanedHistory } });
 
-    // Startup stale-data check: if the app wasn't open at reset time (9pm),
-    // queue/completed entries from a previous day carry over. Detect and reset.
+    // Startup stale-data check: two conditions trigger an archive+reset on load:
+    // 1. system_state.last_archive_date is behind today — the 11:59pm timer missed (app closed,
+    //    or stale closure bug prevented it from firing). Archive any missed day's data now.
+    // 2. Stale completed/queue entries exist with dates before today — belt-and-suspenders catch.
     const today = getTodayLA();
+    const { data: sysStateRow } = await supabase.from('system_state').select('last_archive_date').eq('id', 'singleton').single();
+    const lastArchiveDate = (sysStateRow as Record<string,unknown> | null)?.last_archive_date as string | null;
+    if (lastArchiveDate && lastArchiveDate < today) {
+      console.log('[startup] missed reset detected — system_state.last_archive_date=', lastArchiveDate, 'today=', today);
+    }
     const staleCompleted = completed.filter(c => getLocalDateStr(new Date(c.completedAt)) < today);
     const staleQueue = queue.filter(c => getLocalDateStr(new Date(c.arrivedAt)) < today);
 
@@ -340,6 +335,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       dispatch({ type: 'DAILY_RESET' });
+
+      // Update system_state so future startups know the reset ran
+      const { error: ssErr } = await supabase
+        .from('system_state')
+        .upsert({ id: 'singleton', last_archive_date: today, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      if (ssErr) console.error('[startup] failed to update system_state:', ssErr);
+      else console.log('[startup] system_state updated to', today);
+    } else if (lastArchiveDate && lastArchiveDate < today) {
+      // system_state is stale but no stale entries found in DB — the reset DID clear the DB
+      // but system_state was never updated. Fix the date so future startups dont re-run.
+      await supabase
+        .from('system_state')
+        .upsert({ id: 'singleton', last_archive_date: today, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      console.log('[startup] system_state was stale with no stale data — updated to', today);
     }
   }
 
@@ -364,9 +373,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     dispatch({ type: 'SAVE_DAILY_HISTORY', entry });
     return true;
-  }, [state.completed, state.dailyHistory]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Intentionally empty — reads completedRef/dailyHistoryRef, never stale state
 
-  const archiveTodayIfNeeded = useCallback(async () => {
+  const archiveTodayIfNeeded = useCallback(async (skipHourCheck = false) => {
     const now = new Date();
     const laHour = Number(
       new Intl.DateTimeFormat('en-US', {
@@ -375,7 +385,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         hour12: false,
       }).format(now)
     );
-    if (laHour < 23 || laHour >= 24) {
+    // The hour check is bypassed when called from startup (skipHourCheck=true),
+    // since a missed reset from a previous day should always run regardless of current time.
+    if (!skipHourCheck && (laHour < 23 || laHour >= 24)) {
       console.error('[archiveTodayIfNeeded] aborted — not within rollover window', { laHour });
       return;
     }
@@ -387,6 +399,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     dispatch({ type: 'DAILY_RESET' });
+    // Write today's date to system_state so the startup check knows the reset ran.
+    const archiveDate = getTodayLA();
+    const { error: ssError } = await supabase
+      .from('system_state')
+      .upsert({ id: 'singleton', last_archive_date: archiveDate, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (ssError) console.error('[archiveTodayIfNeeded] failed to update system_state:', ssError);
+    else console.log('[archiveTodayIfNeeded] reset complete, system_state updated to', archiveDate);
   }, [saveTodayHistory]);
 
   useEffect(() => {

@@ -205,11 +205,11 @@ function SingleServiceAssign({ client }: { client: QueueEntry }) {
     (m) => requestedIds.has(m.id) && !eligible.find((e) => e.id === m.id) && m.clockedIn && m.status === 'available'
   );
 
-  // Sam priority: find Sam if clocked in and client has any acrylic service
+  // Sam priority: find Sam if clocked in, client has an acrylic service, AND Sam has that service in his skills
   const clientHasAcrylic = client.services.some(s => isAcrylicService(s, state.salonServices));
-  const sam = clientHasAcrylic
-    ? state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null
-    : null;
+  const samManicurist = state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null;
+  const samHasService = samManicurist ? client.services.some(s => samManicurist.skills.includes(s)) : false;
+  const sam = clientHasAcrylic && samHasService ? samManicurist : null;
   const clientIsWax = client.services.length > 0 && isWaxService(client.services[0], state.salonServices);
 
   const baseList = [...eligible, ...requestedNotEligible]
@@ -474,11 +474,13 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [dismissedSamPrompt, setDismissedSamPrompt] = useState(false);
 
-  // Wait-for-Sam: check if any of the client's services is acrylic
+  // Wait-for-Sam: check if any of the client's services is acrylic AND Sam has that service in his skills
   const clientHasAcrylic = client.services.some(s => isAcrylicService(s, state.salonServices));
-  const sam = clientHasAcrylic
-    ? state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null
-    : null;
+  const samManicurist = state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null;
+  const samHasAcrylicSkill = samManicurist
+    ? client.services.some(s => isAcrylicService(s, state.salonServices) && samManicurist.skills.includes(s))
+    : false;
+  const sam = clientHasAcrylic && samHasAcrylicSkill ? samManicurist : null;
   const showSamPrompt = !!sam && sam.status === 'busy' && !dismissedSamPrompt;
   const samCurrentClient = sam ? state.queue.find(c => c.id === sam.currentClient) ?? null : null;
   const samDurationMs = sam ? getClientDurationMs(sam, state.queue, state.salonServices) : 0;
@@ -529,11 +531,13 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
     const rowData = serviceRows.find(r => r.uniqueKey === rowKey);
     const explicitlyRequestedId = rowData?.requestedId ?? null;
 
-    // Sam preferred for acrylic rows that don't already have an explicit request
+    // Sam preferred for acrylic rows that don't already have an explicit request,
+    // AND only if Sam has that specific service in his skills
     const rowIsAcrylic = isAcrylicService(service, state.salonServices);
-    const samForRow = rowIsAcrylic && !explicitlyRequestedId
+    const samCandidate = rowIsAcrylic && !explicitlyRequestedId
       ? state.manicurists.find(m => m.name.toLowerCase() === 'sam' && m.clockedIn) ?? null
       : null;
+    const samForRow = samCandidate?.skills.includes(service) ? samCandidate : null;
 
     // The "preferred" manicurist for this row: explicit request takes priority over Sam
     const preferredId = explicitlyRequestedId ?? samForRow?.id ?? null;
