@@ -143,6 +143,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const clearSyncError = useCallback(() => setSyncError(null), []);
   const prevStateRef = useRef<AppState>(INITIAL_STATE);
+  const completedRef = useRef<AppState['completed']>(INITIAL_STATE.completed);
 
   useEffect(() => {
     if (!_dataLoadStarted) {
@@ -340,7 +341,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const saveTodayHistory = useCallback(async (dateOverride?: string): Promise<boolean> => {
-    if (state.completed.length === 0) return true; // nothing to save — not an error
+    const completed = completedRef.current;
+    if (completed.length === 0) return true; // nothing to save — not an error
     const date = dateOverride ?? getTodayLA();
     // Reuse the existing entry's ID for this date so repeated saves don't generate a new
     // UUID each time (which would fight the onConflict 'date' upsert and change the stored id).
@@ -348,7 +350,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const entry: DailyHistory = {
       id: existingEntry?.id ?? crypto.randomUUID(),
       date,
-      entries: state.completed,
+      entries: completed,
     };
     const { error } = await supabase
       .from('daily_history')
@@ -402,6 +404,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prev.turnCriteria !== state.turnCriteria) syncTurnCriteria(state.turnCriteria, setSyncError);
     if (prev.calendarDays !== state.calendarDays) syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncError);
     prevStateRef.current = state;
+    completedRef.current = state.completed;
   }, [state]);
 
   useEffect(() => {
@@ -519,15 +522,6 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
       requested_services: c.requestedServices ?? [],
     }, { onConflict: 'id' });
     if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
-  // When completed is cleared (daily reset or clear history), delete only the specific
-  // IDs that were previously tracked — never use neq() which would wipe the whole table.
-  if (completed.length === 0 && prev.length > 0) {
-    const idsToDelete = [...prevIds];
-    if (idsToDelete.length > 0) {
-      const { error } = await supabase.from('completed_services').delete().in('id', idsToDelete);
-      if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-    }
   }
 }
 
