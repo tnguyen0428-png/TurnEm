@@ -18,7 +18,7 @@ import SmsToast from './components/shared/SmsToast';
 import { Loader2 } from 'lucide-react';
 
 function AppContent() {
-  const { state } = useApp();
+  const { state, syncError, clearSyncError } = useApp();
 
   if (!state.loaded) {
     return (
@@ -33,6 +33,26 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-[#fafafa] flex flex-col">
+      {syncError && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 9999,
+          background: '#dc2626',
+          color: 'white',
+          padding: '10px 16px',
+          fontSize: '14px',
+          fontWeight: 600,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          ⚠️ {syncError}
+          <button onClick={clearSyncError} style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer' }}>✕</button>
+        </div>
+      )}
       <TabBar />
       <main className="flex-1 overflow-hidden">
         {state.view === 'queue' && <QueueScreen />}
