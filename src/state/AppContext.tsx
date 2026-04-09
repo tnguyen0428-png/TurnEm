@@ -144,6 +144,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const clearSyncError = useCallback(() => setSyncError(null), []);
   const prevStateRef = useRef<AppState>(INITIAL_STATE);
   const completedRef = useRef<AppState['completed']>(INITIAL_STATE.completed);
+  const dailyHistoryRef = useRef<AppState['dailyHistory']>(INITIAL_STATE.dailyHistory);
 
   useEffect(() => {
     if (!_dataLoadStarted) {
@@ -346,7 +347,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const date = dateOverride ?? getTodayLA();
     // Reuse the existing entry's ID for this date so repeated saves don't generate a new
     // UUID each time (which would fight the onConflict 'date' upsert and change the stored id).
-    const existingEntry = state.dailyHistory.find(h => h.date === date);
+    const existingEntry = dailyHistoryRef.current.find(h => h.date === date);
     const entry: DailyHistory = {
       id: existingEntry?.id ?? crypto.randomUUID(),
       date,
@@ -405,6 +406,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prev.calendarDays !== state.calendarDays) syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncError);
     prevStateRef.current = state;
     completedRef.current = state.completed;
+    dailyHistoryRef.current = state.dailyHistory;
   }, [state]);
 
   useEffect(() => {
