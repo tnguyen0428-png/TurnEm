@@ -267,7 +267,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const rawRequested = Array.isArray(rawRow?.requested_services) ? rawRow.requested_services as string[] : [];
       if (rawRequested.length > 0 && e.requestedServices === undefined) {
         // This entry had bad data — clear it in the DB too
-        await supabase.from('completed_services').update({ requested_services: [] }).eq('id', e.id);
+        const { error: cleanupError } = await supabase.from('completed_services').update({ requested_services: [] }).eq('id', e.id);
+        if (cleanupError) console.error('[loadInitialData] cleanup error:', cleanupError);
       }
     }
 
@@ -286,7 +287,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const orig = dailyHistory.find((d) => d.id === day.id);
       const changed = orig && JSON.stringify(orig.entries) !== JSON.stringify(day.entries);
       if (changed) {
-        await supabase.from('daily_history').update({ entries: day.entries }).eq('id', day.id);
+        const { error: cleanupError } = await supabase.from('daily_history').update({ entries: day.entries }).eq('id', day.id);
+        if (cleanupError) console.error('[loadInitialData] cleanup error:', cleanupError);
       }
     }
 
