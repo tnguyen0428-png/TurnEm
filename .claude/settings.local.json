@@ -26,7 +26,8 @@
       "Bash(SUPABASE_ACCESS_TOKEN=sbp_311fd3cd3e91e2431ac008e3e1a24aef76519371 /c/Users/ethan/supabase.exe db push)",
       "Bash(SUPABASE_ACCESS_TOKEN=sbp_311fd3cd3e91e2431ac008e3e1a24aef76519371 /c/Users/ethan/supabase.exe functions deploy nightly-save-history)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

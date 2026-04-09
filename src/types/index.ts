@@ -1,4 +1,4 @@
-export type ServiceType = 'Manicure' | 'Pedicure' | 'Acrylics/Full' | 'Fills' | 'Waxing';
+export type ServiceType = string;
 
 export type ManicuristStatus = 'available' | 'busy' | 'break';
 export type ClientStatus = 'waiting' | 'inProgress' | 'complete';
