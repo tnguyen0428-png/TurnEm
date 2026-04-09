@@ -210,6 +210,7 @@ export default function HistoryScreen() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const today = getTodayDateStr();
+  const todayAlreadySaved = state.dailyHistory.some((h) => h.date === today);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
@@ -340,7 +341,13 @@ export default function HistoryScreen() {
           {!viewingPastDay && state.completed.length > 0 && (
             <button
               onClick={() => setShowClearConfirm(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-red-200 text-red-500 font-mono text-xs font-semibold hover:bg-red-50 transition-colors"
+              disabled={!todayAlreadySaved}
+              title={!todayAlreadySaved ? 'Save today first before clearing' : "Clear today's history"}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 font-mono text-xs font-semibold transition-colors ${
+                !todayAlreadySaved
+                  ? 'border-gray-200 text-gray-300 cursor-not-allowed'
+                  : 'border-red-200 text-red-500 hover:bg-red-50'
+              }`}
             >
               <Trash2 size={14} />
               CLEAR
@@ -495,7 +502,10 @@ export default function HistoryScreen() {
 
       {showClearConfirm && (
         <ConfirmDialog
-          message="Clear all history? This will reset today's completed services."
+          message={!todayAlreadySaved
+            ? "Today's data has NOT been saved. Clearing will permanently lose all services. Save first!"
+            : "Clear all history? This will reset today's completed services."
+          }
           confirmLabel="Clear All"
           danger
           onConfirm={() => {
