@@ -286,8 +286,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (!client) {
         return { ...state, manicurists: updatedManicurists, queue: updatedQueue };
       }
+      // Only mark a service as requested if the completing manicurist was specifically
+      // the one requested for it. Without this check, a request for Manicurist X on
+      // Service A would incorrectly show an R badge on Manicurist Y's Service B entry.
       const requestedServices = (client.serviceRequests || [])
-        .filter((r) => r.manicuristIds && r.manicuristIds.length > 0)
+        .filter((r) => r.manicuristIds && r.manicuristIds.includes(action.manicuristId))
         .map((r) => r.service);
       const completedEntry = {
         id: crypto.randomUUID(),

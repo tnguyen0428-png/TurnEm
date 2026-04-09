@@ -13,14 +13,29 @@ export default function EditClientModal() {
   const clientId = client.id;
 
   const initialSelectedServices = useMemo(() => {
+    // Track how many times each service name has been mapped so that when a client
+    // has the same service multiple times (e.g. 3x Gel Pedicure) and only some of them
+    // have a manicurist request, we assign the request to the correct instance rather
+    // than spreading it across all instances of that service.
+    const requestIndexMap = new Map<string, number>();
+
     return client.services.map((serviceName) => {
       const svc = state.salonServices.find((s) => s.name === serviceName);
       const req = (client.serviceRequests || []).find((r) => r.service === serviceName);
+
+      const currentIndex = requestIndexMap.get(serviceName) ?? 0;
+      requestIndexMap.set(serviceName, currentIndex + 1);
+
+      let requestedManicuristIds: string[] = [];
+      if (req && req.manicuristIds.length > 0 && currentIndex < req.manicuristIds.length) {
+        requestedManicuristIds = [req.manicuristIds[currentIndex]];
+      }
+
       return {
         serviceId: svc?.id || '',
         serviceName,
         turnValue: svc?.turnValue ?? 0.5,
-        requestedManicuristIds: req?.manicuristIds || [],
+        requestedManicuristIds,
       };
     });
   }, [client, state.salonServices]);

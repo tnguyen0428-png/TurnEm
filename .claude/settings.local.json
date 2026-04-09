@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(supabase --version)",
+      "Bash(winget --version)",
+      "Bash(scoop --version)",
+      "Bash(choco --version)",
+      "Bash(scoop bucket:*)",
+      "Bash(scoop install:*)",
+      "Bash(where scoop:*)",
+      "Read(//c/Users/ethan/scoop/**)",
+      "Read(//c/Users/ethan/AppData/Local/**)",
+      "Read(//c/ProgramData/**)",
+      "Bash(powershell.exe -Command \"scoop --version\")",
+      "Bash(powershell.exe:*)",
+      "Read(//c/Users/ethan/**)",
+      "Bash(tar -xzf supabase_cli.tar.gz)",
+      "Bash(ls supabase*)",
+      "Bash(/c/Users/ethan/supabase.exe:*)",
+      "Bash(SUPABASE_ACCESS_TOKEN=sbp_311fd3cd3e91e2431ac008e3e1a24aef76519371 /c/Users/ethan/supabase.exe link --project-ref cpgiqgyfoqlczpvbwfic)",
+      "Bash(SUPABASE_ACCESS_TOKEN=sbp_311fd3cd3e91e2431ac008e3e1a24aef76519371 /c/Users/ethan/supabase.exe db push)",
+      "Bash(SUPABASE_ACCESS_TOKEN=sbp_311fd3cd3e91e2431ac008e3e1a24aef76519371 /c/Users/ethan/supabase.exe functions deploy nightly-save-history)"
+    ]
+  }
+}

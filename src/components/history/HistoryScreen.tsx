@@ -206,6 +206,7 @@ export default function HistoryScreen() {
   const { state, dispatch, saveTodayHistory } = useApp();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const today = getTodayDateStr();
@@ -265,8 +266,10 @@ export default function HistoryScreen() {
 
   async function handleSave() {
     setSaving(true);
-    await saveTodayHistory();
+    setSaveError(false);
+    const success = await saveTodayHistory();
     setSaving(false);
+    if (!success) setSaveError(true);
   }
 
   const monthDays = getMonthDays(calendarMonth.year, calendarMonth.month);
@@ -313,10 +316,14 @@ export default function HistoryScreen() {
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-emerald-200 text-emerald-600 font-mono text-xs font-semibold hover:bg-emerald-50 transition-colors disabled:opacity-50"
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 font-mono text-xs font-semibold transition-colors disabled:opacity-50 ${
+                saveError
+                  ? 'border-red-300 text-red-600 hover:bg-red-50'
+                  : 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'
+              }`}
             >
               <Save size={14} />
-              {saving ? 'SAVING...' : 'SAVE TODAY'}
+              {saving ? 'SAVING...' : saveError ? 'SAVE FAILED — RETRY' : 'SAVE TODAY'}
             </button>
           )}
           <button

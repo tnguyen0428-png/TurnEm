@@ -10,7 +10,7 @@ import { getLocalDateStr } from '../utils/time';
 interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
-  saveTodayHistory: (dateOverride?: string) => Promise<void>;
+  saveTodayHistory: (dateOverride?: string) => Promise<boolean>;
   archiveTodayIfNeeded: () => Promise<void>;
 }
 
@@ -149,11 +149,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   async function loadInitialData() {
     const [
-      { data: staffRows },
+      { data: staffRows, error: staffError },
       { data: queueRows },
       { data: completedRows },
       { data: appointmentRows },
-      { data: serviceRows },
+      { data: serviceRows, error: serviceError },
       { data: criteriaRows },
       { data: calendarRows },
       { data: dailyHistoryRows },
@@ -169,7 +169,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ]);
 
     const appointments = (appointmentRows || []).map(mapDbAppointment);
-    if (!serviceRows || serviceRows.length === 0) {
+    // Only seed defaults when the query itself succeeded and genuinely returned nothing.
+    // If serviceError is set it means the DB call failed — we must not overwrite with defaults.
+    if (!serviceError && (!serviceRows || serviceRows.length === 0)) {
       for (const s of defaultSalonServices) {
         const { error } = await supabase.from('salon_services').upsert({
           id: s.id,
@@ -197,7 +199,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }));
 
     let manicurists = (staffRows || []).map(mapDbManicurist);
-    if (manicurists.length === 0) {
+    // Guard: only seed default manicurists when the query succeeded with zero rows.
+    // A staffError means the DB call failed — seeding here would replace real data with defaults.
+    if (!staffError && manicurists.length === 0) {
       for (const m of defaultManicurists) {
         const { error } = await supabase.from('manicurists').insert({
           id: m.id,
@@ -321,27 +325,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await supabase.from('queue_entries').delete().eq('id', c.id);
       }
       if (staleCompleted.length > 0) {
-        await supabase.from('completed_services').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        // Delete only the specific stale IDs — never use neq() here as it would wipe the whole table
+        const staleIds = staleCompleted.map(c => c.id);
+        const { error: deleteErr } = await supabase.from('completed_services').delete().in('id', staleIds);
+        if (deleteErr) console.error('[startup] failed to delete stale completed_services:', deleteErr);
       }
 
       dispatch({ type: 'DAILY_RESET' });
     }
   }
 
-  const saveTodayHistory = useCallback(async (dateOverride?: string) => {
-    if (state.completed.length === 0) return;
+  const saveTodayHistory = useCallback(async (dateOverride?: string): Promise<boolean> => {
+    if (state.completed.length === 0) return true; // nothing to save — not an error
     const date = dateOverride ?? getTodayLA();
+    // Reuse the existing entry's ID for this date so repeated saves don't generate a new
+    // UUID each time (which would fight the onConflict 'date' upsert and change the stored id).
+    const existingEntry = state.dailyHistory.find(h => h.date === date);
     const entry: DailyHistory = {
-      id: crypto.randomUUID(),
+      id: existingEntry?.id ?? crypto.randomUUID(),
       date,
       entries: state.completed,
     };
     const { error } = await supabase
       .from('daily_history')
       .upsert({ id: entry.id, date: entry.date, entries: entry.entries }, { onConflict: 'date' });
-    if (error) console.error('[saveTodayHistory] upsert error:', error);
+    if (error) {
+      console.error('[saveTodayHistory] upsert error:', error);
+      return false; // caller must NOT dispatch or reset on failure
+    }
     dispatch({ type: 'SAVE_DAILY_HISTORY', entry });
-  }, [state.completed]);
+    return true;
+  }, [state.completed, state.dailyHistory]);
 
   const archiveTodayIfNeeded = useCallback(async () => {
     const now = new Date();
@@ -352,17 +366,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
         hour12: false,
       }).format(now)
     );
-    if (laHour < 20 || laHour >= 24) {
+    if (laHour < 23 || laHour >= 24) {
       console.error('[archiveTodayIfNeeded] aborted — not within rollover window', { laHour });
       return;
     }
-    await saveTodayHistory();
+    const saved = await saveTodayHistory();
+    if (!saved) {
+      // Save failed — do NOT reset. Keeping today's data in memory is safer than
+      // wiping it. The scheduler will retry on the next tick.
+      console.error('[archiveTodayIfNeeded] save failed — skipping DAILY_RESET to prevent data loss');
+      return;
+    }
     dispatch({ type: 'DAILY_RESET' });
   }, [saveTodayHistory]);
 
   useEffect(() => {
     if (!state.loaded) return;
     const prev = prevStateRef.current;
+    // On the very first render after loadInitialData dispatches LOAD_STATE, prev still holds
+    // INITIAL_STATE (all empty arrays). Syncing here would push empty state back to the DB
+    // and race with the just-completed fetch. Skip this first run and just advance the ref.
+    if (!prev.loaded) {
+      prevStateRef.current = state;
+      return;
+    }
     if (prev.manicurists !== state.manicurists) syncManicurists(state.manicurists);
     if (prev.queue !== state.queue) syncQueue(state.queue);
     if (prev.completed !== state.completed) syncCompleted(state.completed, prev.completed);
@@ -389,9 +416,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const laMinute = Number(parts.find(p => p.type === 'minute')?.value ?? '0');
       const laSecond = Number(parts.find(p => p.type === 'second')?.value ?? '0');
 
-      const CLOSE_HOUR = 21; // 9pm LA
+      const CLOSE_HOUR = 23; // 11pm LA — targets 11:59pm
       const currentLaSeconds = laHour * 3600 + laMinute * 60 + laSecond;
-      const targetLaSeconds  = CLOSE_HOUR * 3600;
+      const targetLaSeconds  = CLOSE_HOUR * 3600 + 59 * 60; // 11:59pm LA
       let deltaSeconds = targetLaSeconds - currentLaSeconds;
       if (deltaSeconds <= 0) deltaSeconds += 24 * 3600; // already past 9pm — target tomorrow
       return deltaSeconds * 1000;
@@ -489,9 +516,14 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
     }, { onConflict: 'id' });
     if (error) console.error('[syncCompleted] upsert error:', error);
   }
+  // When completed is cleared (daily reset or clear history), delete only the specific
+  // IDs that were previously tracked — never use neq() which would wipe the whole table.
   if (completed.length === 0 && prev.length > 0) {
-    const { error } = await supabase.from('completed_services').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    if (error) console.error('[syncCompleted] delete error:', error);
+    const idsToDelete = [...prevIds];
+    if (idsToDelete.length > 0) {
+      const { error } = await supabase.from('completed_services').delete().in('id', idsToDelete);
+      if (error) console.error('[syncCompleted] delete error:', error);
+    }
   }
 }
 

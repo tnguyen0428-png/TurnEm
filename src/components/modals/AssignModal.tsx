@@ -521,9 +521,13 @@ function MultiServiceAssign({ client }: { client: QueueEntry }) {
     );
     const suggested = getSuggestedForService(service, state.manicurists, state.salonServices, takenByOtherIds);
 
-    // Find explicitly requested manicurist for this row (from serviceRequests)
-    const rowReq = (client.serviceRequests || []).find(r => r.service === service);
-    const explicitlyRequestedId = rowReq?.manicuristIds?.[0] ?? null;
+    // Find explicitly requested manicurist for this row using the pre-computed
+    // per-row requestedId from serviceRows (built by getDistinctServices).
+    // Do NOT re-query serviceRequests by service name here — that would return
+    // the same request for every instance of a repeated service (e.g. 3x Gel Pedicure),
+    // making all rows show the same preferred manicurist instead of just the 1 that was marked.
+    const rowData = serviceRows.find(r => r.uniqueKey === rowKey);
+    const explicitlyRequestedId = rowData?.requestedId ?? null;
 
     // Sam preferred for acrylic rows that don't already have an explicit request
     const rowIsAcrylic = isAcrylicService(service, state.salonServices);
