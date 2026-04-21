@@ -36,13 +36,13 @@ export default function LoginScreen() {
   }
 
   return (
-    <div className="min-h-screen bg-[#fafafa] flex items-center justify-center px-4">
+    <div className="min-h-screen bg-white flex items-center justify-center px-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <img
             src="/Turn_Em_Logo.jpg"
             alt="TurnEM Logo"
-            className="w-24 h-24 rounded-2xl mx-auto mb-4 shadow-lg shadow-pink-200 object-cover"
+            className="w-40 h-40 rounded-2xl mx-auto mb-4 shadow-lg shadow-pink-200 object-cover"
           />
           <h1 className="font-bebas text-3xl tracking-[4px] text-gray-900">TURN EM</h1>
           <p className="font-mono text-xs text-gray-400 mt-2">Turn Management System</p>
