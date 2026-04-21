@@ -39,10 +39,12 @@ export default function LoginScreen() {
     <div className="min-h-screen bg-[#fafafa] flex items-center justify-center px-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-pink-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-pink-200">
-            <span className="text-white font-bebas text-3xl">NS</span>
-          </div>
-          <h1 className="font-bebas text-3xl tracking-[4px] text-gray-900">NAIL SALON</h1>
+          <img
+            src="/Turn_Em_Logo.jpg"
+            alt="TurnEM Logo"
+            className="w-24 h-24 rounded-2xl mx-auto mb-4 shadow-lg shadow-pink-200 object-cover"
+          />
+          <h1 className="font-bebas text-3xl tracking-[4px] text-gray-900">TURN EM</h1>
           <p className="font-mono text-xs text-gray-400 mt-2">Turn Management System</p>
         </div>
 
