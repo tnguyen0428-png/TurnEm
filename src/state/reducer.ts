@@ -1,11 +1,7 @@
 import type { AppState, Manicurist, SalonService, ServiceType } from '../types';
 import type { AppAction } from './actions';
 import { getRequestedTurnValue } from '../constants/services';
-
-function isClientWaxService(services: ServiceType[], salonServices: SalonService[]): boolean {
-  const waxNames = new Set(salonServices.filter((s) => s.category === 'Wax Services').map((s) => s.name));
-  return services.some((s) => waxNames.has(s));
-}
+import { clientHasAnyWaxService } from '../utils/salonRules';
 
 function nextWaxSlot(m: Manicurist): 'hasWax' | 'hasWax2' | 'hasWax3' | null {
   if (!m.hasWax)  return 'hasWax';
@@ -137,7 +133,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (!client) return state;
       const now = Date.now();
       const turns = Number(client.turnValue) || 0;
-      const isWax = isClientWaxService(client.services, state.salonServices);
+      const isWax = clientHasAnyWaxService(client.services, state.salonServices);
       return {
         ...state,
         queue: state.queue.map((c) =>
@@ -167,7 +163,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'REQUEST_ASSIGN': {
       const now = Date.now();
       const requestTurns = Number(action.client.turnValue) || 0;
-      const isWax = isClientWaxService(action.client.services, state.salonServices);
+      const isWax = clientHasAnyWaxService(action.client.services, state.salonServices);
       return {
         ...state,
         queue: [...state.queue, { ...action.client, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: requestTurns }],
@@ -201,7 +197,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           assignedMap.set(manicuristId, {
             clientId: client.id,
             turns: client.turnValue,
-            isWax: isClientWaxService(client.services, state.salonServices),
+            isWax: clientHasAnyWaxService(client.services, state.salonServices),
           });
         }
       }
@@ -239,7 +235,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           assignMap.set(manicuristId, {
             clientId: client.id,
             turns: client.turnValue,
-            isWax: isClientWaxService(client.services, state.salonServices),
+            isWax: clientHasAnyWaxService(client.services, state.salonServices),
           });
         }
       }
@@ -295,10 +291,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (!manicurist || !manicurist.currentClient) return state;
       const client = state.queue.find((c) => c.id === manicurist.currentClient);
       const now = Date.now();
-      const waxServiceNames = new Set(
-        state.salonServices.filter((s) => s.category === 'Wax Services').map((s) => s.name)
-      );
-      const clientHadWax = client ? client.services.some((s) => waxServiceNames.has(s)) : false;
+      const clientHadWax = client ? clientHasAnyWaxService(client.services, state.salonServices) : false;
       const updatedManicurists = state.manicurists.map((m) =>
         m.id === action.manicuristId
           ? { ...m, status: 'available' as const, currentClient: null, hasWax: clientHadWax ? true : m.hasWax }
