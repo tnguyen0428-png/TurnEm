@@ -1,6 +1,6 @@
 import { UserPlus, Pencil, X, Clock, Timer } from 'lucide-react';
 import type { QueueEntry, Manicurist, SalonService } from '../../types';
-import Badge from '../shared/Badge';
+import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import { formatWaitTime, formatTime } from '../../utils/time';
 
 interface QueueCardProps {
@@ -24,14 +24,6 @@ function groupServices(services: string[], salonServices: SalonService[]): [stri
   );
 }
 
-function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'red' {
-  if (value <= 0.5) return 'green';
-  if (value <= 1.0) return 'blue';
-  if (value <= 1.5) return 'amber';
-  if (value <= 2.0) return 'orange';
-  if (value <= 2.5) return 'purple';
-  return 'red';
-}
 
 export default function QueueCard({ client, rank, isNext = false, isDeferred = false, manicurists, salonServices, onAssign, onEdit, onRemove }: QueueCardProps) {
   const requestedServices = (client.serviceRequests || []).filter((r) => r.manicuristIds && r.manicuristIds.length > 0);

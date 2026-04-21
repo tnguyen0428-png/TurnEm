@@ -1,7 +1,7 @@
 import { useState, useMemo, type ReactNode } from 'react';
 import { GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
-import Badge from '../shared/Badge';
+import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import {
   DndContext,
@@ -21,15 +21,6 @@ import { CSS } from '@dnd-kit/utilities';
 import type { SalonService } from '../../types';
 
 import { CAT_PRIORITY_KEY, SVC_PRIORITY_KEY, loadCatOrder, loadSvcOrders } from '../../utils/priorityStorage';
-
-function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'red' {
-  if (value <= 0.5) return 'green';
-  if (value <= 1.0) return 'blue';
-  if (value <= 1.5) return 'amber';
-  if (value <= 2.0) return 'orange';
-  if (value <= 2.5) return 'purple';
-  return 'red';
-}
 
 function getSvcOrder(category: string, defaultNames: string[]): string[] {
   const saved = loadSvcOrders();

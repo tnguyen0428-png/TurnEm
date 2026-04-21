@@ -3,11 +3,7 @@ import { Plus, LogIn, UserPlus } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import ManicuristCard from './ManicuristCard';
 
-interface ManicuristPanelProps {
-  nextSuggestedManicuristId: string | null;
-}
-
-export default function ManicuristPanel({ nextSuggestedManicuristId }: ManicuristPanelProps) {
+export default function ManicuristPanel() {
   const { state, dispatch } = useApp();
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -202,7 +198,7 @@ export default function ManicuristPanel({ nextSuggestedManicuristId }: Manicuris
                   isLast={idx === sortedClockedIn.length - 1}
                   turnRank={rank}
                   totalRanked={turnOrder.length}
-                  isNextSuggested={m.id === nextSuggestedManicuristId}
+
                 />
               );
             })}

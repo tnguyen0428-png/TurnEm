@@ -18,13 +18,10 @@ export type AppAction =
   | { type: 'ASSIGN_CLIENT'; clientId: string; manicuristId: string }
   | { type: 'COMPLETE_SERVICE'; manicuristId: string }
   | { type: 'CANCEL_SERVICE'; manicuristId: string }
-  | { type: 'SET_PENDING_ASSIGNMENT'; clientId: string; manicuristId: string }
-  | { type: 'CLEAR_PENDING_ASSIGNMENT' }
   | { type: 'SET_SELECTED_CLIENT'; clientId: string | null }
   | { type: 'SET_EDITING_STAFF'; staffId: string | null }
   | { type: 'CLEAR_HISTORY' }
   | { type: 'REQUEST_ASSIGN'; client: QueueEntry; manicuristId: string }
-  | { type: 'BATCH_ADD_AND_ASSIGN'; entries: { client: QueueEntry; manicuristId: string | null }[] }
   | { type: 'SPLIT_AND_ASSIGN'; originalId: string; entries: { client: QueueEntry; manicuristId: string | null }[] }
   | { type: 'ADD_APPOINTMENT'; appointment: Appointment }
   | { type: 'UPDATE_APPOINTMENT'; id: string; updates: Partial<Appointment> }
@@ -38,7 +35,6 @@ export type AppAction =
   | { type: 'SET_TURN_CRITERIA'; criteria: TurnCriteria[] }
   | { type: 'SET_CALENDAR_DAY'; day: CalendarDay }
   | { type: 'REMOVE_CALENDAR_DAY'; date: string }
-  | { type: 'SET_CALENDAR_DAYS'; days: CalendarDay[] }
   | { type: 'REORDER_MANICURIST'; id: string; direction: 'up' | 'down' }
   | { type: 'REORDER_SALON_SERVICE'; id: string; direction: 'up' | 'down' }
   | { type: 'TOGGLE_FOURTH_POSITION_SPECIAL'; id: string }
@@ -48,5 +44,4 @@ export type AppAction =
   | { type: 'TOGGLE_WAX2'; id: string }
   | { type: 'TOGGLE_WAX3'; id: string }
   | { type: 'SAVE_DAILY_HISTORY'; entry: DailyHistory }
-  | { type: 'LOAD_DAILY_HISTORY'; history: DailyHistory[] }
   | { type: 'DAILY_RESET' };

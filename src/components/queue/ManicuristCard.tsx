@@ -14,7 +14,6 @@ interface ManicuristCardProps {
   isLast: boolean;
   turnRank: number | null;
   totalRanked: number;
-  isNextSuggested: boolean;
   clientDurationMs?: number;
 }
 
@@ -29,7 +28,7 @@ function getStatusConfig(status: Manicurist['status']) {
   }
 }
 
-export default function ManicuristCard({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, isNextSuggested, clientDurationMs = 0 }: ManicuristCardProps) {
+export default function ManicuristCard({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, clientDurationMs = 0 }: ManicuristCardProps) {
   const { dispatch } = useApp();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);

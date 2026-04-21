@@ -1,6 +1,5 @@
-import type { AppState, Manicurist, SalonService, ServiceType } from '../types';
+import type { AppState, Manicurist } from '../types';
 import type { AppAction } from './actions';
-import { getRequestedTurnValue } from '../constants/services';
 import { clientHasAnyWaxService } from '../utils/salonRules';
 
 function nextWaxSlot(m: Manicurist): 'hasWax' | 'hasWax2' | 'hasWax3' | null {
@@ -28,7 +27,6 @@ export const INITIAL_STATE: AppState = {
   dailyHistory: [],
   view: 'queue',
   modal: null,
-  pendingAssignment: null,
   selectedClient: null,
   editingClientId: null,
   editingStaffId: null,
@@ -154,7 +152,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             ...(waxSlot   ? { [waxSlot]:   true } : {}),
           };
         }),
-        pendingAssignment: null,
         selectedClient: null,
         modal: null,
       };
@@ -176,44 +173,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             status: 'busy' as const,
             currentClient: action.client.id,
             totalTurns: m.totalTurns + requestTurns,
-            ...(checkSlot ? { [checkSlot]: true } : {}),
-            ...(waxSlot   ? { [waxSlot]:   true } : {}),
-          };
-        }),
-      };
-    }
-
-    case 'BATCH_ADD_AND_ASSIGN': {
-      const now = Date.now();
-      const newQueueEntries = action.entries.map(({ client, manicuristId }) => {
-        if (manicuristId) {
-          return { ...client, status: 'inProgress' as const, assignedManicuristId: manicuristId, startedAt: now, turnValue: client.turnValue };
-        }
-        return client;
-      });
-      const assignedMap = new Map<string, { clientId: string; turns: number; isWax: boolean }>();
-      for (const { client, manicuristId } of action.entries) {
-        if (manicuristId) {
-          assignedMap.set(manicuristId, {
-            clientId: client.id,
-            turns: client.turnValue,
-            isWax: clientHasAnyWaxService(client.services, state.salonServices),
-          });
-        }
-      }
-      return {
-        ...state,
-        queue: [...state.queue, ...newQueueEntries],
-        manicurists: state.manicurists.map((m) => {
-          const assignment = assignedMap.get(m.id);
-          if (!assignment) return m;
-          const waxSlot   = assignment.isWax ? nextWaxSlot(m)   : null;
-          const checkSlot = nextCheckSlot(m);
-          return {
-            ...m,
-            status: 'busy' as const,
-            currentClient: assignment.clientId,
-            totalTurns: m.totalTurns + assignment.turns,
             ...(checkSlot ? { [checkSlot]: true } : {}),
             ...(waxSlot   ? { [waxSlot]:   true } : {}),
           };
@@ -259,7 +218,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             ...(waxSlot   ? { [waxSlot]:   true } : {}),
           };
         }),
-        pendingAssignment: null,
         selectedClient: null,
         modal: null,
       };
@@ -326,15 +284,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         completed: [...state.completed, completedEntry],
       };
     }
-
-    case 'SET_PENDING_ASSIGNMENT':
-      return {
-        ...state,
-        pendingAssignment: { clientId: action.clientId, manicuristId: action.manicuristId },
-      };
-
-    case 'CLEAR_PENDING_ASSIGNMENT':
-      return { ...state, pendingAssignment: null };
 
     case 'SET_SELECTED_CLIENT':
       return { ...state, selectedClient: action.clientId };
@@ -414,9 +363,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         calendarDays: state.calendarDays.filter((d) => d.date !== action.date),
       };
-
-    case 'SET_CALENDAR_DAYS':
-      return { ...state, calendarDays: action.days };
 
     case 'REORDER_MANICURIST': {
       const list = [...state.manicurists];
@@ -529,9 +475,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
       return { ...state, dailyHistory: [...state.dailyHistory, action.entry] };
     }
-
-    case 'LOAD_DAILY_HISTORY':
-      return { ...state, dailyHistory: action.history };
 
     default:
       return state;

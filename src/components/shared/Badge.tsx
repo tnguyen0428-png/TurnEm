@@ -1,3 +1,12 @@
+export function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'red' {
+  if (value <= 0.5) return 'green';
+  if (value <= 1.0) return 'blue';
+  if (value <= 1.5) return 'amber';
+  if (value <= 2.0) return 'orange';
+  if (value <= 2.5) return 'purple';
+  return 'red';
+}
+
 interface BadgeProps {
   label: string;
   variant: 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'pink' | 'red' | 'gray' | 'indigo';

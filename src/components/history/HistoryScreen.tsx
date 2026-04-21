@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { Clock, Trash2, User, ChevronDown, ChevronLeft, ChevronRight, Save, CalendarDays } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useApp } from '../../state/AppContext';
-import Badge from '../shared/Badge';
+import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { formatTime, formatDuration, getTodayLA, getLocalDateStr } from '../../utils/time';
@@ -12,15 +12,6 @@ function groupServices(services: string[]): [string, number][] {
   const map = new Map<string, number>();
   for (const s of services) map.set(s, (map.get(s) || 0) + 1);
   return Array.from(map.entries());
-}
-
-function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'red' {
-  if (value <= 0.5) return 'green';
-  if (value <= 1.0) return 'blue';
-  if (value <= 1.5) return 'amber';
-  if (value <= 2.0) return 'orange';
-  if (value <= 2.5) return 'purple';
-  return 'red';
 }
 
 type SortMode = 'time' | 'client' | 'manicurist';
@@ -442,10 +433,10 @@ export default function HistoryScreen() {
               <XAxis
                 dataKey="name"
                 interval={0}
-                tick={({ x, y, payload, index }: { x: number; y: number; payload: { value: string }; index: number }) => {
+                tick={({ x, y, payload, index }: { x: string | number; y: string | number; payload: { value: string }; index: number }) => {
                   const entry = turnsPerManicurist[index];
                   return (
-                    <g transform={`translate(${x},${y})`}>
+                    <g transform={`translate(${Number(x)},${Number(y)})`}>
                       <text x={0} y={0} dy={8} textAnchor="middle" fill="#6b7280" fontSize={11} fontFamily="IBM Plex Mono">
                         {payload.value}
                       </text>

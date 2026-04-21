@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
-import Badge from '../shared/Badge';
+import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import ServiceModal from '../modals/ServiceModal';
@@ -10,15 +10,6 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type D
 import { SortableContext, horizontalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import PriorityListView from './PriorityListView';
-
-function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'red' {
-  if (value <= 0.5) return 'green';
-  if (value <= 1.0) return 'blue';
-  if (value <= 1.5) return 'amber';
-  if (value <= 2.0) return 'orange';
-  if (value <= 2.5) return 'purple';
-  return 'red';
-}
 
 const CATEGORY_ICONS: Record<string, string> = {
   'All': '',

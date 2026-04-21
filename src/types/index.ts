@@ -11,8 +11,6 @@ export type ModalType =
   | 'assignConfirm'
   | 'addAppointment'
   | 'editAppointment'
-  | 'addService'
-  | 'editService'
   | null;
 
 export interface Manicurist {
@@ -126,7 +124,6 @@ export interface AppState {
   dailyHistory: DailyHistory[];
   view: ViewType;
   modal: ModalType;
-  pendingAssignment: { clientId: string; manicuristId: string } | null;
   selectedClient: string | null;
   editingClientId: string | null;
   editingStaffId: string | null;

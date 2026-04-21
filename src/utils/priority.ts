@@ -1,11 +1,6 @@
 import type { Manicurist, QueueEntry, SalonService, ServiceType } from '../types';
 import { getPriorityRank } from './priorityStorage';
 
-function getServiceTurnValue(service: string, salonServices: SalonService[]): number {
-  const svc = salonServices.find((s) => s.name === service);
-  return svc?.turnValue ?? 0;
-}
-
 function getServicePriorityOrder(service: string, salonServices: SalonService[]): number {
   const svc = salonServices.find((s) => s.name === service);
   if (!svc) return Infinity;
@@ -88,7 +83,7 @@ export function getPriorityQueue(
   queue: QueueEntry[],
   manicurists: Manicurist[],
   salonServices: SalonService[] = []
-): (QueueEntry & { suggestedManicurist: Manicurist | null })[] {
+): (QueueEntry & { suggestedManicurist: Manicurist | null; isDeferred: boolean })[] {
   const waiting = queue.filter((c) => c.status === 'waiting');
 
   function hasRequestedManicurist(c: QueueEntry): boolean {
