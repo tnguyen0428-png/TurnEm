@@ -8,12 +8,14 @@ import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
 import { formatTime } from '../../utils/time';
 import { sendTurnAlert } from '../../utils/sms';
+import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import type { QueueEntry, ServiceType, Manicurist } from '../../types';
 import { isAcrylicService, getSamPreferenceForServices, findSamIfActive, isSam } from '../../utils/salonRules';
 import {
   getClientDurationMs,
+  getAlmostDoneMs,
   formatServiceList,
   getDistinctServices,
   getEligibleForService,
@@ -79,8 +81,8 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
   const allAssigned = Object.values(assignments).every((id) => id !== null);
 
-  function getEligibleForRow(service: ServiceType, rowKey: string): (Manicurist & { _takenByOther: boolean; _isSuggested: boolean; _isSamPreferred: boolean; _isBusySam: boolean })[] {
-    const skilled = getEligibleForService(service, state.manicurists, state.salonServices);
+  function getEligibleForRow(service: ServiceType, rowKey: string): (Manicurist & { _takenByOther: boolean; _isSuggested: boolean; _isSamPreferred: boolean; _isExplicitlyRequested: boolean; _isBusySam: boolean; _almostDone: boolean })[] {
+    const skilled = getEligibleForService(service, state.manicurists, state.salonServices, state.queue);
     const takenByOtherIds = new Set(
       Object.entries(assignments)
         .filter(([k, id]) => k !== rowKey && id !== null)
@@ -104,24 +106,35 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       ? state.manicurists.find(m => m.id === preferredId && m.clockedIn) ?? null
       : null;
 
+    // If the preferred manicurist is already assigned to another row for this client,
+    // don't highlight them as preferred — treat them like a normal staff member.
+    const preferredTakenByOther = preferredManicurist
+      ? assignedManicuristIds.has(preferredManicurist.id) && assignments[rowKey] !== preferredManicurist.id
+      : false;
+    const effectivePreferred = preferredTakenByOther ? null : preferredManicurist;
+
     const baseRows = skilled
-      .filter(m => !preferredManicurist || m.id !== preferredManicurist.id)
+      .filter(m => !effectivePreferred || m.id !== effectivePreferred.id)
       .map(m => ({
         ...m,
         _takenByOther: assignedManicuristIds.has(m.id) && assignments[rowKey] !== m.id,
         _isSuggested: suggested?.id === m.id,
         _isSamPreferred: false,
+        _isExplicitlyRequested: false,
         _isBusySam: false,
+        _almostDone: ('_almostDone' in m && !!(m as { _almostDone?: boolean })._almostDone),
       }));
 
-    if (!preferredManicurist) return baseRows;
+    if (!effectivePreferred) return baseRows;
 
     const preferredRow = {
-      ...preferredManicurist,
+      ...effectivePreferred,
       _takenByOther: false,
       _isSuggested: false,
-      _isSamPreferred: true,
-      _isBusySam: preferredManicurist.status === 'busy',
+      _isSamPreferred: !explicitlyRequestedId,
+      _isExplicitlyRequested: !!explicitlyRequestedId,
+      _isBusySam: effectivePreferred.status === 'busy',
+      _almostDone: false,
     };
 
     return [preferredRow, ...baseRows];
@@ -159,7 +172,12 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
           const group = manicuristGroups.get(mId)!;
           group.services.push(row.service);
           const baseTurn = getTurnValueForService(row.service);
-          group.turnValue += row.requestedId ? (baseTurn > 0 ? 0.5 : 0) : baseTurn;
+          if (row.requestedId && baseTurn > 0) {
+            const svc = state.salonServices.find((s) => s.name === row.service);
+            group.turnValue += svc?.category === 'Combo' ? 1 : 0.5;
+          } else {
+            group.turnValue += baseTurn;
+          }
         } else {
           deferredRows.push({ service: row.service, mId });
         }
@@ -169,12 +187,12 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     }
 
     const entries: { client: QueueEntry; manicuristId: string | null }[] = [];
-    const smsTargets: { phone: string; name: string; clientName: string; service: string }[] = [];
+    const smsTargets: { id: string; phone: string; name: string; clientName: string; service: string }[] = [];
 
     for (const [mId, group] of manicuristGroups) {
-      // Only preserve service requests the CLIENT originally made
+      // Only preserve service requests where this manicurist was the one originally requested
       const serviceReqs = group.services
-        .filter((s) => (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.length > 0))
+        .filter((s) => (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.includes(mId)))
         .map((s) => ({ service: s as ServiceType, manicuristIds: [mId] }));
 
       const entry: QueueEntry = {
@@ -196,9 +214,10 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       entries.push({ client: entry, manicuristId: mId });
 
       const m = state.manicurists.find((x) => x.id === mId);
-      if (m?.phone) {
+      if (m) {
         smsTargets.push({
-          phone: m.phone,
+          id: m.id,
+          phone: m.phone || '',
           name: m.name,
           clientName: client.clientName,
           service: formatServiceList(group.services),
@@ -212,7 +231,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         id: crypto.randomUUID(),
         clientName: client.clientName,
         services: [service],
-        turnValue: baseTurn > 0 ? 0.5 : 0,
+        turnValue: baseTurn > 0 ? (state.salonServices.find((s) => s.name === service)?.category === 'Combo' ? 1 : 0.5) : 0,
         serviceRequests: [{ service: service as ServiceType, manicuristIds: [mId] }],
         requestedManicuristId: mId,
         isRequested: true,
@@ -250,8 +269,16 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
     for (const target of smsTargets) {
       showSmsToast('sending');
-      sendTurnAlert(target.phone, target.name, target.clientName, target.service).then((result) => {
-        showSmsToast(result.success ? 'sent' : 'failed');
+      sendPushNotification(target.id, target.name, target.clientName, target.service).then((pushResult) => {
+        if (pushResult.success) {
+          showSmsToast('sent');
+        } else if (target.phone) {
+          sendTurnAlert(target.phone, target.name, target.clientName, target.service).then((smsResult) => {
+            showSmsToast(smsResult.success ? 'sent' : 'failed');
+          });
+        } else {
+          showSmsToast('failed');
+        }
       });
     }
 
@@ -331,13 +358,19 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
           );
         })()}
 
-        {showSamPrompt && (
-          <div className="mb-4 p-4 rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50">
+        {showSamPrompt && (() => {
+          const samRequested = sam && (client.serviceRequests || []).some(
+            (r) => r.manicuristIds && r.manicuristIds.includes(sam.id)
+          );
+          return (
+          <div className={`mb-4 p-4 rounded-2xl border-2 border-dashed ${samRequested ? 'border-pink-300 bg-pink-50' : 'border-indigo-300 bg-indigo-50'}`}>
             <div className="flex items-center gap-2 mb-2">
-              <Badge label="PREFERRED" variant="indigo" />
-              <span className="font-mono text-xs font-semibold text-indigo-800">Sam is currently busy</span>
+              {samRequested
+                ? <Badge label="REQUESTED" variant="pink" />
+                : <Badge label="PREFERRED" variant="indigo" />}
+              <span className={`font-mono text-xs font-semibold ${samRequested ? 'text-pink-800' : 'text-indigo-800'}`}>Sam is currently busy</span>
             </div>
-            <p className="font-mono text-xs text-indigo-700 mb-4">
+            <p className={`font-mono text-xs ${samRequested ? 'text-pink-700' : 'text-indigo-700'} mb-4`}>
               Sam has{' '}
               <span className="font-bold tabular-nums">{samCountdownDisplay || '…'}</span>{' '}
               remaining on his current client. Wait for Sam, or assign{' '}
@@ -346,7 +379,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
             <div className="flex gap-2">
               <button
                 onClick={handleWaitForSam}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-indigo-500 text-white font-mono text-xs font-semibold hover:bg-indigo-600 active:scale-[0.98] transition-all"
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl ${samRequested ? 'bg-pink-500 hover:bg-pink-600' : 'bg-indigo-500 hover:bg-indigo-600'} text-white font-mono text-xs font-semibold active:scale-[0.98] transition-all`}
               >
                 <Timer size={13} />
                 WAIT FOR SAM
@@ -359,7 +392,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
               </button>
             </div>
           </div>
-        )}
+          ); })()}
 
         {(() => {
           const deferredItems = serviceRows
@@ -450,76 +483,95 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                       const isSelected = selectedId === m.id;
                       const isRequested = requestedId === m.id;
                       const isBusySam = m._isBusySam;
-                      const busySamDurationMs = isBusySam
+                      const isAlmostDone = !isBusySam && m._almostDone;
+                      const isBusy = isBusySam || isAlmostDone;
+                      const busyDurationMs = isBusy
                         ? getClientDurationMs(m, state.queue, state.salonServices)
                         : 0;
-                      const busySamClient = isBusySam
+                      const busyClient = isBusy
                         ? state.queue.find(c => c.id === m.currentClient) ?? null
                         : null;
 
                       return (
-                        <button
-                          key={m.id}
-                          onClick={() => !m._takenByOther && handlePickManicurist(key, m.id)}
-                          disabled={m._takenByOther}
-                          style={isBusySam ? { opacity: 0.85 } : undefined}
-                          className={`w-full text-left p-3 rounded-xl border-2 transition-all duration-200 ${
-                            isBusySam && isSelected
-                              ? 'border-amber-300 bg-amber-50/50 shadow-sm'
-                              : isBusySam
-                              ? 'border-indigo-200 bg-indigo-50/30 hover:border-indigo-300 hover:shadow-md'
-                              : m._takenByOther
-                              ? 'opacity-40 cursor-not-allowed border-gray-100 bg-gray-50'
-                              : isSelected
-                                ? 'border-emerald-300 bg-emerald-50/50 shadow-sm'
-                                : m._isSamPreferred
-                                  ? 'border-indigo-300 bg-indigo-50/50 hover:border-indigo-400 hover:shadow-md'
-                                  : isRequested
-                                    ? 'border-pink-200 bg-pink-50/30 hover:border-pink-300 hover:shadow-md'
-                                    : m._isSuggested
-                                      ? 'border-emerald-200 bg-emerald-50/30 hover:border-emerald-300 hover:shadow-md'
-                                      : 'border-gray-100 bg-white hover:border-pink-200 hover:shadow-md'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <span className="font-mono text-xs text-gray-400 w-5">#{idx + 1}</span>
-                              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: m.color }} />
-                              <span className="font-mono text-sm font-semibold text-gray-900">{m.name}</span>
-                              <ServiceHistory m={m} />
-                              {isSelected && <Check size={14} className="text-emerald-500" />}
-                              {m._isSamPreferred && <Badge label="PREFERRED" variant="indigo" />}
-                              {!m._isSamPreferred && isRequested && <Badge label="REQUESTED" variant="pink" />}
-                              {!m._isSamPreferred && m._isSuggested && !isRequested && rowIs4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
-                              {!m._isSamPreferred && m._isSuggested && !isRequested && !rowIs4thSpecial && <Badge label="RECOMMENDED" variant="green" />}
-                              {m._takenByOther && (
-                                <span className="font-mono text-[9px] text-amber-500">(assigned above)</span>
-                              )}
+                        <div key={m.id}>
+                          <div
+                            onClick={() => !m._takenByOther && !isAlmostDone && !isBusySam && handlePickManicurist(key, m.id)}
+                            style={isBusySam ? { opacity: 0.85 } : undefined}
+                            className={`w-full text-left p-3 rounded-xl border-2 transition-all duration-200 ${
+                              isBusySam && isSelected
+                                ? 'border-amber-300 bg-amber-50/50 shadow-sm'
+                                : isBusySam
+                                ? 'border-indigo-200 bg-indigo-50/30'
+                                : isAlmostDone
+                                ? 'border-amber-200 bg-amber-50/30'
+                                : m._takenByOther
+                                ? 'opacity-40 cursor-not-allowed border-gray-100 bg-gray-50'
+                                : isSelected
+                                  ? 'cursor-pointer border-emerald-300 bg-emerald-50/50 shadow-sm'
+                                  : m._isExplicitlyRequested
+                                    ? 'cursor-pointer border-pink-200 bg-pink-50/30 hover:border-pink-300 hover:shadow-md'
+                                    : m._isSamPreferred
+                                    ? 'cursor-pointer border-indigo-300 bg-indigo-50/50 hover:border-indigo-400 hover:shadow-md'
+                                    : isRequested
+                                      ? 'cursor-pointer border-pink-200 bg-pink-50/30 hover:border-pink-300 hover:shadow-md'
+                                      : m._isSuggested
+                                        ? 'cursor-pointer border-emerald-200 bg-emerald-50/30 hover:border-emerald-300 hover:shadow-md'
+                                        : 'cursor-pointer border-gray-100 bg-white hover:border-pink-200 hover:shadow-md'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <span className="font-mono text-xs text-gray-400 w-5">#{idx + 1}</span>
+                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: m.color }} />
+                                <span className="font-mono text-sm font-semibold text-gray-900">{m.name}</span>
+                                <ServiceHistory m={m} />
+                                {isSelected && <Check size={14} className="text-emerald-500" />}
+                                {!isAlmostDone && m._isExplicitlyRequested && <Badge label="REQUESTED" variant="pink" />}
+                                {!isAlmostDone && m._isSamPreferred && !m._isExplicitlyRequested && <Badge label="PREFERRED" variant="indigo" />}
+                                {!isAlmostDone && !m._isSamPreferred && !m._isExplicitlyRequested && isRequested && <Badge label="REQUESTED" variant="pink" />}
+                                {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && rowIs4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
+                                {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && !rowIs4thSpecial && <Badge label="RECOMMENDED" variant="green" />}
+                                {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
+                                {m._takenByOther && (
+                                  <span className="font-mono text-[9px] text-amber-500">(assigned above)</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-4">
+                                {isBusy && (
+                                  <CountdownBadge
+                                    startedAt={busyClient?.startedAt ?? null}
+                                    totalDurationMs={busyDurationMs}
+                                    status={m.status}
+                                  />
+                                )}
+                                {m.phone && (
+                                  <span className="flex items-center gap-1 font-mono text-[10px] text-emerald-500" title="SMS alerts enabled">
+                                    <MessageSquare size={10} />
+                                    SMS
+                                  </span>
+                                )}
+                                <span className="font-mono text-xs text-gray-500">{m.totalTurns.toFixed(1)} turns</span>
+                                {m.clockInTime && (
+                                  <span className="flex items-center gap-1 font-mono text-[10px] text-gray-400">
+                                    <Clock size={10} />
+                                    {formatTime(m.clockInTime)}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-4">
-                              {isBusySam && (
-                                <CountdownBadge
-                                  startedAt={busySamClient?.startedAt ?? null}
-                                  totalDurationMs={busySamDurationMs}
-                                  status={m.status}
-                                />
-                              )}
-                              {m.phone && (
-                                <span className="flex items-center gap-1 font-mono text-[10px] text-emerald-500" title="SMS alerts enabled">
-                                  <MessageSquare size={10} />
-                                  SMS
-                                </span>
-                              )}
-                              <span className="font-mono text-xs text-gray-500">{m.totalTurns.toFixed(1)} turns</span>
-                              {m.clockInTime && (
-                                <span className="flex items-center gap-1 font-mono text-[10px] text-gray-400">
-                                  <Clock size={10} />
-                                  {formatTime(m.clockInTime)}
-                                </span>
-                              )}
-                            </div>
+                            {isAlmostDone && (
+                              <div className="mt-2 flex gap-2">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handlePickManicurist(key, m.id); }}
+                                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-amber-500 text-white font-mono text-xs font-semibold hover:bg-amber-600 active:scale-[0.98] transition-all"
+                                >
+                                  <Timer size={13} />
+                                  WAIT FOR {m.name}
+                                </button>
+                              </div>
+                            )}
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

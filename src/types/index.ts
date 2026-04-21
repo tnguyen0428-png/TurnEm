@@ -30,6 +30,7 @@ export interface Manicurist {
   hasWax: boolean;
   hasWax2: boolean;
   hasWax3: boolean;
+  timeAdjustments: Record<string, number>;
 }
 
 export interface ServiceRequest {

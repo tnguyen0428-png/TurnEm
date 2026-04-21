@@ -64,8 +64,11 @@ export default function ClientForm({
   }, [sorted, selectedCategory]);
 
   const totalTurnValue = selectedServices.reduce((sum, s) => {
-    const value = s.requestedManicuristIds.length > 0 && s.turnValue > 0 ? 0.5 : s.turnValue;
-    return sum + value;
+    if (s.requestedManicuristIds.length > 0 && s.turnValue > 0) {
+      const svc = salonServices.find((sv) => sv.name === s.serviceName);
+      return sum + (svc?.category === 'Combo' ? 1 : 0.5);
+    }
+    return sum + s.turnValue;
   }, 0);
 
   function handleRemoveService(index: number) {

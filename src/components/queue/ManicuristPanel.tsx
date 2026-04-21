@@ -80,13 +80,16 @@ export default function ManicuristPanel() {
     return client.services.some((s) => waxServiceNames.has(s));
   }
 
-  function getClientDurationMs(clientId: string | null): number {
+  function getClientDurationMs(clientId: string | null, manicurist?: typeof state.manicurists[0]): number {
     if (!clientId) return 0;
     const client = state.queue.find((c) => c.id === clientId);
     if (!client) return 0;
+    const adj = manicurist?.timeAdjustments || {};
     return client.services.reduce((sum, svcName) => {
       const svc = state.salonServices.find((s) => s.name === svcName);
-      return sum + (svc?.duration ?? 30);
+      const baseDuration = svc?.duration ?? 30;
+      const adjustment = adj[svcName] || 0;
+      return sum + Math.max(baseDuration + adjustment, 5);
     }, 0) * 60000;
   }
 
@@ -184,7 +187,7 @@ export default function ManicuristPanel() {
             </p>
           </div>
         ) : (
-          <div className="p-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="p-3 grid grid-cols-2 sm:grid-cols-5 gap-3">
             {sortedClockedIn.map((m, idx) => {
               const rank = rankMap.get(m.id) ?? null;
               return (
@@ -193,7 +196,7 @@ export default function ManicuristPanel() {
                   manicurist={m}
                   currentClient={getClientForManicurist(m.currentClient)}
                   clientHasWax={clientHasWaxService(m.currentClient)}
-                  clientDurationMs={getClientDurationMs(m.currentClient)}
+                  clientDurationMs={getClientDurationMs(m.currentClient, m)}
                   isFirst={idx === 0}
                   isLast={idx === sortedClockedIn.length - 1}
                   turnRank={rank}

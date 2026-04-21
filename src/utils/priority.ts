@@ -1,5 +1,6 @@
 import type { Manicurist, QueueEntry, SalonService, ServiceType } from '../types';
 import { getPriorityRank } from './priorityStorage';
+import { getAlmostDoneMs } from '../components/modals/assignHelpers';
 
 function getServicePriorityOrder(service: string, salonServices: SalonService[]): number {
   const svc = salonServices.find((s) => s.name === service);
@@ -30,34 +31,45 @@ export function isFourthPositionSpecialService(
 export function getEligibleManicurists(
   services: ServiceType[],
   manicurists: Manicurist[],
-  salonServices: SalonService[] = []
-): Manicurist[] {
+  salonServices: SalonService[] = [],
+  queue: QueueEntry[] = []
+): (Manicurist & { _almostDone?: boolean })[] {
   const prioritized = salonServices.length > 0
     ? getServicesPrioritySorted(services, salonServices)
     : services;
 
   const available = manicurists
     .filter((m) => m.clockedIn)
-    .filter((m) => m.status === 'available');
+    .filter((m) => m.status === 'available')
+    .filter((m) => prioritized.some((s) => m.skills.includes(s)))
+    .map((m) => ({ ...m, _almostDone: false }));
+
+  const almostDone = queue.length > 0
+    ? manicurists
+        .filter((m) => m.clockedIn && m.status === 'busy')
+        .filter((m) => prioritized.some((s) => m.skills.includes(s)))
+        .filter((m) => getAlmostDoneMs(m, queue, salonServices) !== null)
+        .map((m) => ({ ...m, _almostDone: true }))
+    : [];
+
+  const combined = [...available, ...almostDone];
 
   const highestPriorityService = prioritized[0];
   const multiService = prioritized.length > 1;
 
-  return available
-    .filter((m) => prioritized.some((s) => m.skills.includes(s)))
-    .sort((a, b) => {
-      if (multiService && highestPriorityService) {
-        const aHasTop = a.skills.includes(highestPriorityService) ? 0 : 1;
-        const bHasTop = b.skills.includes(highestPriorityService) ? 0 : 1;
-        if (aHasTop !== bHasTop) return aHasTop - bHasTop;
-      }
-      const aFloor = Math.floor(a.totalTurns);
-      const bFloor = Math.floor(b.totalTurns);
-      if (aFloor !== bFloor) return aFloor - bFloor;
-      const aTime = a.clockInTime ?? Infinity;
-      const bTime = b.clockInTime ?? Infinity;
-      return aTime - bTime;
-    });
+  return combined.sort((a, b) => {
+    if (multiService && highestPriorityService) {
+      const aHasTop = a.skills.includes(highestPriorityService) ? 0 : 1;
+      const bHasTop = b.skills.includes(highestPriorityService) ? 0 : 1;
+      if (aHasTop !== bHasTop) return aHasTop - bHasTop;
+    }
+    const aFloor = Math.floor(a.totalTurns);
+    const bFloor = Math.floor(b.totalTurns);
+    if (aFloor !== bFloor) return aFloor - bFloor;
+    const aTime = a.clockInTime ?? Infinity;
+    const bTime = b.clockInTime ?? Infinity;
+    return aTime - bTime;
+  });
 }
 
 export function getSuggestedManicurist(

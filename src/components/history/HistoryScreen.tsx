@@ -5,7 +5,7 @@ import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
-import { formatTime, formatDuration, getTodayLA, getLocalDateStr } from '../../utils/time';
+import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { CompletedEntry } from '../../types';
 
 function groupServices(services: string[]): [string, number][] {
@@ -66,22 +66,8 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
     return list;
   }, [entries, sortMode, manicuristFilter]);
 
-  const totalServicesRendered = entries.length;
-  const totalTurns = entries.reduce((sum, c) => sum + c.turnValue, 0);
-
   return (
     <>
-      <div className="grid grid-cols-2 sm:grid-cols-2 gap-4 mb-6">
-        <div className="bg-white rounded-xl border border-gray-100 p-4 text-center">
-          <p className="font-bebas text-3xl text-gray-900">{totalServicesRendered}</p>
-          <p className="font-mono text-[10px] text-gray-400 tracking-wider">SERVICES RENDERED</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 p-4 text-center">
-          <p className="font-bebas text-3xl text-gray-900">{totalTurns.toFixed(1)}</p>
-          <p className="font-mono text-[10px] text-gray-400 tracking-wider">TOTAL TURNS</p>
-        </div>
-      </div>
-
       <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5">
@@ -129,11 +115,10 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100">
-                <th className="text-left px-4 py-3 font-mono text-[10px] text-gray-400 tracking-wider font-semibold">CLIENT</th>
-                <th className="text-left px-4 py-3 font-mono text-[10px] text-gray-400 tracking-wider font-semibold">SERVICE</th>
-                <th className="text-left px-4 py-3 font-mono text-[10px] text-gray-400 tracking-wider font-semibold">MANICURIST</th>
-                <th className="text-left px-4 py-3 font-mono text-[10px] text-gray-400 tracking-wider font-semibold">TIME</th>
-                <th className="text-left px-4 py-3 font-mono text-[10px] text-gray-400 tracking-wider font-semibold">DURATION</th>
+                <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">CLIENT</th>
+                <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">SERVICE</th>
+                <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">TURNS</th>
+                <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">MANICURIST</th>
               </tr>
             </thead>
             <tbody>
@@ -145,28 +130,25 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {groupServices(entry.services).map(([s, count]) => {
-                        // Only show R if the entry explicitly records this service as requested.
-                        // No fallback inference — it produced false positives for deferred/split entries.
                         const wasRequested = Array.isArray(entry.requestedServices)
                           && entry.requestedServices.length > 0
                           && entry.requestedServices.includes(s as typeof entry.requestedServices[number]);
                         return (
-                          <span key={s} className="inline-flex items-center gap-0.5">
+                          <span key={s} className="inline-flex items-center gap-1">
+                            {wasRequested && (
+                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
+                            )}
                             <Badge
                               label={count > 1 ? `${s} x${count}` : s}
                               variant={getTurnBadgeVariant(entry.turnValue)}
                             />
-                            {wasRequested && (
-                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
-                            )}
                           </span>
                         );
                       })}
-                      <Badge
-                        label={`${entry.turnValue} turns`}
-                        variant={getTurnBadgeVariant(entry.turnValue)}
-                      />
                     </div>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs font-bold text-gray-900">
+                    {entry.turnValue}
                   </td>
                   <td className="px-4 py-3">
                     <span className="flex items-center gap-2">
@@ -174,14 +156,8 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
                         className="w-2.5 h-2.5 rounded-full"
                         style={{ backgroundColor: entry.manicuristColor }}
                       />
-                      <span className="font-mono text-xs text-gray-700">{entry.manicuristName}</span>
+                      <span className="font-mono text-xs font-bold text-gray-900">{entry.manicuristName}</span>
                     </span>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-[11px] text-gray-500">
-                    {formatTime(entry.startedAt)} - {formatTime(entry.completedAt)}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-[11px] text-gray-500">
-                    {formatDuration(entry.startedAt, entry.completedAt)}
                   </td>
                 </tr>
               ))}
@@ -427,21 +403,22 @@ export default function HistoryScreen() {
 
       {turnsPerManicurist.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
-          <h3 className="font-bebas text-sm tracking-[2px] text-gray-500 mb-3">TURNS PER MANICURIST</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={turnsPerManicurist} margin={{ top: 4, right: 30, bottom: 20, left: 0 }}>
-              <XAxis
+          <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold mb-3">TURNS PER MANICURIST</h3>
+          <ResponsiveContainer width="100%" height={turnsPerManicurist.length * 36 + 20}>
+            <BarChart data={turnsPerManicurist} layout="vertical" margin={{ top: 4, right: 30, bottom: 4, left: 0 }}>
+              <YAxis
                 dataKey="name"
+                type="category"
                 interval={0}
                 tick={({ x, y, payload, index }: { x: string | number; y: string | number; payload: { value: string }; index: number }) => {
                   const entry = turnsPerManicurist[index];
                   return (
                     <g transform={`translate(${Number(x)},${Number(y)})`}>
-                      <text x={0} y={0} dy={8} textAnchor="middle" fill="#6b7280" fontSize={11} fontFamily="IBM Plex Mono">
+                      <text x={-4} y={0} dy={4} textAnchor="end" fill="#111827" fontSize={11} fontFamily="IBM Plex Mono" fontWeight={700}>
                         {payload.value}
                       </text>
                       {entry?.clockInTime && (
-                        <text x={0} y={0} dy={20} textAnchor="middle" fill="#9ca3af" fontSize={9} fontFamily="IBM Plex Mono">
+                        <text x={-4} y={0} dy={14} textAnchor="end" fill="#9ca3af" fontSize={9} fontFamily="IBM Plex Mono">
                           {entry.clockInTime}
                         </text>
                       )}
@@ -450,12 +427,13 @@ export default function HistoryScreen() {
                 }}
                 axisLine={false}
                 tickLine={false}
+                width={90}
               />
-              <YAxis
+              <XAxis
+                type="number"
                 tick={{ fontSize: 10, fontFamily: 'IBM Plex Mono', fill: '#9ca3af' }}
                 axisLine={false}
                 tickLine={false}
-                width={30}
                 ticks={(() => {
                   const maxTurns = Math.max(...turnsPerManicurist.map((m) => m.turns), 1);
                   const maxTick = Math.ceil(maxTurns * 2) / 2;
@@ -468,7 +446,24 @@ export default function HistoryScreen() {
               <Tooltip
                 contentStyle={{ fontFamily: 'IBM Plex Mono', fontSize: 12, borderRadius: 12, border: '1px solid #e5e7eb' }}
               />
-              <Bar dataKey="turns" radius={[8, 8, 0, 0]} maxBarSize={48}>
+              <Bar
+                dataKey="turns"
+                radius={[0, 8, 8, 0]}
+                maxBarSize={24}
+                label={({ x, y, width, height, value }: { x: number; y: number; width: number; height: number; value: number }) => (
+                  <text
+                    x={x + width + 6}
+                    y={y + height / 2}
+                    dy={4}
+                    fill="#374151"
+                    fontSize={11}
+                    fontFamily="IBM Plex Mono"
+                    fontWeight={600}
+                  >
+                    {value.toFixed(1)}
+                  </text>
+                )}
+              >
                 {turnsPerManicurist.map((entry, index) => (
                   <Cell key={index} fill={entry.color} />
                 ))}

@@ -1,0 +1,21 @@
+{
+  "name": "TurnEM - Aqua Team",
+  "short_name": "TurnEM",
+  "description": "Nail salon turn management system",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ec4899",
+  "icons": [
+    {
+      "src": "/Turn_Em_Logo.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/Turn_Em_Logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}

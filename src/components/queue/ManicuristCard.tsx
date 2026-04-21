@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit } from 'lucide-react';
+import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
 import Badge from '../shared/Badge';
 import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
+import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
 
 interface ManicuristCardProps {
   manicurist: Manicurist;
@@ -32,7 +33,18 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   const { dispatch } = useApp();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
+  const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
   const statusConfig = getStatusConfig(manicurist.status);
+
+  async function handleEnablePush() {
+    setPushStatus('subscribing');
+    const result = await subscribeToPush(manicurist.id);
+    setPushStatus(result.success ? 'subscribed' : 'error');
+    if (!result.success) {
+      console.error('Push subscription failed:', result.error);
+      setTimeout(() => setPushStatus('idle'), 3000);
+    }
+  }
 
   function handleClockToggle() {
     if (manicurist.clockedIn) {
@@ -105,45 +117,79 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
       }`}
     >
       <div className="p-2">
-        <div className="flex items-center justify-between mb-1.5">
-          <div className="flex items-center gap-1.5">
-            <div className="flex flex-col gap-0.5">
-              <button
-                onClick={() => dispatch({ type: 'REORDER_MANICURIST', id: manicurist.id, direction: 'up' })}
-                disabled={isFirst}
-                className={`p-0.5 rounded transition-colors ${
-                  isFirst
-                    ? 'text-gray-200 cursor-not-allowed'
-                    : 'text-gray-400 hover:text-pink-500 hover:bg-pink-50'
-                }`}
-                title="Move up in queue"
-              >
-                <ChevronUp size={10} />
-              </button>
-              <button
-                onClick={() => dispatch({ type: 'REORDER_MANICURIST', id: manicurist.id, direction: 'down' })}
-                disabled={isLast}
-                className={`p-0.5 rounded transition-colors ${
-                  isLast
-                    ? 'text-gray-200 cursor-not-allowed'
-                    : 'text-gray-400 hover:text-pink-500 hover:bg-pink-50'
-                }`}
-                title="Move down in queue"
-              >
-                <ChevronDown size={10} />
-              </button>
-            </div>
-            <div
-              className="w-2.5 h-2.5 rounded-full ring-2 ring-white shadow shrink-0"
-              style={{ backgroundColor: manicurist.color }}
-            />
-            <h3 className="font-bebas text-lg tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h3>
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <div className="flex flex-col gap-0.5">
+            <button
+              onClick={() => dispatch({ type: 'REORDER_MANICURIST', id: manicurist.id, direction: 'up' })}
+              disabled={isFirst}
+              className={`p-0.5 rounded transition-colors ${
+                isFirst
+                  ? 'text-gray-200 cursor-not-allowed'
+                  : 'text-gray-400 hover:text-pink-500 hover:bg-pink-50'
+              }`}
+              title="Move up in queue"
+            >
+              <ChevronUp size={10} />
+            </button>
+            <button
+              onClick={() => dispatch({ type: 'REORDER_MANICURIST', id: manicurist.id, direction: 'down' })}
+              disabled={isLast}
+              className={`p-0.5 rounded transition-colors ${
+                isLast
+                  ? 'text-gray-200 cursor-not-allowed'
+                  : 'text-gray-400 hover:text-pink-500 hover:bg-pink-50'
+              }`}
+              title="Move down in queue"
+            >
+              <ChevronDown size={10} />
+            </button>
           </div>
-          <Badge label={statusConfig.label} variant={statusConfig.badge} size="md" />
+          <div
+            className="w-2.5 h-2.5 rounded-full ring-2 ring-white shadow shrink-0"
+            style={{ backgroundColor: manicurist.color }}
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1">
+              <h3 className="font-bebas text-lg tracking-[1px] text-gray-900 leading-none truncate">{manicurist.name}</h3>
+              {isPushSupported() && (
+                <button
+                  onClick={handleEnablePush}
+                  disabled={pushStatus === 'subscribing'}
+                  className={`p-0.5 rounded transition-colors shrink-0 ${
+                    pushStatus === 'subscribed'
+                      ? 'text-emerald-500'
+                      : pushStatus === 'error'
+                      ? 'text-red-400'
+                      : getPermissionState() === 'granted'
+                      ? 'text-emerald-400 hover:text-emerald-600'
+                      : 'text-gray-300 hover:text-pink-500'
+                  }`}
+                  title={
+                    pushStatus === 'subscribed'
+                      ? 'Notifications enabled'
+                      : pushStatus === 'subscribing'
+                      ? 'Enabling...'
+                      : 'Enable push notifications'
+                  }
+                >
+                  {pushStatus === 'subscribed' || getPermissionState() === 'granted'
+                    ? <Bell size={12} />
+                    : <BellOff size={12} />
+                  }
+                </button>
+              )}
+            </div>
+            <span className={`font-mono text-[10px] font-semibold tracking-wider ${
+              manicurist.status === 'available' ? 'text-emerald-500' :
+              manicurist.status === 'busy' ? 'text-red-500' : 'text-amber-500'
+            }`}>
+              {statusConfig.label}
+            </span>
+          </div>
         </div>
 
-        {turnRank !== null && totalRanked > 0 && (
-          <div className="mb-1 flex items-center justify-between">
+        <div className="mb-1 flex items-center justify-between h-4">
+          {turnRank !== null && totalRanked > 0 && (
             <span
               className={`font-mono text-[10px] font-bold tracking-wider ${
                 turnRank === 1
@@ -157,8 +203,8 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
             >
               {turnRank === 1 ? 'NEXT UP' : `#${turnRank}`}
             </span>
-          </div>
-        )}
+          )}
+        </div>
 
         {(() => {
           const hasWaxSkill = manicurist.skills.some(s => ['Waxing', 'Eyebrows', 'Lip & Brows', 'Lips', 'Whole Face'].includes(s));
@@ -175,17 +221,16 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                     className={`transition-colors ${manicurist.hasFourthPositionSpecial ? 'text-red-500' : 'text-gray-200'}`}
                   />
                 </button>
-                {hasWaxSkill && (
-                  <button
-                    onClick={() => dispatch({ type: 'TOGGLE_WAX', id: manicurist.id })}
-                    className={`font-mono text-xs font-bold leading-none transition-colors ${
-                      manicurist.hasWax || clientHasWax ? 'text-amber-400' : 'text-gray-200 hover:text-gray-300'
-                    }`}
-                    title="Toggle wax 1"
-                  >
-                    W
-                  </button>
-                )}
+                <button
+                  onClick={() => hasWaxSkill && dispatch({ type: 'TOGGLE_WAX', id: manicurist.id })}
+                  className={`font-mono text-xs font-bold leading-none transition-colors h-4 ${
+                    !hasWaxSkill ? 'invisible' :
+                    manicurist.hasWax || clientHasWax ? 'text-amber-400' : 'text-gray-200 hover:text-gray-300'
+                  }`}
+                  title="Toggle wax 1"
+                >
+                  W
+                </button>
               </div>
               <div className="flex flex-col items-center gap-0.5">
                 <button
@@ -198,17 +243,16 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                     className={`transition-colors ${manicurist.hasCheck2 ? 'text-red-500' : 'text-gray-200'}`}
                   />
                 </button>
-                {hasWaxSkill && (
-                  <button
-                    onClick={() => dispatch({ type: 'TOGGLE_WAX2', id: manicurist.id })}
-                    className={`font-mono text-xs font-bold leading-none transition-colors ${
-                      manicurist.hasWax2 ? 'text-amber-400' : 'text-gray-200 hover:text-gray-300'
-                    }`}
-                    title="Toggle wax 2"
-                  >
-                    W
-                  </button>
-                )}
+                <button
+                  onClick={() => hasWaxSkill && dispatch({ type: 'TOGGLE_WAX2', id: manicurist.id })}
+                  className={`font-mono text-xs font-bold leading-none transition-colors h-4 ${
+                    !hasWaxSkill ? 'invisible' :
+                    manicurist.hasWax2 ? 'text-amber-400' : 'text-gray-200 hover:text-gray-300'
+                  }`}
+                  title="Toggle wax 2"
+                >
+                  W
+                </button>
               </div>
               <div className="flex flex-col items-center gap-0.5">
                 <button
@@ -221,17 +265,16 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                     className={`transition-colors ${manicurist.hasCheck3 ? 'text-red-500' : 'text-gray-200'}`}
                   />
                 </button>
-                {hasWaxSkill && (
-                  <button
-                    onClick={() => dispatch({ type: 'TOGGLE_WAX3', id: manicurist.id })}
-                    className={`font-mono text-xs font-bold leading-none transition-colors ${
-                      manicurist.hasWax3 ? 'text-amber-400' : 'text-gray-200 hover:text-gray-300'
-                    }`}
-                    title="Toggle wax 3"
-                  >
-                    W
-                  </button>
-                )}
+                <button
+                  onClick={() => hasWaxSkill && dispatch({ type: 'TOGGLE_WAX3', id: manicurist.id })}
+                  className={`font-mono text-xs font-bold leading-none transition-colors h-4 ${
+                    !hasWaxSkill ? 'invisible' :
+                    manicurist.hasWax3 ? 'text-amber-400' : 'text-gray-200 hover:text-gray-300'
+                  }`}
+                  title="Toggle wax 3"
+                >
+                  W
+                </button>
               </div>
             </div>
           );

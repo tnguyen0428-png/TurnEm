@@ -1,6 +1,7 @@
 import type { AppState, Manicurist } from '../types';
 import type { AppAction } from './actions';
 import { clientHasAnyWaxService } from '../utils/salonRules';
+import { isFourthPositionSpecialService } from '../utils/priority';
 
 function nextWaxSlot(m: Manicurist): 'hasWax' | 'hasWax2' | 'hasWax3' | null {
   if (!m.hasWax)  return 'hasWax';
@@ -132,6 +133,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const now = Date.now();
       const turns = Number(client.turnValue) || 0;
       const isWax = clientHasAnyWaxService(client.services, state.salonServices);
+      const is4thPosition = isFourthPositionSpecialService(client.services, state.salonServices);
       return {
         ...state,
         queue: state.queue.map((c) =>
@@ -142,7 +144,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         manicurists: state.manicurists.map((m) => {
           if (m.id !== action.manicuristId) return m;
           const waxSlot   = isWax ? nextWaxSlot(m)   : null;
-          const checkSlot = nextCheckSlot(m);
+          const checkSlot = is4thPosition ? nextCheckSlot(m) : null;
           return {
             ...m,
             status: 'busy' as const,
@@ -161,13 +163,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const now = Date.now();
       const requestTurns = Number(action.client.turnValue) || 0;
       const isWax = clientHasAnyWaxService(action.client.services, state.salonServices);
+      const is4thPosition = isFourthPositionSpecialService(action.client.services, state.salonServices);
       return {
         ...state,
         queue: [...state.queue, { ...action.client, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: requestTurns }],
         manicurists: state.manicurists.map((m) => {
           if (m.id !== action.manicuristId) return m;
           const waxSlot   = isWax ? nextWaxSlot(m)   : null;
-          const checkSlot = nextCheckSlot(m);
+          const checkSlot = is4thPosition ? nextCheckSlot(m) : null;
           return {
             ...m,
             status: 'busy' as const,
@@ -188,13 +191,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
         return client;
       });
-      const assignMap = new Map<string, { clientId: string; turns: number; isWax: boolean }>();
+      const assignMap = new Map<string, { clientId: string; turns: number; isWax: boolean; is4thPosition: boolean }>();
       for (const { client, manicuristId } of action.entries) {
         if (manicuristId) {
           assignMap.set(manicuristId, {
             clientId: client.id,
             turns: client.turnValue,
             isWax: clientHasAnyWaxService(client.services, state.salonServices),
+            is4thPosition: isFourthPositionSpecialService(client.services, state.salonServices),
           });
         }
       }
@@ -208,7 +212,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           const assignment = assignMap.get(m.id);
           if (!assignment) return m;
           const waxSlot   = assignment.isWax ? nextWaxSlot(m)   : null;
-          const checkSlot = nextCheckSlot(m);
+          const checkSlot = assignment.is4thPosition ? nextCheckSlot(m) : null;
           return {
             ...m,
             status: 'busy' as const,

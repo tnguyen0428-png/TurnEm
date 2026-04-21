@@ -20,6 +20,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
   const [phone, setPhone] = useState('');
   const [color, setColor] = useState(STAFF_COLORS[0]);
   const [skills, setSkills] = useState<string[]>([]);
+  const [timeAdjustments, setTimeAdjustments] = useState<Record<string, number>>({});
 
   const sortedServices = useMemo(
     () => [...state.salonServices].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -44,6 +45,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
       setPhone(editingStaff.phone || '');
       setColor(editingStaff.color);
       setSkills([...editingStaff.skills]);
+      setTimeAdjustments({ ...(editingStaff.timeAdjustments || {}) });
     }
   }, [editingStaff]);
 
@@ -93,7 +95,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
       dispatch({
         type: 'UPDATE_MANICURIST',
         id: editingStaff.id,
-        updates: { name: name.trim(), phone: phone.trim(), color, skills },
+        updates: { name: name.trim(), phone: phone.trim(), color, skills, timeAdjustments },
       });
     } else {
       const newManicurist: Manicurist = {
@@ -113,6 +115,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
         hasWax: false,
         hasWax2: false,
         hasWax3: false,
+        timeAdjustments,
       };
       dispatch({ type: 'ADD_MANICURIST', manicurist: newManicurist });
     }
@@ -277,9 +280,47 @@ export default function StaffModal({ mode }: StaffModalProps) {
                         />
                         <div className="flex items-center justify-between flex-1 min-w-0">
                           <span className="font-mono text-sm text-gray-700 truncate">{svc.name}</span>
-                          <span className="font-mono text-[10px] text-gray-400 flex-shrink-0 ml-2">
-                            {svc.turnValue} turn
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                            {skills.includes(svc.name) && (
+                              <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    setTimeAdjustments(prev => ({
+                                      ...prev,
+                                      [svc.name]: (prev[svc.name] || 0) - 5,
+                                    }));
+                                  }}
+                                  className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-gray-200 font-mono text-xs font-bold text-gray-600 transition-colors"
+                                >
+                                  -
+                                </button>
+                                <span className={`font-mono text-[10px] font-semibold w-10 text-center tabular-nums ${
+                                  (timeAdjustments[svc.name] || 0) > 0 ? 'text-red-500' :
+                                  (timeAdjustments[svc.name] || 0) < 0 ? 'text-emerald-500' : 'text-gray-400'
+                                }`}>
+                                  {(timeAdjustments[svc.name] || 0) > 0 ? '+' : ''}{timeAdjustments[svc.name] || 0}m
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    setTimeAdjustments(prev => ({
+                                      ...prev,
+                                      [svc.name]: (prev[svc.name] || 0) + 5,
+                                    }));
+                                  }}
+                                  className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-gray-200 font-mono text-xs font-bold text-gray-600 transition-colors"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            )}
+                            <span className="font-mono text-[10px] text-gray-400">
+                              {svc.duration + (timeAdjustments[svc.name] || 0)}m
+                            </span>
+                          </div>
                         </div>
                       </label>
                     ))}

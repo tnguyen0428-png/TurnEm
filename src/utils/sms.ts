@@ -11,7 +11,7 @@ export async function sendTurnAlert(
     return { success: false, error: 'No phone number on file' };
   }
 
-  const message = `Hi ${manicuristName}, it's your turn! Client: ${clientName} | Service: ${service}. Please head to your station.`;
+  const message = `Hi ${manicuristName}, it's your turn! Client: ${clientName} | Service: ${service}. Please head to your station. - Aqua Team`;
 
   try {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/send-sms`, {

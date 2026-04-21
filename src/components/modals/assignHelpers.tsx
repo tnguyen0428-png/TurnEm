@@ -24,9 +24,12 @@ export function getClientDurationMs(manicurist: Manicurist, queue: QueueEntry[],
   if (!manicurist.currentClient) return 0;
   const client = queue.find(c => c.id === manicurist.currentClient);
   if (!client) return 0;
+  const adj = manicurist.timeAdjustments || {};
   return client.services.reduce((sum, svcName) => {
     const svc = salonServices.find(s => s.name === svcName);
-    return sum + (svc?.duration ?? 30);
+    const baseDuration = svc?.duration ?? 30;
+    const adjustment = adj[svcName] || 0;
+    return sum + Math.max(baseDuration + adjustment, 5);
   }, 0) * 60000;
 }
 
@@ -99,18 +102,40 @@ export function getDistinctServices(
   return result;
 }
 
-export function getEligibleForService(service: ServiceType, manicurists: Manicurist[], salonServices?: SalonService[]): Manicurist[] {
+export function getAlmostDoneMs(manicurist: Manicurist, queue: QueueEntry[], salonServices: SalonService[]): number | null {
+  if (manicurist.status !== 'busy' || !manicurist.currentClient) return null;
+  const client = queue.find(c => c.id === manicurist.currentClient);
+  if (!client || !client.startedAt) return null;
+  const durationMs = getClientDurationMs(manicurist, queue, salonServices);
+  const elapsed = Date.now() - client.startedAt;
+  const remaining = durationMs - elapsed;
+  if (remaining <= 10 * 60 * 1000) return Math.max(0, remaining);
+  return null;
+}
+
+export function getEligibleForService(service: ServiceType, manicurists: Manicurist[], salonServices?: SalonService[], queue?: QueueEntry[]): (Manicurist & { _almostDone?: boolean })[] {
   const wax = salonServices ? isWaxService(service, salonServices) : false;
-  return manicurists
+  const available = manicurists
     .filter((m) => m.clockedIn && m.status === 'available')
     .filter((m) => m.skills.includes(service))
-    .sort((a, b) => {
-      if (wax) return waxRotationCompare(a, b);
-      if (Math.floor(a.totalTurns) !== Math.floor(b.totalTurns)) return Math.floor(a.totalTurns) - Math.floor(b.totalTurns);
-      const aTime = a.clockInTime ?? Infinity;
-      const bTime = b.clockInTime ?? Infinity;
-      return aTime - bTime;
-    });
+    .map(m => ({ ...m, _almostDone: false }));
+
+  const almostDone = (queue && salonServices)
+    ? manicurists
+        .filter((m) => m.clockedIn && m.status === 'busy' && m.skills.includes(service))
+        .filter((m) => getAlmostDoneMs(m, queue, salonServices) !== null)
+        .map(m => ({ ...m, _almostDone: true }))
+    : [];
+
+  const combined = [...available, ...almostDone];
+
+  return combined.sort((a, b) => {
+    if (wax) return waxRotationCompare(a, b);
+    if (Math.floor(a.totalTurns) !== Math.floor(b.totalTurns)) return Math.floor(a.totalTurns) - Math.floor(b.totalTurns);
+    const aTime = a.clockInTime ?? Infinity;
+    const bTime = b.clockInTime ?? Infinity;
+    return aTime - bTime;
+  });
 }
 
 export function getSuggestedForService(service: ServiceType, manicurists: Manicurist[], salonServices: SalonService[], excludeIds: Set<string> = new Set()): Manicurist | null {

@@ -4,6 +4,7 @@ interface CountdownResult {
   remainingMs: number | null;
   display: string;
   isFinishingUp: boolean;
+  isAlmostDone: boolean;
 }
 
 export function useCountdown(startedAt: number | null, totalDurationMs: number): CountdownResult {
@@ -15,11 +16,12 @@ export function useCountdown(startedAt: number | null, totalDurationMs: number):
   }, []);
 
   if (startedAt === null) {
-    return { remainingMs: null, display: '', isFinishingUp: false };
+    return { remainingMs: null, display: '', isFinishingUp: false, isAlmostDone: false };
   }
 
   const remainingMs = startedAt + totalDurationMs - now;
   const isFinishingUp = remainingMs <= 0;
+  const isAlmostDone = !isFinishingUp && remainingMs <= 10 * 60 * 1000;
 
   let display: string;
   if (isFinishingUp) {
@@ -31,5 +33,5 @@ export function useCountdown(startedAt: number | null, totalDurationMs: number):
     display = `${mins}:${String(secs).padStart(2, '0')}`;
   }
 
-  return { remainingMs, display, isFinishingUp };
+  return { remainingMs, display, isFinishingUp, isAlmostDone };
 }
