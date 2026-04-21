@@ -190,10 +190,14 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     const smsTargets: { id: string; phone: string; name: string; clientName: string; service: string }[] = [];
 
     for (const [mId, group] of manicuristGroups) {
-      // Only preserve service requests where this manicurist was the one originally requested
-      const serviceReqs = group.services
-        .filter((s) => (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.includes(mId)))
-        .map((s) => ({ service: s as ServiceType, manicuristIds: [mId] }));
+      // If this manicurist was requested for ANY service in the group,
+      // mark ALL services in the group as requested — the customer chose this person.
+      const wasRequested = group.services.some((s) =>
+        (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.includes(mId))
+      );
+      const serviceReqs = wasRequested
+        ? group.services.map((s) => ({ service: s as ServiceType, manicuristIds: [mId] }))
+        : [];
 
       const entry: QueueEntry = {
         id: crypto.randomUUID(),
