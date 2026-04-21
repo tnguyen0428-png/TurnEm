@@ -38,17 +38,15 @@ export default function LoginScreen() {
   return (
     <div className="min-h-screen bg-white flex items-center justify-center px-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <img
             src="/Turn_Em_Logo.jpg"
             alt="TurnEM Logo"
-            className="w-40 h-40 rounded-2xl mx-auto mb-4 shadow-lg shadow-pink-200 object-cover"
+            className="w-56 h-auto mx-auto mb-2 object-contain"
           />
-          <h1 className="font-bebas text-3xl tracking-[4px] text-gray-900">TURN EM</h1>
-          <p className="font-mono text-xs text-gray-400 mt-2">Turn Management System</p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
+        <div className="p-8">
           <div className="flex bg-gray-50 rounded-xl p-1 mb-6">
             <button
               onClick={() => { setMode('login'); setError(null); setSuccess(null); }}
@@ -136,9 +134,6 @@ export default function LoginScreen() {
           </form>
         </div>
 
-        <p className="text-center font-mono text-[10px] text-gray-300 mt-6">
-          Salon Turn Management v1.0
-        </p>
       </div>
     </div>
   );
