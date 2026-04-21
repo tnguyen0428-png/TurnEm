@@ -315,10 +315,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           date,
           entries: mergedEntries,
         };
-        await supabase.from('daily_history').upsert(
+        const { error: histErr } = await supabase.from('daily_history').upsert(
           { id: historyEntry.id, date: historyEntry.date, entries: historyEntry.entries },
           { onConflict: 'date' }
         );
+        if (histErr) { console.error('[startup] daily_history upsert error:', histErr); setSyncError('Failed to archive history — data may not be saved. Check connection.'); }
         // Update in-memory history so the history screen can find it immediately
         dispatch({ type: 'SAVE_DAILY_HISTORY', entry: historyEntry });
       }
@@ -369,6 +370,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .upsert({ id: entry.id, date: entry.date, entries: entry.entries }, { onConflict: 'date' });
     if (error) {
       console.error('[saveTodayHistory] upsert error:', error);
+      setSyncError('Failed to save history — data may not be saved. Check connection.');
       return false; // caller must NOT dispatch or reset on failure
     }
     dispatch({ type: 'SAVE_DAILY_HISTORY', entry });
