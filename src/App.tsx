@@ -109,7 +109,7 @@ function AuthGate() {
 function StaffPortal() {
   const { state } = useApp();
   const [loggedInManicurist, setLoggedInManicurist] = useState<Manicurist | null>(() => {
-    const savedId = sessionStorage.getItem('turnem_staff_id');
+    const savedId = localStorage.getItem('turnem_staff_id');
     return savedId ? (state.manicurists.find((m) => m.id === savedId) || null) : null;
   });
 
@@ -129,7 +129,7 @@ function StaffPortal() {
       <StaffLoginScreen
         manicurists={state.manicurists}
         onLogin={(m) => {
-          sessionStorage.setItem('turnem_staff_id', m.id);
+          localStorage.setItem('turnem_staff_id', m.id);
           setLoggedInManicurist(m);
         }}
       />
@@ -140,7 +140,7 @@ function StaffPortal() {
     <StaffPortalScreen
       manicurist={loggedInManicurist}
       onLogout={() => {
-        sessionStorage.removeItem('turnem_staff_id');
+        localStorage.removeItem('turnem_staff_id');
         setLoggedInManicurist(null);
       }}
     />
