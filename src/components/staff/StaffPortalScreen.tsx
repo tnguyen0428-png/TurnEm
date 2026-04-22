@@ -340,57 +340,64 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
 
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-40">
-        <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div
-              className="w-4 h-4 rounded-full ring-2 ring-white shadow"
-              style={{ backgroundColor: manicurist.color }}
+        <div className="max-w-lg mx-auto px-4 py-3">
+          {/* Top row: logo left, manicurist name right */}
+          <div className="flex items-center justify-between mb-3">
+            <img
+              src="/Turn_Em_Logo.jpg"
+              alt="TurnEM"
+              className="h-10 w-auto object-contain"
             />
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="font-bebas text-xl tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h1>
-                {(pushStatus === 'subscribed' || getPermissionState() === 'granted') && (
-                  <Bell size={14} className="text-emerald-500" />
-                )}
-              </div>
-              <span className={`font-mono text-[10px] font-semibold tracking-wider uppercase ${statusColor}`}>
-                {statusLabel}
-              </span>
+            <div className="flex items-center gap-2">
+              <div
+                className="w-3.5 h-3.5 rounded-full ring-2 ring-white shadow"
+                style={{ backgroundColor: manicurist.color }}
+              />
+              <h1 className="font-bebas text-xl tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h1>
+              {(pushStatus === 'subscribed' || getPermissionState() === 'granted') && (
+                <Bell size={14} className="text-emerald-500" />
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                handleScreenTap();
-                setSoundEnabled(!soundEnabled);
-              }}
-              className={`flex items-center gap-1 px-2.5 py-2 rounded-lg border font-mono text-xs font-semibold transition-all ${
-                soundEnabled
-                  ? 'border-emerald-200 text-emerald-600 bg-emerald-50'
-                  : 'border-gray-200 text-gray-400'
-              }`}
-            >
-              <Volume2 size={14} />
-              {soundEnabled ? 'ON' : 'OFF'}
-            </button>
-            <button
-              onClick={() => {
-                handleScreenTap();
-                setAlert({ type: 'assigned', clientName: 'TEST CLIENT', services: ['Test Service'] });
-                playAssignedSound();
-              }}
-              className="flex items-center gap-1 px-2.5 py-2 rounded-lg border border-purple-200 text-purple-600 bg-purple-50 font-mono text-xs font-semibold transition-all"
-            >
-              <Zap size={14} />
-              TEST
-            </button>
-            <button
-              onClick={onLogout}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
-            >
-              <LogOut size={14} />
-              LOGOUT
-            </button>
+          {/* Bottom row: status label + action buttons */}
+          <div className="flex items-center justify-between">
+            <span className={`font-mono text-[10px] font-semibold tracking-wider uppercase ${statusColor}`}>
+              {statusLabel}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  handleScreenTap();
+                  setSoundEnabled(!soundEnabled);
+                }}
+                className={`flex items-center gap-1 px-2.5 py-2 rounded-lg border font-mono text-xs font-semibold transition-all ${
+                  soundEnabled
+                    ? 'border-emerald-200 text-emerald-600 bg-emerald-50'
+                    : 'border-gray-200 text-gray-400'
+                }`}
+              >
+                <Volume2 size={14} />
+                {soundEnabled ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={() => {
+                  handleScreenTap();
+                  setAlert({ type: 'assigned', clientName: 'TEST CLIENT', services: ['Test Service'] });
+                  playAssignedSound();
+                }}
+                className="flex items-center gap-1 px-2.5 py-2 rounded-lg border border-purple-200 text-purple-600 bg-purple-50 font-mono text-xs font-semibold transition-all"
+              >
+                <Zap size={14} />
+                TEST
+              </button>
+              <button
+                onClick={onLogout}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
+              >
+                <LogOut size={14} />
+                LOGOUT
+              </button>
+            </div>
           </div>
         </div>
       </div>
