@@ -84,9 +84,9 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
       currentClient?.services?.join(', ') || 'Notification'
     );
     if (result.success) {
-      showSmsToast(`sent: ${result.error || 'ok'}`);
+      showSmsToast('sent', `Push OK: ${result.error || 'no details'}`);
     } else {
-      showSmsToast(`FAIL: ${result.error}`);
+      showSmsToast('failed', `Push FAIL: ${result.error}`);
     }
     setBellSending(false);
   }
@@ -368,4 +368,3 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
     </>
   );
 }
-                       

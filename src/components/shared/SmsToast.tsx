@@ -3,19 +3,21 @@ import { MessageSquare } from 'lucide-react';
 
 type SmsStatus = 'idle' | 'sending' | 'sent' | 'failed' | 'no-phone';
 
-let globalSetStatus: ((status: SmsStatus) => void) | null = null;
+let globalSetStatus: ((status: SmsStatus, msg?: string) => void) | null = null;
 
-export function showSmsToast(status: SmsStatus) {
-  globalSetStatus?.(status);
+export function showSmsToast(status: SmsStatus, customMessage?: string) {
+  globalSetStatus?.(status, customMessage);
 }
 
 export default function SmsToast() {
   const [status, setStatus] = useState<SmsStatus>('idle');
+  const [customMsg, setCustomMsg] = useState<string | undefined>();
 
-  const handleStatus = useCallback((s: SmsStatus) => {
+  const handleStatus = useCallback((s: SmsStatus, msg?: string) => {
     setStatus(s);
+    setCustomMsg(msg);
     if (s !== 'sending') {
-      setTimeout(() => setStatus('idle'), 3500);
+      setTimeout(() => { setStatus('idle'); setCustomMsg(undefined); }, 5000);
     }
   }, []);
 
@@ -26,10 +28,17 @@ export default function SmsToast() {
 
   if (status === 'idle') return null;
 
+  const message = customMsg || (
+    status === 'sending' ? 'Sending SMS alert...' :
+    status === 'sent' ? 'SMS alert sent!' :
+    status === 'failed' ? 'SMS alert failed to send' :
+    'No phone on file - SMS skipped'
+  );
+
   return (
-    <div className="fixed bottom-6 right-6 z-[200]">
+    <div className="fixed bottom-6 right-6 z-[200] max-w-sm">
       <div
-        className={`flex items-center gap-2.5 px-5 py-3.5 rounded-xl shadow-lg font-mono text-xs font-semibold transition-all duration-300 ${
+        className={`flex items-center gap-2.5 px-5 py-3.5 rounded-xl shadow-lg font-mono text-[10px] font-semibold transition-all duration-300 break-all ${
           status === 'sending' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
           status === 'sent' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
           status === 'failed' ? 'bg-red-50 text-red-700 border border-red-200' :
@@ -37,11 +46,8 @@ export default function SmsToast() {
         }`}
         style={{ animation: 'slideUp 0.3s ease-out' }}
       >
-        <MessageSquare size={14} />
-        {status === 'sending' && 'Sending SMS alert...'}
-        {status === 'sent' && 'SMS alert sent!'}
-        {status === 'failed' && 'SMS alert failed to send'}
-        {status === 'no-phone' && 'No phone on file - SMS skipped'}
+        <MessageSquare size={14} className="shrink-0" />
+        {message}
       </div>
     </div>
   );
