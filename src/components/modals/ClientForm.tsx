@@ -106,7 +106,7 @@ export default function ClientForm({
       if (s.requestedManicuristIds.length > 0) {
         const existing = requestMap.get(s.serviceName) || [];
         for (const id of s.requestedManicuristIds) {
-          if (!existing.includes(id)) existing.push(id);
+          existing.push(id);
         }
         requestMap.set(s.serviceName, existing);
       }
