@@ -147,39 +147,14 @@ function StaffPortal() {
   );
 }
 
-function StaffGate() {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
-          <p className="font-mono text-sm text-gray-400">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <LoginScreen />;
-  }
-
-  return (
-    <AppProvider>
-      <StaffPortal />
-    </AppProvider>
-  );
-}
-
 export default function App() {
   const isStaffMode = new URLSearchParams(window.location.search).get('mode') === 'staff';
 
   if (isStaffMode) {
     return (
-      <AuthProvider>
-        <StaffGate />
-      </AuthProvider>
+      <AppProvider>
+        <StaffPortal />
+      </AppProvider>
     );
   }
 
