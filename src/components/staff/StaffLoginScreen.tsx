@@ -13,7 +13,9 @@ export default function StaffLoginScreen({ manicurists, onLogin }: StaffLoginScr
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const clockedIn = manicurists.filter((m) => m.clockedIn);
+  const sortByName = (a: Manicurist, b: Manicurist) => a.name.localeCompare(b.name);
+  const clockedIn = manicurists.filter((m) => m.clockedIn).sort(sortByName);
+  const notClockedIn = manicurists.filter((m) => !m.clockedIn).sort(sortByName);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -95,9 +97,9 @@ export default function StaffLoginScreen({ manicurists, onLogin }: StaffLoginScr
                   ))}
                 </optgroup>
               )}
-              {manicurists.filter((m) => !m.clockedIn).length > 0 && (
+              {notClockedIn.length > 0 && (
                 <optgroup label="Not Clocked In">
-                  {manicurists.filter((m) => !m.clockedIn).map((m) => (
+                  {notClockedIn.map((m) => (
                     <option key={m.id} value={m.id}>{m.name}</option>
                   ))}
                 </optgroup>
