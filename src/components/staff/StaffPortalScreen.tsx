@@ -117,15 +117,47 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   // ---- In-app alert when assigned a client or becoming next up ----
   const [alert, setAlert] = useState<{ type: 'assigned' | 'nextup'; clientName?: string; services?: string[] } | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [audioReady, setAudioReady] = useState(false);
   const prevStatusRef = useRef(manicurist.status);
   const prevQueuePosRef = useRef(queuePosition);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Keep AudioContext alive on iOS by playing a silent tone every 15 seconds.
+  // iOS suspends AudioContext after ~30s of silence, which blocks alert sounds.
+  const startKeepalive = useCallback(() => {
+    if (keepaliveRef.current) return; // already running
+    keepaliveRef.current = setInterval(() => {
+      const ctx = audioContextRef.current;
+      if (!ctx || ctx.state !== 'running') return;
+      try {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        gain.gain.value = 0.001; // inaudible
+        osc.frequency.value = 1;
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.05);
+      } catch (_) { /* ignore */ }
+    }, 15000);
+  }, []);
+
+  // Cleanup keepalive on unmount
+  useEffect(() => {
+    return () => {
+      if (keepaliveRef.current) clearInterval(keepaliveRef.current);
+    };
+  }, []);
 
   const playAlertSound = useCallback(() => {
     if (!soundEnabled) return;
     try {
-      const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
-      audioContextRef.current = ctx;
+      const ctx = audioContextRef.current;
+      if (!ctx || ctx.state !== 'running') {
+        console.log('AudioContext not ready, state:', ctx?.state);
+        return;
+      }
 
       // Play a loud two-tone alert
       const playTone = (freq: number, start: number, duration: number) => {
@@ -140,7 +172,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
         osc.stop(ctx.currentTime + start + duration);
       };
 
-      // Three beeps
+      // Five beeps
       playTone(880, 0, 0.15);
       playTone(1100, 0.2, 0.15);
       playTone(880, 0.4, 0.15);
@@ -181,13 +213,31 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     return () => clearTimeout(timer);
   }, [alert]);
 
-  // Activate AudioContext on first tap (iOS requires user gesture)
+  // Activate AudioContext on first tap (iOS requires user gesture) and start keepalive
   function handleScreenTap() {
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
-    if (audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
+    const ctx = audioContextRef.current;
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => {
+        setAudioReady(true);
+        startKeepalive();
+        // Play a tiny confirmation blip so we know audio is working
+        try {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          gain.gain.value = 0.05;
+          osc.frequency.value = 600;
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.05);
+        } catch (_) { /* ignore */ }
+      });
+    } else if (ctx.state === 'running' && !audioReady) {
+      setAudioReady(true);
+      startKeepalive();
     }
   }
 
@@ -311,6 +361,23 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-5 space-y-4">
+        {/* Audio activation banner — shows until user taps to activate */}
+        {!audioReady && soundEnabled && (
+          <button
+            onClick={handleScreenTap}
+            className="w-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-2xl p-4 text-center shadow-md active:scale-[0.98] transition-transform"
+          >
+            <Volume2 size={28} className="mx-auto mb-2" />
+            <p className="font-bebas text-2xl tracking-[2px]">TAP TO ACTIVATE SOUND</p>
+            <p className="font-mono text-[10px] text-white/70 mt-1">Required for alert sounds on iPhone</p>
+          </button>
+        )}
+        {audioReady && soundEnabled && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-2 text-center">
+            <p className="font-mono text-[10px] text-emerald-600 font-semibold">SOUND ACTIVE — alerts will play automatically</p>
+          </div>
+        )}
+
         {/* Stats Row */}
         <div className="grid grid-cols-2 gap-3">
           {/* Total Turns */}
@@ -363,8 +430,10 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             <span>{queuePosition ?? 'null'}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-400">prevStatus:</span>
-            <span>{prevStatusRef.current}</span>
+            <span className="text-gray-400">Audio:</span>
+            <span className={audioReady ? 'text-emerald-400' : 'text-red-400'}>
+              {audioReady ? 'READY' : 'NOT ACTIVATED'}
+            </span>
           </div>
         </div>
 
