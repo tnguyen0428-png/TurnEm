@@ -66,6 +66,8 @@ export interface CompletedEntry {
   startedAt: number;
   completedAt: number;
   requestedServices?: ServiceType[];
+  isAppointment?: boolean;
+  isRequested?: boolean;
 }
 
 export interface Appointment {
