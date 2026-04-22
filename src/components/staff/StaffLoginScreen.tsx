@@ -61,7 +61,7 @@ export default function StaffLoginScreen({ manicurists, onLogin }: StaffLoginScr
           <img
             src="/Turn_Em_Logo.jpg"
             alt="TurnEM Logo"
-            className="w-96 h-auto object-contain"
+            className="w-96 h-auto object-contain scale-150 origin-center"
           />
         </div>
 
