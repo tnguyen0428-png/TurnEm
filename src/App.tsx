@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './state/AuthContext';
 import { AppProvider, useApp } from './state/AppContext';
 import TabBar from './components/layout/TabBar';
@@ -108,12 +108,21 @@ function AuthGate() {
 
 function StaffPortal() {
   const { state } = useApp();
-  const [loggedInManicurist, setLoggedInManicurist] = useState<Manicurist | null>(() => {
-    const savedId = localStorage.getItem('turnem_staff_id');
-    return savedId ? (state.manicurists.find((m) => m.id === savedId) || null) : null;
-  });
+  const [loggedInManicurist, setLoggedInManicurist] = useState<Manicurist | null>(null);
+  const [checked, setChecked] = useState(false);
 
-  if (!state.loaded) {
+  // Restore saved login AFTER state has loaded (manicurists are available)
+  useEffect(() => {
+    if (!state.loaded) return;
+    const savedId = localStorage.getItem('turnem_staff_id');
+    if (savedId) {
+      const found = state.manicurists.find((m) => m.id === savedId) || null;
+      setLoggedInManicurist(found);
+    }
+    setChecked(true);
+  }, [state.loaded, state.manicurists]);
+
+  if (!state.loaded || !checked) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
