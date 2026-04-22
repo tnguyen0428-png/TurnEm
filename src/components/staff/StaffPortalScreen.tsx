@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2 } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
+import { supabase } from '../../lib/supabase';
 import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
 import { formatTime } from '../../utils/time';
 import type { Manicurist } from '../../types';
@@ -11,8 +12,60 @@ interface StaffPortalScreenProps {
 }
 
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
+
+  // Poll Supabase every 3s for live data (staff mode sync-back is disabled in AppContext)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const [{ data: staffRows }, { data: queueRows }, { data: completedRows }] = await Promise.all([
+          supabase.from('manicurists').select('*'),
+          supabase.from('queue_entries').select('*'),
+          supabase.from('completed_services').select('*'),
+        ]);
+        if (staffRows && queueRows) {
+          dispatch({
+            type: 'LOAD_STATE',
+            state: {
+              manicurists: staffRows.map((r: any) => ({
+                id: r.id, name: r.name, color: r.color, phone: r.phone || '',
+                skills: r.skills || [], clockedIn: r.clocked_in,
+                clockInTime: r.clock_in_time ? new Date(r.clock_in_time).getTime() : null,
+                totalTurns: Number(r.total_turns) || 0,
+                currentClient: r.current_client_id || null,
+                status: r.status || 'available',
+                hasFourthPositionSpecial: r.has_fourth_position_special || false,
+                hasCheck2: r.has_check2 || false, hasCheck3: r.has_check3 || false,
+                hasWax: r.has_wax || false, hasWax2: r.has_wax2 || false, hasWax3: r.has_wax3 || false,
+                timeAdjustments: r.time_adjustments || {}, pinCode: r.pin_code || '',
+              })),
+              queue: queueRows.map((r: any) => ({
+                id: r.id, clientName: r.client_name, phone: r.phone || '',
+                services: r.services || [],
+                arrivedAt: new Date(r.arrived_at).getTime(),
+                status: r.status || 'waiting',
+                assignedManicuristId: r.assigned_manicurist_id || null,
+                startedAt: r.started_at ? new Date(r.started_at).getTime() : null,
+                turnValue: Number(r.turn_value) || 0,
+                serviceRequests: r.service_requests || [],
+                isDeferred: r.is_deferred || false,
+                appointmentTime: r.appointment_time || null,
+              })),
+              completed: (completedRows || []).map((r: any) => ({
+                id: r.id, clientName: r.client_name || '',
+                services: r.services || [], manicuristId: r.manicurist_id || '',
+                completedAt: new Date(r.completed_at).getTime(),
+                turnValue: Number(r.turn_value) || 0,
+                requestedServices: r.requested_services || [],
+              })),
+            },
+          });
+        }
+      } catch (e) { /* ignore polling errors */ }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [dispatch]);
 
   // Get live data for this manicurist from state
   const manicurist = state.manicurists.find((m) => m.id === initialManicurist.id) || initialManicurist;
