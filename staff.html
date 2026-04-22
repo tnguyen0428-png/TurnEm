@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/jpeg" href="/Turn_Em_Logo.jpg" />
+    <link rel="apple-touch-icon" href="/Turn_Em_Logo.jpg" />
+    <link rel="manifest" href="/manifest-staff.json" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#6366f1" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="TurnEM Staff" />
+    <title>TurnEM - Staff Portal</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Set staff mode before React loads
+      window.__TURNEM_STAFF_MODE__ = true;
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

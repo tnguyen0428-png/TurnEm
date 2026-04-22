@@ -2,7 +2,7 @@
   "name": "TurnEM - Staff Portal",
   "short_name": "TurnEM Staff",
   "description": "Staff portal for TurnEM nail salon",
-  "start_url": "/?mode=staff",
+  "start_url": "/staff.html",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#6366f1",

@@ -157,7 +157,7 @@ function StaffPortal() {
 }
 
 export default function App() {
-  const isStaffMode = new URLSearchParams(window.location.search).get('mode') === 'staff';
+  const isStaffMode = new URLSearchParams(window.location.search).get('mode') === 'staff' || (window as any).__TURNEM_STAFF_MODE__ === true;
 
   if (isStaffMode) {
     return (
