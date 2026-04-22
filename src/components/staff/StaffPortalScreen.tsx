@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { LogOut, Bell, BellOff, CheckCircle, Clock } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2 } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
 import { formatTime } from '../../utils/time';
@@ -42,6 +42,83 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     return idx === -1 ? null : idx + 1;
   }, [state.manicurists, manicurist]);
 
+  // ---- In-app alert when assigned a client or becoming next up ----
+  const [alert, setAlert] = useState<{ type: 'assigned' | 'nextup'; clientName?: string; services?: string[] } | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const prevStatusRef = useRef(manicurist.status);
+  const prevQueuePosRef = useRef(queuePosition);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  const playAlertSound = useCallback(() => {
+    if (!soundEnabled) return;
+    try {
+      const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = ctx;
+
+      // Play a loud two-tone alert
+      const playTone = (freq: number, start: number, duration: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = freq;
+        osc.type = 'square';
+        gain.gain.value = 0.3;
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + duration);
+      };
+
+      // Three beeps
+      playTone(880, 0, 0.15);
+      playTone(1100, 0.2, 0.15);
+      playTone(880, 0.4, 0.15);
+      playTone(1100, 0.6, 0.15);
+      playTone(1320, 0.8, 0.3);
+    } catch (e) {
+      console.log('Audio alert failed:', e);
+    }
+  }, [soundEnabled]);
+
+  // Detect assignment (status changed to busy)
+  useEffect(() => {
+    if (prevStatusRef.current !== 'busy' && manicurist.status === 'busy' && manicurist.currentClient) {
+      const client = state.queue.find((c) => c.id === manicurist.currentClient);
+      setAlert({
+        type: 'assigned',
+        clientName: client?.clientName || 'Client',
+        services: client?.services || [],
+      });
+      playAlertSound();
+    }
+    prevStatusRef.current = manicurist.status;
+  }, [manicurist.status, manicurist.currentClient, state.queue, playAlertSound]);
+
+  // Detect becoming next up (queue position changed to 1)
+  useEffect(() => {
+    if (prevQueuePosRef.current !== 1 && queuePosition === 1) {
+      setAlert({ type: 'nextup' });
+      playAlertSound();
+    }
+    prevQueuePosRef.current = queuePosition;
+  }, [queuePosition, playAlertSound]);
+
+  // Auto-dismiss alert after 30 seconds
+  useEffect(() => {
+    if (!alert) return;
+    const timer = setTimeout(() => setAlert(null), 30000);
+    return () => clearTimeout(timer);
+  }, [alert]);
+
+  // Activate AudioContext on first tap (iOS requires user gesture)
+  function handleScreenTap() {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
+    }
+  }
+
   async function handleEnablePush() {
     setPushStatus('subscribing');
     const result = await subscribeToPush(manicurist.id);
@@ -57,7 +134,53 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     manicurist.status === 'busy' ? 'text-red-500' : 'text-amber-500';
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50" onClick={handleScreenTap}>
+      {/* Full-screen alert overlay */}
+      {alert && (
+        <div
+          className={`fixed inset-0 z-50 flex flex-col items-center justify-center p-8 ${
+            alert.type === 'assigned'
+              ? 'bg-gradient-to-b from-red-500 to-red-700'
+              : 'bg-gradient-to-b from-emerald-500 to-emerald-700'
+          }`}
+          style={{ animation: 'pulse 1s ease-in-out infinite alternate' }}
+          onClick={() => setAlert(null)}
+        >
+          <style>{`
+            @keyframes pulse { from { opacity: 0.85; } to { opacity: 1; } }
+            @keyframes bounceIn { 0% { transform: scale(0.5); opacity: 0; } 50% { transform: scale(1.1); } 100% { transform: scale(1); opacity: 1; } }
+          `}</style>
+          <div style={{ animation: 'bounceIn 0.5s ease-out' }} className="text-center">
+            {alert.type === 'assigned' ? (
+              <>
+                <Bell size={64} className="text-white mx-auto mb-4" />
+                <h2 className="font-bebas text-5xl text-white tracking-[3px] mb-3">YOUR TURN!</h2>
+                <p className="font-mono text-lg text-white/90 font-semibold mb-2">
+                  Client: {alert.clientName}
+                </p>
+                {alert.services && alert.services.length > 0 && (
+                  <div className="flex flex-wrap justify-center gap-2 mt-3">
+                    {alert.services.map((s) => (
+                      <span key={s} className="px-3 py-1 rounded-full bg-white/20 text-white font-mono text-sm font-semibold">
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="font-mono text-sm text-white/70 mt-6">Please head to your station</p>
+              </>
+            ) : (
+              <>
+                <div className="text-7xl mb-4">👆</div>
+                <h2 className="font-bebas text-5xl text-white tracking-[3px] mb-3">YOU'RE NEXT!</h2>
+                <p className="font-mono text-lg text-white/90 font-semibold">Get ready — you're next in line</p>
+              </>
+            )}
+            <p className="font-mono text-xs text-white/50 mt-8">Tap anywhere to dismiss</p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
@@ -78,13 +201,29 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               </span>
             </div>
           </div>
-          <button
-            onClick={onLogout}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
-          >
-            <LogOut size={14} />
-            LOGOUT
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                handleScreenTap();
+                setSoundEnabled(!soundEnabled);
+              }}
+              className={`flex items-center gap-1 px-2.5 py-2 rounded-lg border font-mono text-xs font-semibold transition-all ${
+                soundEnabled
+                  ? 'border-emerald-200 text-emerald-600 bg-emerald-50'
+                  : 'border-gray-200 text-gray-400'
+              }`}
+            >
+              <Volume2 size={14} />
+              {soundEnabled ? 'ON' : 'OFF'}
+            </button>
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
+            >
+              <LogOut size={14} />
+              LOGOUT
+            </button>
+          </div>
         </div>
       </div>
 
