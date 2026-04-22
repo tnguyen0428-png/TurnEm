@@ -1,4 +1,4 @@
-// Service Worker for TurnEM Push Notifications
+// Service Worker for TurnEM Push Notifications v2
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -22,11 +22,6 @@ self.addEventListener('push', (event) => {
   const options = {
     body: data.body,
     icon: '/Turn_Em_Logo.jpg',
-    badge: '/Turn_Em_Logo.jpg',
-    vibrate: [200, 100, 200, 100, 200],
-    tag: 'turn-alert',
-    renotify: true,
-    requireInteraction: true,
     data: data.url || '/',
   };
 
