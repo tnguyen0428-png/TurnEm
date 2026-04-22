@@ -150,34 +150,76 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     };
   }, []);
 
-  const playAlertSound = useCallback(() => {
+  const playAssignedSound = useCallback(() => {
     if (!soundEnabled) return;
     try {
       const ctx = audioContextRef.current;
-      if (!ctx || ctx.state !== 'running') {
-        console.log('AudioContext not ready, state:', ctx?.state);
-        return;
-      }
+      if (!ctx || ctx.state !== 'running') return;
+      const t = ctx.currentTime;
 
-      // Play a loud two-tone alert
-      const playTone = (freq: number, start: number, duration: number) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = freq;
-        osc.type = 'square';
-        gain.gain.value = 0.3;
-        osc.start(ctx.currentTime + start);
-        osc.stop(ctx.currentTime + start + duration);
+      // Urgent bright chime — "YOUR TURN!" — plays twice
+      const playChime = (offset: number) => {
+        const notes = [
+          { freq: 784, time: 0, dur: 0.12 },     // G5
+          { freq: 988, time: 0.12, dur: 0.12 },   // B5
+          { freq: 1175, time: 0.24, dur: 0.15 },  // D6
+          { freq: 1568, time: 0.40, dur: 0.25 },  // G6 (hold)
+          { freq: 1175, time: 0.70, dur: 0.10 },  // D6
+          { freq: 1568, time: 0.82, dur: 0.35 },  // G6 (hold longer)
+        ];
+        for (const n of notes) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = n.freq;
+          osc.type = 'sine';
+          gain.gain.setValueAtTime(0, t + offset + n.time);
+          gain.gain.linearRampToValueAtTime(0.3, t + offset + n.time + 0.02);
+          gain.gain.linearRampToValueAtTime(0, t + offset + n.time + n.dur);
+          osc.start(t + offset + n.time);
+          osc.stop(t + offset + n.time + n.dur + 0.01);
+        }
       };
+      playChime(0);
+      playChime(1.4);
+      playChime(2.8);
+    } catch (e) {
+      console.log('Audio alert failed:', e);
+    }
+  }, [soundEnabled]);
 
-      // Five beeps
-      playTone(880, 0, 0.15);
-      playTone(1100, 0.2, 0.15);
-      playTone(880, 0.4, 0.15);
-      playTone(1100, 0.6, 0.15);
-      playTone(1320, 0.8, 0.3);
+  const playNextUpSound = useCallback(() => {
+    if (!soundEnabled) return;
+    try {
+      const ctx = audioContextRef.current;
+      if (!ctx || ctx.state !== 'running') return;
+      const t = ctx.currentTime;
+
+      // Gentle rising arpeggio — "YOU'RE NEXT" — softer, plays twice
+      const playArp = (offset: number) => {
+        const notes = [
+          { freq: 523, time: 0, dur: 0.20 },     // C5
+          { freq: 659, time: 0.20, dur: 0.20 },   // E5
+          { freq: 784, time: 0.40, dur: 0.20 },   // G5
+          { freq: 1047, time: 0.60, dur: 0.45 },  // C6 (hold)
+        ];
+        for (const n of notes) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = n.freq;
+          osc.type = 'triangle';
+          gain.gain.setValueAtTime(0, t + offset + n.time);
+          gain.gain.linearRampToValueAtTime(0.2, t + offset + n.time + 0.03);
+          gain.gain.linearRampToValueAtTime(0, t + offset + n.time + n.dur);
+          osc.start(t + offset + n.time);
+          osc.stop(t + offset + n.time + n.dur + 0.01);
+        }
+      };
+      playArp(0);
+      playArp(1.3);
     } catch (e) {
       console.log('Audio alert failed:', e);
     }
@@ -192,19 +234,19 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
         clientName: client?.clientName || 'Client',
         services: client?.services || [],
       });
-      playAlertSound();
+      playAssignedSound();
     }
     prevStatusRef.current = manicurist.status;
-  }, [manicurist.status, manicurist.currentClient, state.queue, playAlertSound]);
+  }, [manicurist.status, manicurist.currentClient, state.queue, playAssignedSound]);
 
   // Detect becoming next up (queue position changed to 1)
   useEffect(() => {
     if (prevQueuePosRef.current !== 1 && queuePosition === 1) {
       setAlert({ type: 'nextup' });
-      playAlertSound();
+      playNextUpSound();
     }
     prevQueuePosRef.current = queuePosition;
-  }, [queuePosition, playAlertSound]);
+  }, [queuePosition, playNextUpSound]);
 
   // Auto-dismiss alert after 30 seconds
   useEffect(() => {
@@ -342,7 +384,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               onClick={() => {
                 handleScreenTap();
                 setAlert({ type: 'assigned', clientName: 'TEST CLIENT', services: ['Test Service'] });
-                playAlertSound();
+                playAssignedSound();
               }}
               className="flex items-center gap-1 px-2.5 py-2 rounded-lg border border-purple-200 text-purple-600 bg-purple-50 font-mono text-xs font-semibold transition-all"
             >
