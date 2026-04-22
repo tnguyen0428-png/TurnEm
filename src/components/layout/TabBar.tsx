@@ -40,7 +40,7 @@ export default function TabBar() {
               <img
                 src="/Turn_Em_Logo.jpg"
                 alt="Turn Em"
-                className="h-16 w-auto mix-blend-multiply contrast-[1.2] brightness-[1.05]"
+                className="h-44 w-auto mix-blend-multiply contrast-[1.2] brightness-[1.05]"
               />
             </div>
             <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0 justify-center">
