@@ -130,9 +130,10 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {groupServices(entry.services).map(([s, count]) => {
-                        const wasRequested = Array.isArray(entry.requestedServices)
+                        const wasRequested = (entry.isRequested === true && !entry.isAppointment)
+                          || (Array.isArray(entry.requestedServices)
                           && entry.requestedServices.length > 0
-                          && entry.requestedServices.includes(s as typeof entry.requestedServices[number]);
+                          && entry.requestedServices.includes(s as typeof entry.requestedServices[number]));
                         return (
                           <span key={s} className="inline-flex items-center gap-1">
                             {wasRequested && (
