@@ -316,12 +316,12 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="max-w-lg mx-auto px-4 py-3">
-          {/* Top row: logo left (1/2 width), manicurist name right */}
+          {/* Top row: logo left (65% width), manicurist name right */}
           <div className="flex items-center mb-3">
             <img
               src="/Turn_Em_Logo.jpg"
               alt="TurnEM"
-              className="w-1/2 h-auto object-contain"
+              className="w-[65%] h-auto object-contain"
             />
             <div className="flex-1 flex items-center justify-end gap-2">
               <div
