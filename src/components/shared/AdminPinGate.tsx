@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Lock, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../state/AuthContext';
 
 async function fetchAdminPin(): Promise<string | null> {
   const { data, error } = await supabase
@@ -144,6 +145,7 @@ interface ChangePinModalProps {
 }
 
 export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
+  const { user } = useAuth();
   const [resetLoading, setResetLoading] = useState(false);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
 
@@ -231,6 +233,9 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <h2 className="font-bebas text-2xl tracking-[1.5px] text-gray-900">ADMIN</h2>
+              {user?.email && (
+                <p className="font-mono text-xs text-gray-500 truncate max-w-[220px]">{user.email}</p>
+              )}
           </div>
           <button
             type="button"
