@@ -71,7 +71,7 @@ export default function TabBar() {
               >
                 <KeyRound size={14} className="flex-shrink-0" />
                 <span className="truncate">
-                  {user?.email ?? 'PROFILE'}
+                  ADMIN
                 </span>
               </button>
               <button
