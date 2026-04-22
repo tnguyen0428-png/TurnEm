@@ -103,7 +103,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
     )}
     {showClockOutConfirm && (
       <ConfirmDialog
-        message={`Clock out ${manicurist.name}? Their turn count will reset to 0.`}
+        message={`Clock out ${manicurist.name}?`}
         confirmLabel="Clock Out"
         onConfirm={handleClockOutConfirm}
         onCancel={() => setShowClockOutConfirm(false)}
