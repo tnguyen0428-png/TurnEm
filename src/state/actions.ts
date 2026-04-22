@@ -1,4 +1,4 @@
-import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory } from '../types';
+import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry } from '../types';
 
 export type AppAction =
   | { type: 'SET_VIEW'; view: ViewType }
@@ -44,4 +44,8 @@ export type AppAction =
   | { type: 'TOGGLE_WAX2'; id: string }
   | { type: 'TOGGLE_WAX3'; id: string }
   | { type: 'SAVE_DAILY_HISTORY'; entry: DailyHistory }
+  | { type: 'UPDATE_COMPLETED_ENTRY'; id: string; updates: Partial<CompletedEntry> }
+  | { type: 'DELETE_COMPLETED_ENTRY'; id: string }
+  | { type: 'UPDATE_HISTORY_ENTRY'; date: string; entryId: string; updates: Partial<CompletedEntry> }
+  | { type: 'DELETE_HISTORY_ENTRY'; date: string; entryId: string }
   | { type: 'DAILY_RESET' };
