@@ -144,6 +144,28 @@ interface ChangePinModalProps {
 }
 
 export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+
+  async function handleResetLoginPassword() {
+    setResetLoading(true);
+    setResetMessage(null);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.email) {
+        setResetMessage('No login email found');
+        return;
+      }
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(user.email, { redirectTo: window.location.origin });
+      if (resetErr) setResetMessage(resetErr.message);
+      else setResetMessage(`Reset link sent to ${user.email}`);
+    } catch (e: unknown) {
+      setResetMessage(e instanceof Error ? e.message : 'Failed to send reset link');
+    } finally {
+      setResetLoading(false);
+    }
+  }
+
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -208,10 +230,7 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
       >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
-              <Lock size={18} className="text-gray-600" />
-            </div>
-            <h2 className="font-bebas text-2xl tracking-[1.5px] text-gray-900">Change Admin PIN</h2>
+            <h2 className="font-bebas text-2xl tracking-[1.5px] text-gray-900">ADMIN</h2>
           </div>
           <button
             type="button"
@@ -288,6 +307,19 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
               </button>
             </div>
           </form>
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={handleResetLoginPassword}
+              disabled={resetLoading}
+              className="w-full py-2.5 rounded-xl border border-gray-200 text-gray-600 font-mono text-xs font-semibold tracking-[1.5px] hover:bg-gray-50 disabled:opacity-60"
+            >
+              {resetLoading ? 'SENDING...' : 'RESET LOGIN PASSWORD'}
+            </button>
+            {resetMessage && (
+              <p className="mt-2 font-mono text-xs text-center text-gray-500">{resetMessage}</p>
+            )}
+          </div>
         )}
       </div>
     </div>
