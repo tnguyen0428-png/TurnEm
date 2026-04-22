@@ -150,10 +150,11 @@ export async function sendPushNotification(
     });
 
     const data = await response.json();
+    console.log('[push-debug] Full response:', JSON.stringify(data));
     if (!response.ok) {
       return { success: false, error: data.error || 'Push notification failed' };
     }
-    return { success: true };
+    return { success: true, error: JSON.stringify(data.results?.[0] || data) };
   } catch {
     return { success: false, error: 'Network error sending push notification' };
   }
