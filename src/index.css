@@ -14,6 +14,17 @@
     color: #111827;
   }
 
+
+    /* Soft blush glow around viewport edges */
+    body::after {
+          content: '';
+          position: fixed;
+          inset: 0;
+          pointer-events: none;
+          z-index: 9999;
+          box-shadow: inset 0 0 80px 8px rgba(236, 72, 153, 0.18);
+    }
+
   ::selection {
     background-color: #ec489940;
     color: #111827;
