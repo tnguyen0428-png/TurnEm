@@ -81,7 +81,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         manicurists: state.manicurists.map((m) =>
           m.id === action.id
-            ? { ...m, clockedIn: false, clockInTime: null, status: 'available' as const, currentClient: null, totalTurns: 0 }
+            ? { ...m, clockedIn: false, clockInTime: null, status: 'available' as const, currentClient: null }
             : m
         ),
         queue: clientToReturn
