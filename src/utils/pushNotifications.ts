@@ -110,6 +110,25 @@ export async function unsubscribeFromPush(manicuristId: string): Promise<void> {
   }
 }
 
+export async function getSubscribedManicuristIds(): Promise<Set<string>> {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/push_subscriptions?select=manicurist_id`,
+      {
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'apikey': SUPABASE_ANON_KEY,
+        },
+      }
+    );
+    if (!response.ok) return new Set();
+    const rows = await response.json() as { manicurist_id: string }[];
+    return new Set(rows.map((r) => r.manicurist_id));
+  } catch {
+    return new Set();
+  }
+}
+
 export async function sendPushNotification(
   manicuristId: string,
   manicuristName: string,

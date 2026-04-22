@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit } from 'lucide-react';
+import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
-import Badge from '../shared/Badge';
 import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
+import { sendPushNotification } from '../../utils/pushNotifications';
+import { showSmsToast } from '../shared/SmsToast';
 
 interface ManicuristCardProps {
   manicurist: Manicurist;
@@ -15,6 +16,7 @@ interface ManicuristCardProps {
   turnRank: number | null;
   totalRanked: number;
   clientDurationMs?: number;
+  hasPushSub?: boolean;
 }
 
 function getStatusConfig(status: Manicurist['status']) {
@@ -28,10 +30,11 @@ function getStatusConfig(status: Manicurist['status']) {
   }
 }
 
-export default function ManicuristCard({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, clientDurationMs = 0 }: ManicuristCardProps) {
+export default function ManicuristCard({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, clientDurationMs = 0, hasPushSub = false }: ManicuristCardProps) {
   const { dispatch } = useApp();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
+  const [bellSending, setBellSending] = useState(false);
   const statusConfig = getStatusConfig(manicurist.status);
 
   function handleClockToggle() {
@@ -69,6 +72,24 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
       dispatch({ type: 'SET_EDITING_CLIENT', clientId: currentClient.id });
       dispatch({ type: 'SET_MODAL', modal: 'editClient' });
     }
+  }
+
+  async function handleBellClick() {
+    if (!hasPushSub || bellSending) return;
+    setBellSending(true);
+    const result = await sendPushNotification(
+      manicurist.id,
+      manicurist.name,
+      currentClient?.clientName || 'Test',
+      currentClient?.services?.join(', ') || 'Notification'
+    );
+    if (result.success) {
+      showSmsToast('sent');
+    } else {
+      console.error('Push resend failed:', result.error);
+      showSmsToast('failed');
+    }
+    setBellSending(false);
   }
 
   return (
@@ -139,6 +160,18 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1">
               <h3 className="font-bebas text-lg tracking-[1px] text-gray-900 leading-none truncate">{manicurist.name}</h3>
+              <button
+                onClick={handleBellClick}
+                disabled={!hasPushSub || bellSending}
+                className={`p-0.5 rounded transition-colors shrink-0 ${
+                  hasPushSub
+                    ? 'text-emerald-500 hover:bg-emerald-50 cursor-pointer'
+                    : 'text-gray-200 cursor-default'
+                } ${bellSending ? 'animate-pulse' : ''}`}
+                title={hasPushSub ? 'Tap to resend push notification' : 'Push not enabled'}
+              >
+                {hasPushSub ? <Bell size={12} /> : <BellOff size={12} />}
+              </button>
             </div>
             <span className={`font-mono text-[10px] font-semibold tracking-wider ${
               manicurist.status === 'available' ? 'text-emerald-500' :

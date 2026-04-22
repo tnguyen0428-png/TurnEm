@@ -2,12 +2,18 @@ import { useState, useRef, useEffect } from 'react';
 import { Plus, LogIn, UserPlus } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import ManicuristCard from './ManicuristCard';
+import { getSubscribedManicuristIds } from '../../utils/pushNotifications';
 
 export default function ManicuristPanel() {
   const { state, dispatch } = useApp();
   const [showMenu, setShowMenu] = useState(false);
+  const [pushSubIds, setPushSubIds] = useState<Set<string>>(new Set());
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    getSubscribedManicuristIds().then(setPushSubIds);
+  }, []);
 
   const clockedIn = state.manicurists.filter((m) => m.clockedIn);
   const notClockedIn = state.manicurists.filter((m) => !m.clockedIn);
@@ -201,7 +207,7 @@ export default function ManicuristPanel() {
                   isLast={idx === sortedClockedIn.length - 1}
                   turnRank={rank}
                   totalRanked={turnOrder.length}
-
+                  hasPushSub={pushSubIds.has(m.id)}
                 />
               );
             })}
