@@ -269,6 +269,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const requestedServices = (client.serviceRequests || [])
         .filter((r) => r.manicuristIds && r.manicuristIds.includes(action.manicuristId))
         .map((r) => r.service);
+      // Whole-entry request flag: set when the client was requested AND this manicurist
+      // is the requested one. Covers the SingleServiceAssign path where isRequested is
+      // set but serviceRequests isn't populated per-service.
+      const wholeEntryRequested = !!client.isRequested &&
+        client.requestedManicuristId === action.manicuristId;
       const completedEntry = {
         id: crypto.randomUUID(),
         clientName: client.clientName,
@@ -280,6 +285,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         startedAt: client.startedAt ?? now,
         completedAt: now,
         requestedServices: requestedServices.length > 0 ? requestedServices : undefined,
+        isAppointment: !!client.isAppointment,
+        isRequested: wholeEntryRequested,
       };
       return {
         ...state,
