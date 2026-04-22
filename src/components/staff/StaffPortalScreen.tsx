@@ -67,7 +67,12 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               style={{ backgroundColor: manicurist.color }}
             />
             <div>
-              <h1 className="font-bebas text-xl tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h1>
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-bebas text-xl tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h1>
+                {(pushStatus === 'subscribed' || getPermissionState() === 'granted') && (
+                  <Bell size={14} className="text-emerald-500" />
+                )}
+              </div>
               <span className={`font-mono text-[10px] font-semibold tracking-wider uppercase ${statusColor}`}>
                 {statusLabel}
               </span>
