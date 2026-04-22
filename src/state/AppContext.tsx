@@ -414,8 +414,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     else console.log('[archiveTodayIfNeeded] reset complete, system_state updated to', archiveDate);
   }, [saveTodayHistory]);
 
+  const isStaffMode = typeof window !== 'undefined' && (
+    new URLSearchParams(window.location.search).get('mode') === 'staff' ||
+    (window as any).__TURNEM_STAFF_MODE__ === true
+  );
+
   useEffect(() => {
     if (!state.loaded) return;
+    // Staff mode is read-only — never sync back to DB
+    if (isStaffMode) {
+      prevStateRef.current = state;
+      completedRef.current = state.completed;
+      dailyHistoryRef.current = state.dailyHistory;
+      return;
+    }
     const prev = prevStateRef.current;
     // On the very first render after loadInitialData dispatches LOAD_STATE, prev still holds
     // INITIAL_STATE (all empty arrays). Syncing here would push empty state back to the DB

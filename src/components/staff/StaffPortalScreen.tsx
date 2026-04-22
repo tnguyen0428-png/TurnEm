@@ -14,7 +14,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   const { state } = useApp();
   const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
 
-  // Get live data for this manicurist from state (real-time updates)
+  // Get live data for this manicurist from state
   const manicurist = state.manicurists.find((m) => m.id === initialManicurist.id) || initialManicurist;
 
   // Services completed today by this manicurist
