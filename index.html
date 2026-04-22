@@ -4,12 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/jpeg" href="/Turn_Em_Logo.jpg" />
     <link rel="apple-touch-icon" href="/Turn_Em_Logo.jpg" />
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="/manifest.json" id="manifest-link" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#ec4899" />
+    <meta name="theme-color" content="#ec4899" id="theme-color-meta" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="TurnEM" />
+    <meta name="apple-mobile-web-app-title" content="TurnEM" id="app-title-meta" />
+    <script>
+      if (new URLSearchParams(window.location.search).get('mode') === 'staff') {
+        document.getElementById('manifest-link').href = '/manifest-staff.json';
+        document.getElementById('theme-color-meta').content = '#6366f1';
+        document.getElementById('app-title-meta').content = 'TurnEM Staff';
+        document.title = 'TurnEM - Staff Portal';
+      }
+    </script>
     <title>TurnEM - Aqua Team</title>
   </head>
   <body>
