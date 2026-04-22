@@ -14,13 +14,9 @@ interface StaffPortalScreenProps {
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
   const { state, dispatch } = useApp();
   const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
-  const [pollCount, setPollCount] = useState(0);
-  const [lastPollTime, setLastPollTime] = useState<string>('—');
-  const [pollError, setPollError] = useState<string | null>(null);
 
   // Poll Supabase every 3s for live data (staff mode sync-back is disabled in AppContext)
   useEffect(() => {
-    let count = 0;
     const interval = setInterval(async () => {
       try {
         const [{ data: staffRows, error: staffErr }, { data: queueRows, error: queueErr }, { data: completedRows }] = await Promise.all([
@@ -29,14 +25,9 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           supabase.from('completed_services').select('*'),
         ]);
         if (staffErr || queueErr) {
-          setPollError(`DB error: ${staffErr?.message || queueErr?.message}`);
           return;
         }
         if (staffRows && queueRows) {
-          count++;
-          setPollCount(count);
-          setLastPollTime(new Date().toLocaleTimeString());
-          setPollError(null);
           dispatch({
             type: 'LOAD_STATE',
             state: {
@@ -79,8 +70,8 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             },
           });
         }
-      } catch (e) {
-        setPollError(e instanceof Error ? e.message : String(e));
+      } catch {
+        // swallow polling errors silently — staff UI stays clean
       }
     }, 3000);
     return () => clearInterval(interval);
@@ -445,40 +436,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           </div>
         </div>
 
-        {/* Debug: Polling Status */}
-        <div className="bg-gray-800 rounded-xl p-3 text-white font-mono text-[10px] space-y-1">
-          <div className="flex justify-between">
-            <span className="text-gray-400">Polling:</span>
-            <span className={pollError ? 'text-red-400' : 'text-emerald-400'}>
-              {pollError ? `ERROR: ${pollError}` : `OK (${pollCount} polls)`}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Last update:</span>
-            <span>{lastPollTime}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Status:</span>
-            <span className={manicurist.status === 'busy' ? 'text-red-400' : manicurist.status === 'break' ? 'text-amber-400' : 'text-emerald-400'}>
-              {manicurist.status}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">currentClient:</span>
-            <span>{manicurist.currentClient || 'null'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Queue pos:</span>
-            <span>{queuePosition ?? 'null'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Audio:</span>
-            <span className={audioReady ? 'text-emerald-400' : 'text-red-400'}>
-              {audioReady ? 'READY' : 'NOT ACTIVATED'}
-            </span>
-          </div>
-        </div>
-
         {/* Push Notifications */}
         {isPushSupported() && (
           <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
@@ -534,31 +491,59 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             </div>
           ) : (
             <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
-              {completedToday.map((entry) => (
-                <div key={entry.id} className="px-4 py-3 flex items-center justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {entry.services.map((s, i) => (
-                        <span
-                          key={`${s}-${i}`}
-                          className="inline-block px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600 font-semibold"
-                        >
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="font-mono text-[10px] text-gray-400">
-                        {entry.turnValue} turns
-                      </span>
-                      <span className="flex items-center gap-1 font-mono text-[10px] text-gray-300">
-                        <Clock size={9} />
-                        {formatTime(entry.completedAt)}
-                      </span>
+              {completedToday.map((entry) => {
+                const requested = new Set(entry.requestedServices || []);
+                const hasRequest = requested.size > 0;
+                return (
+                  <div key={entry.id} className="px-4 py-3">
+                    <div className="flex items-start gap-2">
+                      {/* R badge column — reserved width so rows align whether or not a request exists */}
+                      <div className="w-6 shrink-0 pt-0.5 flex justify-center">
+                        {hasRequest && (
+                          <span
+                            className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-red-500 text-white font-mono text-[10px] font-bold leading-none"
+                            title="Requested service"
+                          >
+                            R
+                          </span>
+                        )}
+                      </div>
+                      {/* Client + services + meta */}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-mono text-xs font-bold text-gray-900 truncate mb-1">
+                          {entry.clientName || 'Walk-in'}
+                        </p>
+                        <div className="flex items-center gap-1 flex-wrap mb-1.5">
+                          {entry.services.map((s, i) => {
+                            const isRequested = requested.has(s);
+                            return (
+                              <span
+                                key={`${s}-${i}`}
+                                className={`inline-block px-2 py-0.5 rounded-md font-mono text-[10px] font-semibold border ${
+                                  isRequested
+                                    ? 'bg-red-50 border-red-200 text-red-600'
+                                    : 'bg-pink-50 border-pink-100 text-pink-600'
+                                }`}
+                              >
+                                {s}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-[11px] font-bold text-gray-900">
+                            {entry.turnValue} turns
+                          </span>
+                          <span className="flex items-center gap-1 font-mono text-[10px] text-gray-400">
+                            <Clock size={9} />
+                            {formatTime(entry.completedAt)}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
