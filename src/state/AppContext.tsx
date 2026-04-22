@@ -38,6 +38,7 @@ function mapDbManicurist(row: Record<string, unknown>): Manicurist {
     hasWax2: (row.has_wax2 as boolean) || false,
     hasWax3: (row.has_wax3 as boolean) || false,
     timeAdjustments: (row.time_adjustments as Record<string, number>) || {},
+    pinCode: (row.pin_code as string) || '',
   };
 }
 
@@ -216,6 +217,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           has_wax2: m.hasWax2,
           has_wax3: m.hasWax3,
           time_adjustments: m.timeAdjustments || {},
+          pin_code: m.pinCode || null,
         });
         if (error) console.error('[loadInitialData] manicurists seed error:', error);
       }
@@ -498,6 +500,7 @@ async function syncManicurists(manicurists: Manicurist[], onError: (msg: string)
       has_wax2: m.hasWax2,
       has_wax3: m.hasWax3,
       time_adjustments: m.timeAdjustments || {},
+      pin_code: m.pinCode || null,
     }, { onConflict: 'id' });
     if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }

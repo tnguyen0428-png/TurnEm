@@ -31,6 +31,7 @@ export interface Manicurist {
   hasWax2: boolean;
   hasWax3: boolean;
   timeAdjustments: Record<string, number>;
+  pinCode: string;
 }
 
 export interface ServiceRequest {

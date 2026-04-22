@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { AuthProvider, useAuth } from './state/AuthContext';
 import { AppProvider, useApp } from './state/AppContext';
 import TabBar from './components/layout/TabBar';
@@ -15,7 +16,10 @@ import AssignModal from './components/modals/AssignModal';
 import StaffModal from './components/modals/StaffModal';
 import AppointmentModal from './components/modals/AppointmentModal';
 import SmsToast from './components/shared/SmsToast';
+import StaffLoginScreen from './components/staff/StaffLoginScreen';
+import StaffPortalScreen from './components/staff/StaffPortalScreen';
 import { Loader2 } from 'lucide-react';
+import type { Manicurist } from './types';
 
 function AppContent() {
   const { state, syncError, clearSyncError } = useApp();
@@ -102,7 +106,83 @@ function AuthGate() {
   );
 }
 
+function StaffPortal() {
+  const { state } = useApp();
+  const [loggedInManicurist, setLoggedInManicurist] = useState<Manicurist | null>(() => {
+    const savedId = sessionStorage.getItem('turnem_staff_id');
+    return savedId ? (state.manicurists.find((m) => m.id === savedId) || null) : null;
+  });
+
+  if (!state.loaded) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+          <p className="font-mono text-sm text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!loggedInManicurist) {
+    return (
+      <StaffLoginScreen
+        manicurists={state.manicurists}
+        onLogin={(m) => {
+          sessionStorage.setItem('turnem_staff_id', m.id);
+          setLoggedInManicurist(m);
+        }}
+      />
+    );
+  }
+
+  return (
+    <StaffPortalScreen
+      manicurist={loggedInManicurist}
+      onLogout={() => {
+        sessionStorage.removeItem('turnem_staff_id');
+        setLoggedInManicurist(null);
+      }}
+    />
+  );
+}
+
+function StaffGate() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+          <p className="font-mono text-sm text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen />;
+  }
+
+  return (
+    <AppProvider>
+      <StaffPortal />
+    </AppProvider>
+  );
+}
+
 export default function App() {
+  const isStaffMode = new URLSearchParams(window.location.search).get('mode') === 'staff';
+
+  if (isStaffMode) {
+    return (
+      <AuthProvider>
+        <StaffGate />
+      </AuthProvider>
+    );
+  }
+
   return (
     <AuthProvider>
       <AuthGate />

@@ -21,6 +21,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
   const [color, setColor] = useState(STAFF_COLORS[0]);
   const [skills, setSkills] = useState<string[]>([]);
   const [timeAdjustments, setTimeAdjustments] = useState<Record<string, number>>({});
+  const [pinCode, setPinCode] = useState('');
 
   const sortedServices = useMemo(
     () => [...state.salonServices].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -46,6 +47,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
       setColor(editingStaff.color);
       setSkills([...editingStaff.skills]);
       setTimeAdjustments({ ...(editingStaff.timeAdjustments || {}) });
+      setPinCode(editingStaff.pinCode || '');
     }
   }, [editingStaff]);
 
@@ -95,7 +97,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
       dispatch({
         type: 'UPDATE_MANICURIST',
         id: editingStaff.id,
-        updates: { name: name.trim(), phone: phone.trim(), color, skills, timeAdjustments },
+        updates: { name: name.trim(), phone: phone.trim(), color, skills, timeAdjustments, pinCode: pinCode.trim() },
       });
     } else {
       const newManicurist: Manicurist = {
@@ -116,6 +118,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
         hasWax2: false,
         hasWax3: false,
         timeAdjustments,
+        pinCode: pinCode.trim(),
       };
       dispatch({ type: 'ADD_MANICURIST', manicurist: newManicurist });
     }
@@ -164,6 +167,24 @@ export default function StaffModal({ mode }: StaffModalProps) {
           />
           <p className="font-mono text-[10px] text-gray-400 mt-1">
             Used for SMS turn alerts when assigned a client
+          </p>
+        </div>
+
+        <div>
+          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
+            STAFF PIN
+          </label>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={6}
+            value={pinCode}
+            onChange={(e) => setPinCode(e.target.value.replace(/\D/g, ''))}
+            placeholder="4-6 digit PIN"
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+          />
+          <p className="font-mono text-[10px] text-gray-400 mt-1">
+            Used to log into the staff portal at turnem.io?mode=staff
           </p>
         </div>
 
