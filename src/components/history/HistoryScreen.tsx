@@ -1,12 +1,13 @@
 import { useState, useMemo } from 'react';
-import { Clock, Trash2, User, ChevronDown, ChevronLeft, ChevronRight, Save, CalendarDays } from 'lucide-react';
+import { Clock, Trash2, User, ChevronDown, ChevronLeft, ChevronRight, Save, CalendarDays, Pencil, X as XIcon, Plus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import Modal from '../shared/Modal';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
-import type { CompletedEntry } from '../../types';
+import type { CompletedEntry, Manicurist, SalonService, ServiceType } from '../../types';
 import { PinVerifyModal } from '../shared/AdminPinGate';
 
 function groupServices(services: string[]): [string, number][] {
@@ -41,9 +42,11 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 interface HistoryTableProps {
   entries: CompletedEntry[];
   manicurists: { id: string; name: string; color: string; totalTurns: number; clockedIn: boolean; clockInTime: number | null }[];
+  onEdit?: (entry: CompletedEntry) => void;
+  onDelete?: (entry: CompletedEntry) => void;
 }
 
-function HistoryTable({ entries, manicurists }: HistoryTableProps) {
+function HistoryTable({ entries, manicurists, onEdit, onDelete }: HistoryTableProps) {
   const [sortMode, setSortMode] = useState<SortMode>('time');
   const [manicuristFilter, setManicuristFilter] = useState<string>('all');
 
@@ -120,6 +123,9 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
                 <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">SERVICE</th>
                 <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">TURNS</th>
                 <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">MANICURIST</th>
+                {(onEdit || onDelete) && (
+                  <th className="text-right px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">ACTIONS</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -161,6 +167,32 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
                       <span className="font-mono text-xs font-bold text-gray-900">{entry.manicuristName}</span>
                     </span>
                   </td>
+                  {(onEdit || onDelete) && (
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        {onEdit && (
+                          <button
+                            onClick={() => onEdit(entry)}
+                            title="Edit entry"
+                            aria-label="Edit entry"
+                            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )}
+                        {onDelete && (
+                          <button
+                            onClick={() => onDelete(entry)}
+                            title="Delete entry"
+                            aria-label="Delete entry"
+                            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -171,13 +203,21 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
   );
 }
 
+type PendingAction =
+  | { kind: 'browse' }
+  | { kind: 'edit'; entry: CompletedEntry }
+  | { kind: 'delete'; entry: CompletedEntry };
+
 export default function HistoryScreen() {
   const { state, dispatch, saveTodayHistory } = useApp();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
-  const [pendingBrowse, setPendingBrowse] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<CompletedEntry | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState<CompletedEntry | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const today = getTodayDateStr();
   const todayAlreadySaved = state.dailyHistory.some((h) => h.date === today);
@@ -209,7 +249,7 @@ export default function HistoryScreen() {
       ? state.completed
       : (todayArchivedEntries ?? []);
 
-  // Bar chart data — shown whenever manicurists are clocked in, even before any services complete
+  // Bar chart data â shown whenever manicurists are clocked in, even before any services complete
   const turnsPerManicurist = useMemo(() => {
     if (!viewingPastDay) {
       const clockedIn = state.manicurists
@@ -294,15 +334,17 @@ export default function HistoryScreen() {
               }`}
             >
               <Save size={14} />
-              {saving ? 'SAVING...' : saveError ? 'SAVE FAILED — RETRY' : 'SAVE TODAY'}
+              {saving ? 'SAVING...' : saveError ? 'SAVE FAILED â RETRY' : 'SAVE TODAY'}
             </button>
           )}
           <button
             onClick={() => {
               if (showCalendar) {
                 setShowCalendar(false);
+              } else if (adminUnlocked) {
+                setShowCalendar(true);
               } else {
-                setPendingBrowse(true);
+                setPendingAction({ kind: 'browse' });
               }
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 font-mono text-xs font-semibold transition-colors ${
@@ -492,6 +534,14 @@ export default function HistoryScreen() {
         <HistoryTable
           entries={displayedEntries}
           manicurists={state.manicurists}
+          onEdit={(entry) => {
+            if (adminUnlocked) setEditingEntry(entry);
+            else setPendingAction({ kind: 'edit', entry });
+          }}
+          onDelete={(entry) => {
+            if (adminUnlocked) setDeletingEntry(entry);
+            else setPendingAction({ kind: 'delete', entry });
+          }}
         />
       )}
 
@@ -512,14 +562,307 @@ export default function HistoryScreen() {
       )}
 
       <PinVerifyModal
-        isOpen={pendingBrowse}
+        isOpen={pendingAction !== null}
         title="Enter Admin PIN"
         onSuccess={() => {
-          setPendingBrowse(false);
-          setShowCalendar(true);
+          const action = pendingAction;
+          setAdminUnlocked(true);
+          setPendingAction(null);
+          if (!action) return;
+          if (action.kind === 'browse') setShowCalendar(true);
+          else if (action.kind === 'edit') setEditingEntry(action.entry);
+          else if (action.kind === 'delete') setDeletingEntry(action.entry);
         }}
-        onCancel={() => setPendingBrowse(false)}
+        onCancel={() => setPendingAction(null)}
       />
+
+      {editingEntry && (
+        <EditHistoryEntryModal
+          entry={editingEntry}
+          manicurists={state.manicurists}
+          salonServices={state.salonServices}
+          onClose={() => setEditingEntry(null)}
+          onSave={(updates) => {
+            const entry = editingEntry;
+            if (!entry) return;
+            if (viewingPastDay && selectedDate) {
+              dispatch({
+                type: 'UPDATE_HISTORY_ENTRY',
+                date: selectedDate,
+                entryId: entry.id,
+                updates,
+              });
+            } else {
+              const inCompleted = state.completed.some((c) => c.id === entry.id);
+              if (inCompleted) {
+                dispatch({ type: 'UPDATE_COMPLETED_ENTRY', id: entry.id, updates });
+                // Keep today's saved history in sync if one exists
+                if (todayAlreadySaved) {
+                  dispatch({
+                    type: 'UPDATE_HISTORY_ENTRY',
+                    date: today,
+                    entryId: entry.id,
+                    updates,
+                  });
+                }
+              } else {
+                // Today's completed list is empty (post-reset view reading from archived today)
+                dispatch({
+                  type: 'UPDATE_HISTORY_ENTRY',
+                  date: today,
+                  entryId: entry.id,
+                  updates,
+                });
+              }
+            }
+            setEditingEntry(null);
+          }}
+        />
+      )}
+
+      {deletingEntry && (
+        <ConfirmDialog
+          message={`Delete this completed service for ${deletingEntry.clientName}? This cannot be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const entry = deletingEntry;
+            if (!entry) { setDeletingEntry(null); return; }
+            if (viewingPastDay && selectedDate) {
+              dispatch({ type: 'DELETE_HISTORY_ENTRY', date: selectedDate, entryId: entry.id });
+            } else {
+              const inCompleted = state.completed.some((c) => c.id === entry.id);
+              if (inCompleted) {
+                dispatch({ type: 'DELETE_COMPLETED_ENTRY', id: entry.id });
+                if (todayAlreadySaved) {
+                  dispatch({ type: 'DELETE_HISTORY_ENTRY', date: today, entryId: entry.id });
+                }
+              } else {
+                dispatch({ type: 'DELETE_HISTORY_ENTRY', date: today, entryId: entry.id });
+              }
+            }
+            setDeletingEntry(null);
+          }}
+          onCancel={() => setDeletingEntry(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// ---------- Edit History Entry Modal ----------
+
+interface EditHistoryEntryModalProps {
+  entry: CompletedEntry;
+  manicurists: Manicurist[];
+  salonServices: SalonService[];
+  onClose: () => void;
+  onSave: (updates: Partial<CompletedEntry>) => void;
+}
+
+function EditHistoryEntryModal({
+  entry,
+  manicurists,
+  salonServices,
+  onClose,
+  onSave,
+}: EditHistoryEntryModalProps) {
+  const [clientName, setClientName] = useState(entry.clientName);
+  const [services, setServices] = useState<ServiceType[]>(entry.services);
+  const [turnValue, setTurnValue] = useState<number>(entry.turnValue);
+  const [manicuristId, setManicuristId] = useState<string>(entry.manicuristId);
+  const [turnEdited, setTurnEdited] = useState(false);
+  const [addServiceId, setAddServiceId] = useState<string>('');
+
+  const activeServices = useMemo(
+    () => salonServices.filter((s) => s.isActive).sort((a, b) => a.sortOrder - b.sortOrder),
+    [salonServices]
+  );
+
+  const computedTurnValue = useMemo(() => {
+    let total = 0;
+    for (const s of services) {
+      const svc = salonServices.find((x) => x.name === s);
+      total += svc?.turnValue ?? 0;
+    }
+    return total;
+  }, [services, salonServices]);
+
+  function removeServiceAt(index: number) {
+    setServices((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function addService() {
+    if (!addServiceId) return;
+    const svc = salonServices.find((s) => s.id === addServiceId);
+    if (!svc) return;
+    setServices((prev) => [...prev, svc.name]);
+    setAddServiceId('');
+  }
+
+  // Keep turn value auto-updated until user manually edits it
+  const effectiveTurnValue = turnEdited ? turnValue : computedTurnValue;
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const selectedManicurist = manicurists.find((m) => m.id === manicuristId);
+    if (!selectedManicurist || services.length === 0 || !clientName.trim()) return;
+    const updates: Partial<CompletedEntry> = {
+      clientName: clientName.trim(),
+      services,
+      turnValue: effectiveTurnValue,
+      manicuristId: selectedManicurist.id,
+      manicuristName: selectedManicurist.name,
+      manicuristColor: selectedManicurist.color,
+    };
+    onSave(updates);
+  }
+
+  return (
+    <Modal title="EDIT SERVICE" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block font-mono text-[10px] text-gray-400 font-semibold mb-1 tracking-wider">
+            CLIENT NAME
+          </label>
+          <input
+            type="text"
+            value={clientName}
+            onChange={(e) => setClientName(e.target.value)}
+            className="w-full px-4 py-2.5 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:border-gray-400"
+          />
+        </div>
+
+        <div>
+          <label className="block font-mono text-[10px] text-gray-400 font-semibold mb-1 tracking-wider">
+            SERVICES
+          </label>
+          <div className="space-y-2">
+            {services.map((s, i) => (
+              <div
+                key={`${s}-${i}`}
+                className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2"
+              >
+                <span className="font-mono text-sm text-gray-900">{s}</span>
+                <button
+                  type="button"
+                  onClick={() => removeServiceAt(i)}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
+                  aria-label="Remove service"
+                >
+                  <XIcon size={14} />
+                </button>
+              </div>
+            ))}
+            {services.length === 0 && (
+              <p className="font-mono text-xs text-gray-400 italic">No services â add one below.</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <div className="relative flex-1">
+              <select
+                value={addServiceId}
+                onChange={(e) => setAddServiceId(e.target.value)}
+                className="w-full appearance-none pl-3 pr-8 py-2 rounded-lg border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:border-gray-400"
+              >
+                <option value="">ADD SERVICEâ¦</option>
+                {activeServices.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.turnValue})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+            <button
+              type="button"
+              onClick={addService}
+              disabled={!addServiceId}
+              className="flex items-center gap-1 px-3 py-2 rounded-lg bg-gray-900 text-white font-mono text-[10px] font-semibold disabled:opacity-40"
+            >
+              <Plus size={12} />
+              ADD
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block font-mono text-[10px] text-gray-400 font-semibold mb-1 tracking-wider">
+            TURNS
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              step="0.5"
+              min="0"
+              value={effectiveTurnValue}
+              onChange={(e) => {
+                setTurnEdited(true);
+                setTurnValue(Number(e.target.value));
+              }}
+              className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:border-gray-400"
+            />
+            {turnEdited && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTurnEdited(false);
+                  setTurnValue(computedTurnValue);
+                }}
+                className="px-3 py-2 rounded-lg border border-gray-200 text-gray-500 font-mono text-[10px] font-semibold hover:bg-gray-50"
+              >
+                AUTO
+              </button>
+            )}
+          </div>
+          {!turnEdited && (
+            <p className="font-mono text-[10px] text-gray-400 mt-1">
+              Auto-calculated from selected services. Edit to override.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="block font-mono text-[10px] text-gray-400 font-semibold mb-1 tracking-wider">
+            MANICURIST
+          </label>
+          <div className="relative">
+            <select
+              value={manicuristId}
+              onChange={(e) => setManicuristId(e.target.value)}
+              className="w-full appearance-none pl-3 pr-8 py-2.5 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-400"
+            >
+              {manicurists.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+              {/* Keep historic manicurist available even if deleted from current list */}
+              {!manicurists.some((m) => m.id === entry.manicuristId) && (
+                <option value={entry.manicuristId}>{entry.manicuristName} (archived)</option>
+              )}
+            </select>
+            <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          </div>
+        </div>
+
+        <div className="flex gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-mono text-xs font-semibold"
+          >
+            CANCEL
+          </button>
+          <button
+            type="submit"
+            disabled={!clientName.trim() || services.length === 0 || !manicuristId}
+            className="flex-1 py-2.5 rounded-xl bg-gray-900 text-white font-mono text-xs font-semibold disabled:opacity-50"
+          >
+            SAVE CHANGES
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
