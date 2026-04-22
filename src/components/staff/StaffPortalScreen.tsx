@@ -1,8 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, Zap } from 'lucide-react';
+import { LogOut, Bell, CheckCircle, Clock, Volume2, VolumeX } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
-import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
 import { formatTime } from '../../utils/time';
 import type { Manicurist } from '../../types';
 
@@ -13,7 +12,6 @@ interface StaffPortalScreenProps {
 
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
   const { state, dispatch } = useApp();
-  const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
 
   // Poll Supabase every 3s for live data (staff mode sync-back is disabled in AppContext)
   useEffect(() => {
@@ -110,7 +108,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   // ---- In-app alert when assigned a client or becoming next up ----
   const [alert, setAlert] = useState<{ type: 'assigned' | 'nextup'; clientName?: string; services?: string[] } | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [audioReady, setAudioReady] = useState(false);
   const prevStatusRef = useRef(manicurist.status);
   const prevQueuePosRef = useRef(queuePosition);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -248,7 +245,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     return () => clearTimeout(timer);
   }, [alert]);
 
-  // Activate AudioContext on first tap (iOS requires user gesture) and start keepalive
+  // Activate AudioContext on any tap (iOS requires user gesture) and start keepalive
   function handleScreenTap() {
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -256,32 +253,10 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     const ctx = audioContextRef.current;
     if (ctx.state === 'suspended') {
       ctx.resume().then(() => {
-        setAudioReady(true);
         startKeepalive();
-        // Play a tiny confirmation blip so we know audio is working
-        try {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          gain.gain.value = 0.05;
-          osc.frequency.value = 600;
-          osc.start(ctx.currentTime);
-          osc.stop(ctx.currentTime + 0.05);
-        } catch (_) { /* ignore */ }
       });
-    } else if (ctx.state === 'running' && !audioReady) {
-      setAudioReady(true);
+    } else if (ctx.state === 'running') {
       startKeepalive();
-    }
-  }
-
-  async function handleEnablePush() {
-    setPushStatus('subscribing');
-    const result = await subscribeToPush(manicurist.id);
-    setPushStatus(result.success ? 'subscribed' : 'error');
-    if (!result.success) {
-      setTimeout(() => setPushStatus('idle'), 3000);
     }
   }
 
@@ -341,148 +316,79 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="max-w-lg mx-auto px-4 py-3">
-          {/* Top row: logo left, manicurist name right */}
-          <div className="flex items-center justify-between mb-3">
+          {/* Top row: logo left (1/3 width), manicurist name right */}
+          <div className="flex items-center mb-3">
             <img
               src="/Turn_Em_Logo.jpg"
               alt="TurnEM"
-              className="h-10 w-auto object-contain"
+              className="w-1/3 h-auto object-contain"
             />
-            <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center justify-end gap-2">
               <div
                 className="w-3.5 h-3.5 rounded-full ring-2 ring-white shadow"
                 style={{ backgroundColor: manicurist.color }}
               />
-              <h1 className="font-bebas text-xl tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h1>
-              {(pushStatus === 'subscribed' || getPermissionState() === 'granted') && (
-                <Bell size={14} className="text-emerald-500" />
-              )}
+              <h1 className="font-bebas text-2xl tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h1>
             </div>
           </div>
-          {/* Bottom row: status label + action buttons */}
-          <div className="flex items-center justify-between">
-            <span className={`font-mono text-[10px] font-semibold tracking-wider uppercase ${statusColor}`}>
-              {statusLabel}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  handleScreenTap();
-                  setSoundEnabled(!soundEnabled);
-                }}
-                className={`flex items-center gap-1 px-2.5 py-2 rounded-lg border font-mono text-xs font-semibold transition-all ${
-                  soundEnabled
-                    ? 'border-emerald-200 text-emerald-600 bg-emerald-50'
-                    : 'border-gray-200 text-gray-400'
-                }`}
-              >
-                <Volume2 size={14} />
-                {soundEnabled ? 'ON' : 'OFF'}
-              </button>
-              <button
-                onClick={() => {
-                  handleScreenTap();
-                  setAlert({ type: 'assigned', clientName: 'TEST CLIENT', services: ['Test Service'] });
-                  playAssignedSound();
-                }}
-                className="flex items-center gap-1 px-2.5 py-2 rounded-lg border border-purple-200 text-purple-600 bg-purple-50 font-mono text-xs font-semibold transition-all"
-              >
-                <Zap size={14} />
-                TEST
-              </button>
-              <button
-                onClick={onLogout}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
-              >
-                <LogOut size={14} />
-                LOGOUT
-              </button>
-            </div>
+          {/* Bottom row: sound toggle + logout */}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleScreenTap();
+                setSoundEnabled(!soundEnabled);
+              }}
+              className={`flex items-center gap-1 px-2.5 py-2 rounded-lg border font-mono text-xs font-semibold transition-all ${
+                soundEnabled
+                  ? 'border-emerald-200 text-emerald-600 bg-emerald-50'
+                  : 'border-gray-200 text-gray-400 bg-gray-50'
+              }`}
+            >
+              {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+              {soundEnabled ? 'SOUND ON' : 'SOUND OFF'}
+            </button>
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
+            >
+              <LogOut size={14} />
+              LOGOUT
+            </button>
           </div>
         </div>
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-5 space-y-4">
-        {/* Audio activation banner — shows until user taps to activate */}
-        {!audioReady && soundEnabled && (
-          <button
-            onClick={handleScreenTap}
-            className="w-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-2xl p-4 text-center shadow-md active:scale-[0.98] transition-transform"
-          >
-            <Volume2 size={28} className="mx-auto mb-2" />
-            <p className="font-bebas text-2xl tracking-[2px]">TAP TO ACTIVATE SOUND</p>
-            <p className="font-mono text-[10px] text-white/70 mt-1">Required for alert sounds on iPhone</p>
-          </button>
-        )}
-        {audioReady && soundEnabled && (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-2 text-center">
-            <p className="font-mono text-[10px] text-emerald-600 font-semibold">SOUND ACTIVE — alerts will play automatically</p>
-          </div>
-        )}
-
         {/* Stats Row */}
         <div className="grid grid-cols-2 gap-3">
           {/* Total Turns */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 text-center shadow-sm">
+          <div className="bg-white rounded-2xl border border-gray-100 p-3 text-center shadow-sm">
             <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider uppercase mb-1">TOTAL TURNS</p>
-            <p className="font-bebas text-4xl text-gray-900 leading-none">{manicurist.totalTurns.toFixed(1)}</p>
+            <p className="font-bebas text-2xl text-gray-900 leading-none">{manicurist.totalTurns.toFixed(1)}</p>
           </div>
 
           {/* Queue Position */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 text-center shadow-sm">
+          <div className="bg-white rounded-2xl border border-gray-100 p-3 text-center shadow-sm">
             <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider uppercase mb-1">QUEUE POSITION</p>
             {manicurist.status === 'busy' ? (
-              <p className="font-bebas text-2xl text-red-500 leading-none mt-1">BUSY</p>
+              <p className="font-bebas text-xl text-red-500 leading-none mt-1">BUSY</p>
             ) : manicurist.status === 'break' ? (
-              <p className="font-bebas text-2xl text-amber-500 leading-none mt-1">BREAK</p>
+              <p className="font-bebas text-xl text-amber-500 leading-none mt-1">BREAK</p>
             ) : !manicurist.clockedIn ? (
-              <p className="font-bebas text-2xl text-gray-300 leading-none mt-1">OFF</p>
+              <p className="font-bebas text-xl text-gray-300 leading-none mt-1">OFF</p>
             ) : queuePosition ? (
-              <p className="font-bebas text-4xl text-gray-900 leading-none">#{queuePosition}</p>
+              <>
+                <p className="font-bebas text-2xl text-gray-900 leading-none">#{queuePosition}</p>
+                <p className={`font-mono text-[10px] font-semibold tracking-wider uppercase mt-1 ${statusColor}`}>
+                  {statusLabel}
+                </p>
+              </>
             ) : (
-              <p className="font-bebas text-2xl text-gray-300 leading-none mt-1">—</p>
+              <p className="font-bebas text-xl text-gray-300 leading-none mt-1">—</p>
             )}
           </div>
         </div>
-
-        {/* Push Notifications */}
-        {isPushSupported() && (
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-mono text-xs font-semibold text-gray-900">Push Notifications</p>
-                <p className="font-mono text-[10px] text-gray-400 mt-0.5">
-                  {pushStatus === 'subscribed' || getPermissionState() === 'granted'
-                    ? 'You will be notified when a client is assigned to you'
-                    : 'Enable to get notified when a client is assigned to you'
-                  }
-                </p>
-              </div>
-              {pushStatus === 'subscribed' || getPermissionState() === 'granted' ? (
-                <span className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 font-mono text-xs font-semibold">
-                  <Bell size={14} /> ACTIVE
-                </span>
-              ) : (
-                <button
-                  onClick={handleEnablePush}
-                  disabled={pushStatus === 'subscribing'}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-xs font-semibold transition-all ${
-                    pushStatus === 'error'
-                      ? 'bg-red-50 text-red-500 border border-red-200'
-                      : 'bg-indigo-500 text-white hover:bg-indigo-600 active:scale-[0.98]'
-                  }`}
-                >
-                  {pushStatus === 'subscribing'
-                    ? 'ENABLING...'
-                    : pushStatus === 'error'
-                    ? 'FAILED — TAP TO RETRY'
-                    : <><BellOff size={14} /> ENABLE</>
-                  }
-                </button>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Services Rendered Today */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
