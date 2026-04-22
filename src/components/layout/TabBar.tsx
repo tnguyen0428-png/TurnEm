@@ -34,16 +34,16 @@ export default function TabBar() {
   return (
     <>
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="flex items-center justify-between h-48">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center flex-shrink-0">
               <img
                 src="/Turn_Em_Logo.jpg"
                 alt="Turn Em"
-                className="h-44 w-auto mix-blend-multiply contrast-[1.2] brightness-[1.05]"
+                className="h-16 w-auto mix-blend-multiply contrast-[1.2] brightness-[1.05]"
               />
             </div>
-            <div className="flex items-center gap-0.5 overflow-x-auto hide-scrollbar">
+            <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0 justify-center">
               {TABS.map((tab) => {
                 const isActive = state.view === tab.id;
                 const Icon = tab.icon;
@@ -51,7 +51,7 @@ export default function TabBar() {
                   <button
                     key={tab.id}
                     onClick={() => handleTabClick(tab.id)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-bebas text-sm tracking-[1.2px] transition-all duration-200 whitespace-nowrap flex-shrink-0 ${
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-bebas text-sm tracking-[1.2px] transition-all duration-200 whitespace-nowrap ${
                       isActive
                         ? 'bg-pink-50 text-pink-600'
                         : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
@@ -63,19 +63,16 @@ export default function TabBar() {
                 );
               })}
             </div>
-            <div className="flex items-center gap-3 flex-shrink-0">
-              {user && (
-                <span className="font-mono text-xs text-gray-400 hidden md:block truncate max-w-[160px]">
-                  {user.email}
-                </span>
-              )}
+            <div className="flex items-center gap-2 flex-shrink-0">
               <button
                 onClick={() => setShowChangePin(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-indigo-500 hover:border-indigo-200 hover:bg-indigo-50 font-mono text-xs font-semibold transition-all"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-500 hover:text-indigo-500 hover:border-indigo-200 hover:bg-indigo-50 font-mono text-xs font-semibold transition-all max-w-[220px]"
                 title="Change admin PIN"
               >
-                <KeyRound size={14} />
-                <span className="hidden sm:inline">PROFILE</span>
+                <KeyRound size={14} className="flex-shrink-0" />
+                <span className="truncate">
+                  {user?.email ?? 'PROFILE'}
+                </span>
               </button>
               <button
                 onClick={signOut}
