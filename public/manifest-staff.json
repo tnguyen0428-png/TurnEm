@@ -1,21 +1,21 @@
 {
-  "name": "TurnEM - Staff Portal",
-  "short_name": "TurnEM Staff",
-  "description": "Staff portal for TurnEM nail salon",
-  "start_url": "/staff.html",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#6366f1",
-  "icons": [
-    {
-      "src": "/Turn_Em_Logo.jpg",
-      "sizes": "192x192",
-      "type": "image/jpeg"
-    },
-    {
-      "src": "/Turn_Em_Logo.jpg",
-      "sizes": "512x512",
-      "type": "image/jpeg"
-    }
-  ]
+    "name": "TurnEM - Staff Portal",
+    "short_name": "TurnEM Staff",
+    "description": "Staff portal for TurnEM nail salon",
+    "start_url": "/staff.html",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#6366f1",
+    "icons": [
+          {
+                  "src": "/Turn_Em_Icon.png",
+                  "sizes": "192x192",
+                  "type": "image/png"
+          },
+          {
+                  "src": "/Turn_Em_Icon.png",
+                  "sizes": "512x512",
+                  "type": "image/png"
+          }
+    ]
 }
