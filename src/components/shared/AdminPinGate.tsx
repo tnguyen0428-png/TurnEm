@@ -307,20 +307,20 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
               </button>
             </div>
           </form>
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <button
-              type="button"
-              onClick={handleResetLoginPassword}
-              disabled={resetLoading}
-              className="w-full py-2.5 rounded-xl border border-gray-200 text-gray-600 font-mono text-xs font-semibold tracking-[1.5px] hover:bg-gray-50 disabled:opacity-60"
-            >
-              {resetLoading ? 'SENDING...' : 'RESET LOGIN PASSWORD'}
-            </button>
-            {resetMessage && (
-              <p className="mt-2 font-mono text-xs text-center text-gray-500">{resetMessage}</p>
-            )}
-          </div>
         )}
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <button
+            type="button"
+            onClick={handleResetLoginPassword}
+            disabled={resetLoading}
+            className="w-full py-2.5 rounded-xl border border-gray-200 text-gray-600 font-mono text-xs font-semibold tracking-[1.5px] hover:bg-gray-50 disabled:opacity-60"
+          >
+            {resetLoading ? 'SENDING...' : 'RESET LOGIN PASSWORD'}
+          </button>
+          {resetMessage && (
+            <p className="mt-2 font-mono text-xs text-center text-gray-500">{resetMessage}</p>
+          )}
+        </div>
       </div>
     </div>
   );
