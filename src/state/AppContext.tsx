@@ -250,6 +250,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         startedAt: new Date(row.started_at as string).getTime(),
         completedAt: new Date(row.completed_at as string).getTime(),
         requestedServices: isBadPattern ? undefined : (rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined),
+        isAppointment: (row.is_appointment as boolean) || false,
+        isRequested: (row.is_requested as boolean) || false,
       };
     });
 
@@ -563,6 +565,8 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
       started_at: new Date(c.startedAt).toISOString(),
       completed_at: new Date(c.completedAt).toISOString(),
       requested_services: c.requestedServices ?? [],
+      is_appointment: !!c.isAppointment,
+      is_requested: !!c.isRequested,
     }, { onConflict: 'id' });
     if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
