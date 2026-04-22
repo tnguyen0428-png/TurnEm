@@ -54,7 +54,7 @@ export default function TabBar() {
                     className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-bebas text-sm tracking-[1.2px] transition-all duration-200 whitespace-nowrap ${
                       isActive
                         ? 'bg-pink-50 text-pink-600'
-                        : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                     }`}
                   >
                     <Icon size={15} />
