@@ -76,28 +76,17 @@ export function getDistinctServices(
 
   const result: { service: ServiceType; index: number; requestedId: string | null }[] = [];
   const serviceCountMap = new Map<string, number>();
-  const requestedManicuristUsage = new Map<string, number>();
 
   for (const s of sorted) {
     const idx = serviceCountMap.get(s) ?? 0;
     serviceCountMap.set(s, idx + 1);
 
     const req = (client.serviceRequests || []).find((r) => r.service === s);
-
-    if (req && req.manicuristIds && req.manicuristIds.length > 0) {
-      const usageKey = req.manicuristIds.join(',');
-      const usageCount = requestedManicuristUsage.get(usageKey) ?? 0;
-
-      if (usageCount < req.manicuristIds.length) {
-        const requestedId = req.manicuristIds[usageCount];
-        result.push({ service: s, index: idx, requestedId });
-        requestedManicuristUsage.set(usageKey, usageCount + 1);
-      } else {
-        result.push({ service: s, index: idx, requestedId: null });
-      }
-    } else {
-      result.push({ service: s, index: idx, requestedId: null });
-    }
+    const requestedId =
+      req && req.manicuristIds && idx < req.manicuristIds.length
+        ? req.manicuristIds[idx]
+        : null;
+    result.push({ service: s, index: idx, requestedId });
   }
   return result;
 }
