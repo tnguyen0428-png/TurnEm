@@ -154,7 +154,11 @@ export async function sendPushNotification(
     if (!response.ok) {
       return { success: false, error: data.error || 'Push notification failed' };
     }
-    return { success: true, error: JSON.stringify(data.results?.[0] || data) };
+    const debugInfo = {
+      ...(data.results?.[0] || {}),
+      serverVapidPrefix: data.debug?.vapidPublicKeyPrefix,
+    };
+    return { success: true, error: JSON.stringify(debugInfo) };
   } catch {
     return { success: false, error: 'Network error sending push notification' };
   }
