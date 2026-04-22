@@ -66,6 +66,8 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 completedAt: new Date(r.completed_at).getTime(),
                 turnValue: Number(r.turn_value) || 0,
                 requestedServices: r.requested_services || [],
+                isAppointment: !!r.is_appointment,
+                isRequested: !!r.is_requested,
               })),
             },
           });
@@ -493,7 +495,8 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
               {completedToday.map((entry) => {
                 const requested = new Set(entry.requestedServices || []);
-                const hasRequest = requested.size > 0;
+                const hasRequest = !!entry.isRequested || requested.size > 0;
+                const isAppt = !!entry.isAppointment;
                 return (
                   <div key={entry.id} className="px-4 py-3">
                     <div className="flex items-start gap-2">
@@ -515,15 +518,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                         </p>
                         <div className="flex items-center gap-1 flex-wrap mb-1.5">
                           {entry.services.map((s, i) => {
-                            const isRequested = requested.has(s);
+                            const serviceRequested = requested.has(s) || (!!entry.isRequested && !isAppt);
+                            // Color precedence: requested (red) > appointment (blue) > walk-in (pink)
+                            const chipClass = serviceRequested
+                              ? 'bg-red-50 border-red-200 text-red-600'
+                              : isAppt
+                                ? 'bg-blue-50 border-blue-200 text-blue-600'
+                                : 'bg-pink-50 border-pink-100 text-pink-600';
                             return (
                               <span
                                 key={`${s}-${i}`}
-                                className={`inline-block px-2 py-0.5 rounded-md font-mono text-[10px] font-semibold border ${
-                                  isRequested
-                                    ? 'bg-red-50 border-red-200 text-red-600'
-                                    : 'bg-pink-50 border-pink-100 text-pink-600'
-                                }`}
+                                className={`inline-block px-2 py-0.5 rounded-md font-mono text-[10px] font-semibold border ${chipClass}`}
                               >
                                 {s}
                               </span>
