@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2 } from 'lucide-react';
+import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, Zap } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
@@ -14,17 +14,29 @@ interface StaffPortalScreenProps {
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
   const { state, dispatch } = useApp();
   const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
+  const [pollCount, setPollCount] = useState(0);
+  const [lastPollTime, setLastPollTime] = useState<string>('—');
+  const [pollError, setPollError] = useState<string | null>(null);
 
   // Poll Supabase every 3s for live data (staff mode sync-back is disabled in AppContext)
   useEffect(() => {
+    let count = 0;
     const interval = setInterval(async () => {
       try {
-        const [{ data: staffRows }, { data: queueRows }, { data: completedRows }] = await Promise.all([
+        const [{ data: staffRows, error: staffErr }, { data: queueRows, error: queueErr }, { data: completedRows }] = await Promise.all([
           supabase.from('manicurists').select('*'),
           supabase.from('queue_entries').select('*'),
           supabase.from('completed_services').select('*'),
         ]);
+        if (staffErr || queueErr) {
+          setPollError(`DB error: ${staffErr?.message || queueErr?.message}`);
+          return;
+        }
         if (staffRows && queueRows) {
+          count++;
+          setPollCount(count);
+          setLastPollTime(new Date().toLocaleTimeString());
+          setPollError(null);
           dispatch({
             type: 'LOAD_STATE',
             state: {
@@ -41,20 +53,25 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 timeAdjustments: r.time_adjustments || {}, pinCode: r.pin_code || '',
               })),
               queue: queueRows.map((r: any) => ({
-                id: r.id, clientName: r.client_name, phone: r.phone || '',
+                id: r.id, clientName: r.client_name,
                 services: r.services || [],
                 arrivedAt: new Date(r.arrived_at).getTime(),
                 status: r.status || 'waiting',
                 assignedManicuristId: r.assigned_manicurist_id || null,
                 startedAt: r.started_at ? new Date(r.started_at).getTime() : null,
+                completedAt: r.completed_at ? new Date(r.completed_at).getTime() : null,
                 turnValue: Number(r.turn_value) || 0,
                 serviceRequests: r.service_requests || [],
-                isDeferred: r.is_deferred || false,
-                appointmentTime: r.appointment_time || null,
+                requestedManicuristId: r.requested_manicurist_id || null,
+                isRequested: r.is_requested || false,
+                isAppointment: r.is_appointment || false,
               })),
               completed: (completedRows || []).map((r: any) => ({
                 id: r.id, clientName: r.client_name || '',
                 services: r.services || [], manicuristId: r.manicurist_id || '',
+                manicuristName: r.manicurist_name || '',
+                manicuristColor: r.manicurist_color || '',
+                startedAt: r.started_at ? new Date(r.started_at).getTime() : Date.now(),
                 completedAt: new Date(r.completed_at).getTime(),
                 turnValue: Number(r.turn_value) || 0,
                 requestedServices: r.requested_services || [],
@@ -62,7 +79,9 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             },
           });
         }
-      } catch (e) { /* ignore polling errors */ }
+      } catch (e) {
+        setPollError(e instanceof Error ? e.message : String(e));
+      }
     }, 3000);
     return () => clearInterval(interval);
   }, [dispatch]);
@@ -270,6 +289,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               {soundEnabled ? 'ON' : 'OFF'}
             </button>
             <button
+              onClick={() => {
+                handleScreenTap();
+                setAlert({ type: 'assigned', clientName: 'TEST CLIENT', services: ['Test Service'] });
+                playAlertSound();
+              }}
+              className="flex items-center gap-1 px-2.5 py-2 rounded-lg border border-purple-200 text-purple-600 bg-purple-50 font-mono text-xs font-semibold transition-all"
+            >
+              <Zap size={14} />
+              TEST
+            </button>
+            <button
               onClick={onLogout}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
             >
@@ -303,6 +333,38 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             ) : (
               <p className="font-bebas text-2xl text-gray-300 leading-none mt-1">—</p>
             )}
+          </div>
+        </div>
+
+        {/* Debug: Polling Status */}
+        <div className="bg-gray-800 rounded-xl p-3 text-white font-mono text-[10px] space-y-1">
+          <div className="flex justify-between">
+            <span className="text-gray-400">Polling:</span>
+            <span className={pollError ? 'text-red-400' : 'text-emerald-400'}>
+              {pollError ? `ERROR: ${pollError}` : `OK (${pollCount} polls)`}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Last update:</span>
+            <span>{lastPollTime}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Status:</span>
+            <span className={manicurist.status === 'busy' ? 'text-red-400' : manicurist.status === 'break' ? 'text-amber-400' : 'text-emerald-400'}>
+              {manicurist.status}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">currentClient:</span>
+            <span>{manicurist.currentClient || 'null'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Queue pos:</span>
+            <span>{queuePosition ?? 'null'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">prevStatus:</span>
+            <span>{prevStatusRef.current}</span>
           </div>
         </div>
 
