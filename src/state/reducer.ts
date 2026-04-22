@@ -487,6 +487,81 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, dailyHistory: [...state.dailyHistory, action.entry] };
     }
 
+    case 'UPDATE_COMPLETED_ENTRY': {
+      const prevEntry = state.completed.find((c) => c.id === action.id);
+      if (!prevEntry) return state;
+      const updatedEntry = { ...prevEntry, ...action.updates };
+      const prevManicuristId = prevEntry.manicuristId;
+      const prevTurns = prevEntry.turnValue;
+      const newManicuristId = updatedEntry.manicuristId;
+      const newTurns = updatedEntry.turnValue;
+      let manicurists = state.manicurists;
+      if (prevManicuristId === newManicuristId) {
+        // Same manicurist â adjust by delta
+        const delta = newTurns - prevTurns;
+        if (delta !== 0) {
+          manicurists = state.manicurists.map((m) =>
+            m.id === prevManicuristId
+              ? { ...m, totalTurns: Math.max(0, m.totalTurns + delta) }
+              : m
+          );
+        }
+      } else {
+        // Manicurist reassigned â subtract from old, add to new
+        manicurists = state.manicurists.map((m) => {
+          if (m.id === prevManicuristId) return { ...m, totalTurns: Math.max(0, m.totalTurns - prevTurns) };
+          if (m.id === newManicuristId) return { ...m, totalTurns: m.totalTurns + newTurns };
+          return m;
+        });
+      }
+      return {
+        ...state,
+        completed: state.completed.map((c) => (c.id === action.id ? updatedEntry : c)),
+        manicurists,
+      };
+    }
+
+    case 'DELETE_COMPLETED_ENTRY': {
+      const entry = state.completed.find((c) => c.id === action.id);
+      if (!entry) return state;
+      return {
+        ...state,
+        completed: state.completed.filter((c) => c.id !== action.id),
+        manicurists: state.manicurists.map((m) =>
+          m.id === entry.manicuristId
+            ? { ...m, totalTurns: Math.max(0, m.totalTurns - entry.turnValue) }
+            : m
+        ),
+      };
+    }
+
+    case 'UPDATE_HISTORY_ENTRY': {
+      return {
+        ...state,
+        dailyHistory: state.dailyHistory.map((d) =>
+          d.date === action.date
+            ? {
+                ...d,
+                entries: d.entries.map((e) =>
+                  e.id === action.entryId ? { ...e, ...action.updates } : e
+                ),
+              }
+            : d
+        ),
+      };
+    }
+
+    case 'DELETE_HISTORY_ENTRY': {
+      return {
+        ...state,
+        dailyHistory: state.dailyHistory.map((d) =>
+          d.date === action.date
+            ? { ...d, entries: d.entries.filter((e) => e.id !== action.entryId) }
+            : d
+        ),
+      };
+    }
+
     default:
       return state;
   }
