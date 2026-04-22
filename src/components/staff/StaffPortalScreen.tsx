@@ -116,29 +116,34 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               <div>
                 <p className="font-mono text-xs font-semibold text-gray-900">Push Notifications</p>
                 <p className="font-mono text-[10px] text-gray-400 mt-0.5">
-                  Get notified when a client is assigned to you
+                  {pushStatus === 'subscribed' || getPermissionState() === 'granted'
+                    ? 'You will be notified when a client is assigned to you'
+                    : 'Enable to get notified when a client is assigned to you'
+                  }
                 </p>
               </div>
-              <button
-                onClick={handleEnablePush}
-                disabled={pushStatus === 'subscribing'}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-xs font-semibold transition-all ${
-                  pushStatus === 'subscribed' || getPermissionState() === 'granted'
-                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+              {pushStatus === 'subscribed' || getPermissionState() === 'granted' ? (
+                <span className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 font-mono text-xs font-semibold">
+                  <Bell size={14} /> ACTIVE
+                </span>
+              ) : (
+                <button
+                  onClick={handleEnablePush}
+                  disabled={pushStatus === 'subscribing'}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-xs font-semibold transition-all ${
+                    pushStatus === 'error'
+                      ? 'bg-red-50 text-red-500 border border-red-200'
+                      : 'bg-indigo-500 text-white hover:bg-indigo-600 active:scale-[0.98]'
+                  }`}
+                >
+                  {pushStatus === 'subscribing'
+                    ? 'ENABLING...'
                     : pushStatus === 'error'
-                    ? 'bg-red-50 text-red-500 border border-red-200'
-                    : 'bg-indigo-500 text-white hover:bg-indigo-600 active:scale-[0.98]'
-                }`}
-              >
-                {pushStatus === 'subscribed' || getPermissionState() === 'granted'
-                  ? <><Bell size={14} /> ENABLED</>
-                  : pushStatus === 'subscribing'
-                  ? 'ENABLING...'
-                  : pushStatus === 'error'
-                  ? 'FAILED'
-                  : <><BellOff size={14} /> ENABLE</>
-                }
-              </button>
+                    ? 'FAILED — TAP TO RETRY'
+                    : <><BellOff size={14} /> ENABLE</>
+                  }
+                </button>
+              )}
             </div>
           </div>
         )}

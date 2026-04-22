@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff } from 'lucide-react';
+import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
 import Badge from '../shared/Badge';
 import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
-import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
 
 interface ManicuristCardProps {
   manicurist: Manicurist;
@@ -33,18 +32,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   const { dispatch } = useApp();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
-  const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
   const statusConfig = getStatusConfig(manicurist.status);
-
-  async function handleEnablePush() {
-    setPushStatus('subscribing');
-    const result = await subscribeToPush(manicurist.id);
-    setPushStatus(result.success ? 'subscribed' : 'error');
-    if (!result.success) {
-      console.error('Push subscription failed:', result.error);
-      setTimeout(() => setPushStatus('idle'), 3000);
-    }
-  }
 
   function handleClockToggle() {
     if (manicurist.clockedIn) {
@@ -151,33 +139,6 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1">
               <h3 className="font-bebas text-lg tracking-[1px] text-gray-900 leading-none truncate">{manicurist.name}</h3>
-              {isPushSupported() && (
-                <button
-                  onClick={handleEnablePush}
-                  disabled={pushStatus === 'subscribing'}
-                  className={`p-0.5 rounded transition-colors shrink-0 ${
-                    pushStatus === 'subscribed'
-                      ? 'text-emerald-500'
-                      : pushStatus === 'error'
-                      ? 'text-red-400'
-                      : getPermissionState() === 'granted'
-                      ? 'text-emerald-400 hover:text-emerald-600'
-                      : 'text-gray-300 hover:text-pink-500'
-                  }`}
-                  title={
-                    pushStatus === 'subscribed'
-                      ? 'Notifications enabled'
-                      : pushStatus === 'subscribing'
-                      ? 'Enabling...'
-                      : 'Enable push notifications'
-                  }
-                >
-                  {pushStatus === 'subscribed' || getPermissionState() === 'granted'
-                    ? <Bell size={12} />
-                    : <BellOff size={12} />
-                  }
-                </button>
-              )}
             </div>
             <span className={`font-mono text-[10px] font-semibold tracking-wider ${
               manicurist.status === 'available' ? 'text-emerald-500' :
