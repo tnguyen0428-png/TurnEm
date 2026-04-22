@@ -7,6 +7,7 @@ import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { CompletedEntry } from '../../types';
+import { PinVerifyModal } from '../shared/AdminPinGate';
 
 function groupServices(services: string[]): [string, number][] {
   const map = new Map<string, number>();
@@ -176,6 +177,7 @@ export default function HistoryScreen() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [pendingBrowse, setPendingBrowse] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const today = getTodayDateStr();
   const todayAlreadySaved = state.dailyHistory.some((h) => h.date === today);
@@ -296,7 +298,13 @@ export default function HistoryScreen() {
             </button>
           )}
           <button
-            onClick={() => setShowCalendar((v) => !v)}
+            onClick={() => {
+              if (showCalendar) {
+                setShowCalendar(false);
+              } else {
+                setPendingBrowse(true);
+              }
+            }}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 font-mono text-xs font-semibold transition-colors ${
               showCalendar
                 ? 'border-gray-900 bg-gray-900 text-white'
@@ -502,6 +510,16 @@ export default function HistoryScreen() {
           onCancel={() => setShowClearConfirm(false)}
         />
       )}
+
+      <PinVerifyModal
+        isOpen={pendingBrowse}
+        title="Enter Admin PIN"
+        onSuccess={() => {
+          setPendingBrowse(false);
+          setShowCalendar(true);
+        }}
+        onCancel={() => setPendingBrowse(false)}
+      />
     </div>
   );
 }
