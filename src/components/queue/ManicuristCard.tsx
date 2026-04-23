@@ -298,9 +298,9 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                             <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-amber-700">
                                           <Coffee size={11} />
                               {breakDisplay}
-                            </span>span>
-                </div>div>
-              )}</div>
+                            </span>
+                </div>
+                      )}
         {manicurist.status === 'busy' && currentClient && (
           <div className="bg-red-50 rounded-lg p-1.5 mb-1.5">
             <div className="flex items-center justify-between mb-1">
