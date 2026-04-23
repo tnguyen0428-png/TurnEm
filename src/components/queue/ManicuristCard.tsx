@@ -35,6 +35,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
   const [bellSending, setBellSending] = useState(false);
+    const [isDoneSubmitting, setIsDoneSubmitting] = useState(false);
   const statusConfig = getStatusConfig(manicurist.status);
 
   function handleClockToggle() {
@@ -59,6 +60,8 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   }
 
   function handleDone() {
+        if (isDoneSubmitting) return;
+        setIsDoneSubmitting(true);
     dispatch({ type: 'COMPLETE_SERVICE', manicuristId: manicurist.id });
   }
 
@@ -328,10 +331,11 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
               </button>
               <button
                 onClick={handleDone}
-                className="flex-1 flex items-center justify-center gap-0.5 py-1.5 rounded-lg bg-emerald-500 text-white font-mono text-[10px] font-semibold hover:bg-emerald-600 active:scale-[0.98] transition-all"
+                                disabled={isDoneSubmitting}
+                className="flex-1 flex items-center justify-center gap-0.5 py-1.5 rounded-lg bg-emerald-500 text-white font-mono text-[10px] font-semibold hover:bg-emerald-600 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <CheckCircle size={11} />
-                DONE
+                {isDoneSubmitting ? 'SAVING...' : 'DONE'}
               </button>
             </>
           ) : (
