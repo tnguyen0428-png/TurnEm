@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
 import CountdownBadge from '../shared/CountdownBadge';
@@ -36,6 +36,16 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
   const [bellSending, setBellSending] = useState(false);
     const [isDoneSubmitting, setIsDoneSubmitting] = useState(false);
+    const [breakNow, setBreakNow] = useState(() => Date.now());
+    useEffect(() => {
+          if (manicurist.status !== 'break' || !manicurist.breakStartTime) return;
+          const id = setInterval(() => setBreakNow(Date.now()), 1000);
+          return () => clearInterval(id);
+    }, [manicurist.status, manicurist.breakStartTime]);
+    const breakElapsedSecs = manicurist.breakStartTime && manicurist.status === 'break'
+      ? Math.floor((breakNow - manicurist.breakStartTime) / 1000) : null;
+    const breakDisplay = breakElapsedSecs !== null
+      ? `${Math.floor(breakElapsedSecs / 60)}:${String(breakElapsedSecs % 60).padStart(2, '0')}` : null;
   const statusConfig = getStatusConfig(manicurist.status);
 
   function handleClockToggle() {
@@ -283,6 +293,14 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
           <p className="font-mono text-[9px] text-gray-400 tracking-wider mt-0.5">TURNS</p>
         </div>
 
+        {manicurist.status === 'break' && breakDisplay && (
+                <div className="bg-amber-50 rounded-lg p-1.5 mb-1.5 text-center">
+                            <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-amber-700">
+                                          <Coffee size={11} />
+                              {breakDisplay}
+                            </span>span>
+                </div>div>
+              )}</div>
         {manicurist.status === 'busy' && currentClient && (
           <div className="bg-red-50 rounded-lg p-1.5 mb-1.5">
             <div className="flex items-center justify-between mb-1">
