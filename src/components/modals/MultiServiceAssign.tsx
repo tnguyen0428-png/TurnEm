@@ -16,7 +16,7 @@ import { isAcrylicService, getSamPreferenceForServices, findSamIfActive, isSam }
 import {
   getClientDurationMs,
   getAlmostDoneMs,
-  formatServiceList,
+  formatServiceList,h
   getDistinctServices,
   getEligibleForService,
   getSuggestedForService,
@@ -205,8 +205,8 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         services: group.services,
         turnValue: group.turnValue,
         serviceRequests: serviceReqs,
-        requestedManicuristId: mId,
-        isRequested: true,
+        requestedManicuristId: wasRequested ? mId : null,
+        isRequested: wasRequested,
         isAppointment: client.isAppointment,
         assignedManicuristId: null,
         status: 'waiting',
