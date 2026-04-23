@@ -28,6 +28,7 @@ function mapDbManicurist(row: Record<string, unknown>): Manicurist {
     skills: (row.skills as string[]) || [],
     clockedIn: row.clocked_in as boolean,
     clockInTime: row.clock_in_time ? new Date(row.clock_in_time as string).getTime() : null,
+        breakStartTime: (row.break_start_time as number) || null,
     totalTurns: Number(row.total_turns) || 0,
     currentClient: (row.current_client_id as string) || null,
     status: (row.status as Manicurist['status']) || 'available',
@@ -516,6 +517,7 @@ async function syncManicurists(manicurists: Manicurist[], onError: (msg: string)
       has_wax3: m.hasWax3,
       time_adjustments: m.timeAdjustments || {},
       pin_code: m.pinCode || null,
+            break_start_time: m.breakStartTime ?? null,
     }, { onConflict: 'id' });
     if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
