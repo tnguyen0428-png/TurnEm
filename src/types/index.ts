@@ -21,6 +21,7 @@ export interface Manicurist {
   skills: string[];
   clockedIn: boolean;
   clockInTime: number | null;
+    breakStartTime: number | null;
   totalTurns: number;
   currentClient: string | null;
   status: ManicuristStatus;
