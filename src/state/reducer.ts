@@ -98,7 +98,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         manicurists: state.manicurists.map((m) =>
-          m.id === action.id ? { ...m, status: 'break' as const } : m
+          m.id === action.id ? { ...m, status: 'break' as const , breakStartTime: Date.now()} : m
         ),
       };
 
@@ -106,7 +106,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         manicurists: state.manicurists.map((m) =>
-          m.id === action.id ? { ...m, status: 'available' as const } : m
+          m.id === action.id ? { ...m, status: 'available' as const , breakStartTime: null} : m
         ),
       };
 
