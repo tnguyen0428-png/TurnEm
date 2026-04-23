@@ -4,7 +4,7 @@ import { useCountdown } from '../../hooks/useCountdown';
 import Modal from '../shared/Modal';
 import Badge from '../shared/Badge';
 import CountdownBadge from '../shared/CountdownBadge';
-import ConfirmDialog from '../shared/ConfirmDialog';
+import AssignConfirmDialog from '../shared/AssignConfirmDialog';
 import { useApp } from '../../state/AppContext';
 import { getEligibleManicurists, getSuggestedManicurist, isFourthPositionSpecialService } from '../../utils/priority';
 import { formatTime } from '../../utils/time';
@@ -22,7 +22,10 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
     manicuristId: string;
     clientName: string;
     manicuristName: string;
+    manicuristColor: string;
     service: string;
+    services: string[];
+    turnsToAdd: number;
   } | null>(null);
   const [dismissedSamPrompt, setDismissedSamPrompt] = useState(false);
 
@@ -105,7 +108,10 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
       manicuristId,
       clientName: client.clientName,
       manicuristName: manicurist.name,
+      manicuristColor: manicurist.color,
       service: formatServiceList(client.services),
+      services: client.services,
+      turnsToAdd: client.turnValue,
     });
   }
 
@@ -301,9 +307,15 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
       </Modal>
 
       {confirmAssignment && (
-        <ConfirmDialog
-          message={`Assign ${confirmAssignment.clientName} to ${confirmAssignment.manicuristName}?`}
-          confirmLabel="Assign"
+        <AssignConfirmDialog
+          clientName={confirmAssignment.clientName}
+          rows={[{
+            manicuristName: confirmAssignment.manicuristName,
+            manicuristColor: confirmAssignment.manicuristColor,
+            services: confirmAssignment.services,
+            turnsToAdd: confirmAssignment.turnsToAdd,
+            isRequested: client.isRequested,
+          }]}
           onConfirm={handleConfirm}
           onCancel={() => setConfirmAssignment(null)}
         />

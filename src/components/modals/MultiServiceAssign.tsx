@@ -4,7 +4,7 @@ import { useCountdown } from '../../hooks/useCountdown';
 import Modal from '../shared/Modal';
 import Badge from '../shared/Badge';
 import CountdownBadge from '../shared/CountdownBadge';
-import ConfirmDialog from '../shared/ConfirmDialog';
+import AssignConfirmDialog from '../shared/AssignConfirmDialog';
 import { useApp } from '../../state/AppContext';
 import { formatTime } from '../../utils/time';
 import { sendTurnAlert } from '../../utils/sms';
@@ -287,6 +287,51 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     }
 
     setShowConfirm(false);
+  }
+
+  function buildConfirmRows() {
+    const assignableGroups = new Map<string, { services: string[]; turnValue: number }>();
+    const deferredGroups = new Map<string, { services: string[] }>();
+
+    for (const row of serviceRows) {
+      const mId = assignments[row.uniqueKey];
+      if (!mId) continue;
+      const m = state.manicurists.find((x) => x.id === mId);
+      if (m && m.status === 'available') {
+        if (!assignableGroups.has(mId)) assignableGroups.set(mId, { services: [], turnValue: 0 });
+        const group = assignableGroups.get(mId)!;
+        group.services.push(row.service);
+        const baseTurn = getTurnValueForService(row.service);
+        if (row.requestedId && baseTurn > 0) {
+          const svc = state.salonServices.find((s) => s.name === row.service);
+          group.turnValue += svc?.category === 'Combo' ? 1 : 0.5;
+        } else {
+          group.turnValue += baseTurn;
+        }
+      } else if (m) {
+        if (!deferredGroups.has(mId)) deferredGroups.set(mId, { services: [] });
+        deferredGroups.get(mId)!.services.push(row.service);
+      }
+    }
+
+    const rows: { manicuristName: string; manicuristColor: string; services: string[]; turnsToAdd: number; isDeferred?: boolean; isRequested?: boolean }[] = [];
+    for (const [mId, group] of assignableGroups) {
+      const m = state.manicurists.find((x) => x.id === mId);
+      if (!m) continue;
+      const wasRequested = group.services.some((s) =>
+        (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.includes(mId))
+      );
+      rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: group.turnValue, isRequested: wasRequested });
+    }
+    for (const [mId, group] of deferredGroups) {
+      const m = state.manicurists.find((x) => x.id === mId);
+      if (!m) continue;
+      const wasRequested = group.services.some((s) =>
+        (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.includes(mId))
+      );
+      rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: 0, isDeferred: true, isRequested: wasRequested });
+    }
+    return rows;
   }
 
   function buildConfirmMessage() {
@@ -609,9 +654,9 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       </Modal>
 
       {showConfirm && (
-        <ConfirmDialog
-          message={buildConfirmMessage()}
-          confirmLabel="Assign"
+        <AssignConfirmDialog
+          clientName={client.clientName}
+          rows={buildConfirmRows()}
           onConfirm={handleConfirm}
           onCancel={() => setShowConfirm(false)}
         />
