@@ -16,7 +16,7 @@ import { isAcrylicService, getSamPreferenceForServices, findSamIfActive, isSam }
 import {
   getClientDurationMs,
   getAlmostDoneMs,
-  formatServiceList,h
+  formatServiceList,
   getDistinctServices,
   getEligibleForService,
   getSuggestedForService,
