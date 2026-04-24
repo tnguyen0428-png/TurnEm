@@ -550,14 +550,21 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                   <div key={entry.id} className="px-4 py-3 flex items-center justify-between">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {entry.services.map((s, i) => (
-                          <span
-                            key={`${s}-${i}`}
-                            className="inline-block px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600 font-semibold"
-                          >
-                            {s}
-                          </span>
-                        ))}
+                        {entry.services.map((s, i) => {
+                          const isRequested = entry.requestedServices?.includes(s);
+                          return (
+                            <span key={`${s}-${i}`} className="inline-flex items-center gap-1">
+                              <span className="inline-block px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600 font-semibold">
+                                {s}
+                              </span>
+                              {isRequested && (
+                                <span className="font-mono text-[9px] font-bold bg-purple-500 text-white rounded px-1 py-0.5 leading-none">
+                                  R
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })}
                       </div>
                       <div className="flex items-center gap-2 mt-1">
                         <span className="font-mono text-[10px] text-gray-400">
