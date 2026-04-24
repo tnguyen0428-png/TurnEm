@@ -1,6 +1,6 @@
 {
   "rewrites": [
     { "source": "/staff", "destination": "/staff.html" },
-    { "source": "/((?!assets|sw\\.js|manifest|Turn_Em_Logo|staff\\.html).*)", "destination": "/index.html" }
+    { "source": "/((?!assets|sw\\.js|manifest|Turn_Em_Logo|staff\\.html|.*\\.webp|.*\\.gif|.*\\.png|.*\\.jpg).*)", "destination": "/index.html" }
   ]
 }
