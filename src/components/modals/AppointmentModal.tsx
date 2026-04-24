@@ -25,14 +25,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     : null;
 
   const today = getTodayLA();
+  const draft = mode === 'add' ? state.appointmentDraft : null;
+
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
-  const [date, setDate] = useState(today);
-  const [time, setTime] = useState('10:00');
+  const [date, setDate] = useState(draft?.date ?? today);
+  const [time, setTime] = useState(draft?.time ?? '10:00');
   const [notes, setNotes] = useState('');
 
   const sortedServices = useMemo(
@@ -64,30 +66,26 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       setNotes(editing.notes);
 
       const svcs = editing.services?.length ? editing.services : [editing.service];
+      // Use occurrence tracking for duplicate service names
+      const occCount: Record<string, number> = {};
       const restored: SelectedService[] = svcs.map((svcName) => {
         const svc = state.salonServices.find((s) => s.name === svcName);
-        const req = (editing.serviceRequests || []).find((r) => r.service === svcName);
+        const occ = occCount[svcName] ?? 0;
+        occCount[svcName] = occ + 1;
+        // Only show assignment if it was an EXPLICIT client request (not a drag placement)
+        const reqs = (editing.serviceRequests || []).filter((r) => r.service === svcName);
+        const req  = reqs[occ] ?? null;
         return {
           serviceId: svc?.id || svcName,
           serviceName: svcName,
           turnValue: svc?.turnValue ?? 1,
-          requestedManicuristIds: req?.manicuristIds || [],
+          requestedManicuristIds: (req?.clientRequest === true) ? (req.manicuristIds || []) : [],
         };
       });
       setSelectedServices(restored);
+      setExpandedIndex(null); // don't auto-expand — user clicks the arrow to open
     }
   }, [editing]);
-
-  function handleAddService() {
-    const svc = sortedServices.find((s) => s.id === selectedServiceId);
-    if (!svc) return;
-    setSelectedServices((prev) => [
-      ...prev,
-      { serviceId: svc.id, serviceName: svc.name, turnValue: svc.turnValue, requestedManicuristIds: [] },
-    ]);
-    setSelectedServiceId('');
-    setSelectedCategory('');
-  }
 
   function handleRemoveService(index: number) {
     setSelectedServices((prev) => prev.filter((_, i) => i !== index));
@@ -115,10 +113,44 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     if (selectedServices.length === 0) return;
 
     const services = selectedServices.map((s) => s.serviceName as ServiceType);
-    const serviceRequests: ServiceRequest[] = selectedServices
-      .filter((s) => s.requestedManicuristIds.length > 0)
-      .map((s) => ({ service: s.serviceName as ServiceType, manicuristIds: s.requestedManicuristIds }));
-    const firstRequestedId = serviceRequests[0]?.manicuristIds?.[0] ?? null;
+
+    // Build one entry per service occurrence — merges client request + existing placement/startTime.
+    // This avoids duplicate entries that would confuse occurrence-based routing.
+    const existingReqs = editing?.serviceRequests || [];
+    const occCount: Record<string, number> = {};
+    const serviceRequests: ServiceRequest[] = [];
+
+    for (const s of selectedServices) {
+      const occ = occCount[s.serviceName] ?? 0;
+      occCount[s.serviceName] = occ + 1;
+      // Find existing entry for this service/occurrence (preserves startTime from dragging)
+      const reqsForSvc = existingReqs.filter((r) => r.service === s.serviceName);
+      const existingReq = reqsForSvc[occ] ?? null;
+
+      if (s.requestedManicuristIds.length > 0) {
+        // Client request: merge with existing startTime so block stays at its dragged position
+        serviceRequests.push({
+          service: s.serviceName as ServiceType,
+          manicuristIds: s.requestedManicuristIds,
+          clientRequest: true as const,
+          startTime: existingReq?.startTime,
+        });
+      } else if (existingReq && existingReq.clientRequest !== true) {
+        // No client request — keep existing placement entry (startTime + column from drag)
+        serviceRequests.push(existingReq);
+      }
+      // If previously had clientRequest but now cleared — nothing added (fully unassigned)
+    }
+
+    const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
+    // If no specific manicurist was requested in a service, fall back to the column
+    // the receptionist clicked on when opening the modal (draft?.manicuristId)
+    // For edit mode: preserve existing manicuristId if no new client request was made.
+    // For add mode: fall back to the column the receptionist clicked on (draft?.manicuristId).
+    const appointmentManicuristId = firstRequestedId
+      ?? (mode === 'edit' && editing ? editing.manicuristId : null)
+      ?? draft?.manicuristId
+      ?? null;
     const name = clientName.trim() || 'Walk-in';
 
     if (mode === 'edit' && editing) {
@@ -131,7 +163,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           service: services[0],
           services,
           serviceRequests,
-          manicuristId: firstRequestedId,
+          manicuristId: appointmentManicuristId,
           date,
           time,
           notes: notes.trim(),
@@ -145,7 +177,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         service: services[0],
         services,
         serviceRequests,
-        manicuristId: firstRequestedId,
+        manicuristId: appointmentManicuristId,
         date,
         time,
         notes: notes.trim(),
@@ -161,12 +193,14 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   function handleClose() {
     dispatch({ type: 'SET_MODAL', modal: null });
     dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: null });
+    dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: null });
   }
 
   return (
     <Modal
       title={mode === 'edit' ? 'EDIT APPOINTMENT' : 'NEW APPOINTMENT'}
       onClose={handleClose}
+      width="max-w-2xl"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
 
@@ -216,24 +250,25 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             <div className="flex-1">
               <select
                 value={selectedServiceId}
-                onChange={(e) => setSelectedServiceId(e.target.value)}
+                onChange={(e) => {
+                  const svc = sortedServices.find((s) => s.id === e.target.value);
+                  if (!svc) return;
+                  setSelectedServices((prev) => [
+                    ...prev,
+                    { serviceId: svc.id, serviceName: svc.name, turnValue: svc.turnValue, requestedManicuristIds: [] },
+                  ]);
+                  setSelectedServiceId('');
+                  setSelectedCategory('');
+                }}
                 disabled={!selectedCategory}
                 className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
               >
-                <option value="">Service...</option>
+                <option value="">Select service...</option>
                 {servicesInCategory.map((svc) => (
                   <option key={svc.id} value={svc.id}>{svc.name}</option>
                 ))}
               </select>
             </div>
-            <button
-              type="button"
-              onClick={handleAddService}
-              disabled={!selectedServiceId}
-              className="px-3 py-2.5 rounded-xl bg-pink-500 text-white font-mono text-xs font-semibold hover:bg-pink-600 disabled:bg-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed transition-all"
-            >
-              Add
-            </button>
           </div>
 
           {selectedServices.length === 0 ? (
@@ -255,8 +290,11 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-mono text-xs font-semibold text-pink-700">{s.serviceName}</p>
                           {s.requestedManicuristIds.length > 0 && (
-                            <span className="font-mono text-[10px] text-pink-500">
-                              → {s.requestedManicuristIds.map((id) => state.manicurists.find((m) => m.id === id)?.name).filter(Boolean).join(', ')}
+                            <span className="flex items-center gap-1">
+                              <span className="px-1.5 py-0.5 rounded-md font-mono text-[8px] font-bold bg-pink-500 text-white leading-none tracking-wide">REQ</span>
+                              <span className="font-mono text-[10px] text-pink-600 font-semibold">
+                                {s.requestedManicuristIds.map((id) => state.manicurists.find((m) => m.id === id)?.name).filter(Boolean).join(', ')}
+                              </span>
                             </span>
                           )}
                         </div>
@@ -281,7 +319,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
                     {isExpanded && (
                       <div className="mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white">
-                        <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">REQUEST MANICURIST (OPTIONAL)</p>
+                        <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">
+                          REQUEST MANICURIST <span className="text-gray-300 font-normal">(optional)</span>
+                        </p>
                         <div className="flex flex-wrap gap-1.5">
                           {displayStaff.map((m) => {
                             const isSelected = s.requestedManicuristIds.includes(m.id);
@@ -347,7 +387,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         <button
           type="submit"
           disabled={selectedServices.length === 0}
-          className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
+          className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
         >
           {mode === 'edit' ? 'SAVE CHANGES' : 'BOOK APPOINTMENT'}
         </button>

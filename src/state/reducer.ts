@@ -33,6 +33,7 @@ export const INITIAL_STATE: AppState = {
   editingStaffId: null,
   editingAppointmentId: null,
   editingServiceId: null,
+  appointmentDraft: null,
   loaded: false,
 };
 
@@ -325,6 +326,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_EDITING_APPOINTMENT':
       return { ...state, editingAppointmentId: action.appointmentId };
 
+    case 'SET_APPOINTMENT_DRAFT':
+      return { ...state, appointmentDraft: action.draft };
+
     case 'ADD_SALON_SERVICE':
       return { ...state, salonServices: [...state.salonServices, action.service] };
 
@@ -383,6 +387,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (swapIdx < 0 || swapIdx >= list.length) return state;
       [list[idx], list[swapIdx]] = [list[swapIdx], list[idx]];
       return { ...state, manicurists: list };
+    }
+
+    case 'SET_MANICURIST_ORDER': {
+      const ordered = action.ids
+        .map((id) => state.manicurists.find((m) => m.id === id))
+        .filter(Boolean) as typeof state.manicurists;
+      const rest = state.manicurists.filter((m) => !action.ids.includes(m.id));
+      return { ...state, manicurists: [...ordered, ...rest] };
     }
 
     case 'TOGGLE_FOURTH_POSITION_SPECIAL':
@@ -477,14 +489,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'SAVE_DAILY_HISTORY': {
-      const existing = state.dailyHistory.findIndex((d) => d.date === action.entry.date);
+      const existing = state.dailyHistory.findIndex((d) => d.date === action.entry.date)
       if (existing >= 0) {
         return {
           ...state,
           dailyHistory: state.dailyHistory.map((d) => d.date === action.entry.date ? action.entry : d),
         };
       }
-      return { ...state, dailyHistory: [...state.dailyHistory, action.entry] };
+      return {
+        ...state,
+        dailyHistory: [...state.dailyHistory, action.entry],
+      };
     }
 
     default:

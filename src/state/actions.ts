@@ -1,4 +1,4 @@
-import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory } from '../types';
+import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft } from '../types';
 
 export type AppAction =
   | { type: 'SET_VIEW'; view: ViewType }
@@ -27,6 +27,7 @@ export type AppAction =
   | { type: 'UPDATE_APPOINTMENT'; id: string; updates: Partial<Appointment> }
   | { type: 'DELETE_APPOINTMENT'; id: string }
   | { type: 'SET_EDITING_APPOINTMENT'; appointmentId: string | null }
+  | { type: 'SET_APPOINTMENT_DRAFT'; draft: AppointmentDraft | null }
   | { type: 'ADD_SALON_SERVICE'; service: SalonService }
   | { type: 'UPDATE_SALON_SERVICE'; id: string; updates: Partial<SalonService> }
   | { type: 'DELETE_SALON_SERVICE'; id: string }
@@ -36,6 +37,7 @@ export type AppAction =
   | { type: 'SET_CALENDAR_DAY'; day: CalendarDay }
   | { type: 'REMOVE_CALENDAR_DAY'; date: string }
   | { type: 'REORDER_MANICURIST'; id: string; direction: 'up' | 'down' }
+  | { type: 'SET_MANICURIST_ORDER'; ids: string[] }
   | { type: 'REORDER_SALON_SERVICE'; id: string; direction: 'up' | 'down' }
   | { type: 'TOGGLE_FOURTH_POSITION_SPECIAL'; id: string }
   | { type: 'TOGGLE_CHECK2'; id: string }

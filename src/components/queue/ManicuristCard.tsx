@@ -392,6 +392,6 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
         </div>
       </div>
     </div>
-    </>
+  </>
   );
 }

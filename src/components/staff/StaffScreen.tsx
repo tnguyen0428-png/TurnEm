@@ -39,7 +39,7 @@ export default function StaffScreen() {
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-pink-500 text-white font-mono text-xs font-semibold hover:bg-pink-600 active:scale-[0.98] transition-all"
         >
           <Plus size={14} />
-          ADD MANICURIST
+          ADD STAFF
         </button>
       </div>
 

@@ -22,6 +22,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
   const [skills, setSkills] = useState<string[]>([]);
   const [timeAdjustments, setTimeAdjustments] = useState<Record<string, number>>({});
   const [pinCode, setPinCode] = useState('');
+  const [isReceptionist, setIsReceptionist] = useState(false);
 
   const sortedServices = useMemo(
     () => [...state.salonServices].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -48,6 +49,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
       setSkills([...editingStaff.skills]);
       setTimeAdjustments({ ...(editingStaff.timeAdjustments || {}) });
       setPinCode(editingStaff.pinCode || '');
+      setIsReceptionist(editingStaff.isReceptionist ?? false);
     }
   }, [editingStaff]);
 
@@ -91,13 +93,19 @@ export default function StaffModal({ mode }: StaffModalProps) {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || skills.length === 0) return;
+    if (!name.trim()) return;
+    if (!isReceptionist && skills.length === 0) return;
 
     if (mode === 'edit' && editingStaff) {
       dispatch({
         type: 'UPDATE_MANICURIST',
         id: editingStaff.id,
-        updates: { name: name.trim(), phone: phone.trim(), color, skills, timeAdjustments, pinCode: pinCode.trim() },
+        updates: {
+          name: name.trim(), phone: phone.trim(), color,
+          skills: isReceptionist ? [] : skills,
+          timeAdjustments, pinCode: pinCode.trim(),
+          isReceptionist, showInBook: !isReceptionist,
+        },
       });
     } else {
       const newManicurist: Manicurist = {
@@ -105,7 +113,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
         name: name.trim(),
         color,
         phone: phone.trim(),
-        skills,
+        skills: isReceptionist ? [] : skills,
         clockedIn: false,
         clockInTime: null,
         totalTurns: 0,
@@ -121,6 +129,8 @@ export default function StaffModal({ mode }: StaffModalProps) {
         pinCode: pinCode.trim(),
         breakStartTime: null,
         smsOptIn: false,
+        isReceptionist,
+        showInBook: !isReceptionist,
       };
       dispatch({ type: 'ADD_MANICURIST', manicurist: newManicurist });
     }
@@ -138,7 +148,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
 
   return (
     <Modal
-      title={mode === 'edit' ? 'EDIT MANICURIST' : 'ADD MANICURIST'}
+      title={mode === 'edit' ? 'EDIT STAFF' : 'ADD STAFF'}
       onClose={handleClose}
     >
       <form onSubmit={handleSubmit} className="space-y-5">
@@ -190,6 +200,26 @@ export default function StaffModal({ mode }: StaffModalProps) {
           </p>
         </div>
 
+        {/* Receptionist toggle */}
+        <div
+          onClick={() => setIsReceptionist((r) => !r)}
+          className={`flex items-center justify-between px-4 py-3 rounded-xl border-2 cursor-pointer transition-all ${
+            isReceptionist ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'
+          }`}
+        >
+          <div>
+            <p className={`font-mono text-sm font-semibold ${isReceptionist ? 'text-indigo-700' : 'text-gray-700'}`}>
+              Receptionist
+            </p>
+            <p className="font-mono text-[10px] text-gray-400 mt-0.5">
+              No services needed — can book appointments &amp; has security access
+            </p>
+          </div>
+          <div className={`w-10 h-6 rounded-full transition-all relative flex-shrink-0 ml-4 ${isReceptionist ? 'bg-indigo-500' : 'bg-gray-200'}`}>
+            <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${isReceptionist ? 'left-4' : 'left-0.5'}`} />
+          </div>
+        </div>
+
         <div>
           <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-2">
             COLOR
@@ -211,7 +241,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
           </div>
         </div>
 
-        <div>
+        {!isReceptionist && <div>
           <div className="flex items-center justify-between mb-2">
             <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider">
               SERVICES
@@ -330,7 +360,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
                                   onClick={(e) => {
                                     e.preventDefault();
                                     setTimeAdjustments(prev => ({
-                                      ...prev,
+                                          ...prev,
                                       [svc.name]: (prev[svc.name] || 0) + 5,
                                     }));
                                   }}
@@ -353,14 +383,14 @@ export default function StaffModal({ mode }: StaffModalProps) {
               })}
             </div>
           )}
-        </div>
+        </div>}
 
         <button
           type="submit"
-          disabled={!name.trim() || skills.length === 0}
+          disabled={!name.trim() || (!isReceptionist && skills.length === 0)}
           className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
         >
-          {mode === 'edit' ? 'SAVE CHANGES' : 'ADD MANICURIST'}
+          {mode === 'edit' ? 'SAVE CHANGES' : 'ADD STAFF'}
         </button>
       </form>
     </Modal>

@@ -1,16 +1,13 @@
-import { Users, ClipboardList, Clock, CalendarCheck, Sparkles, Scale, CalendarDays, LogOut } from 'lucide-react';
+import { ClipboardList, Clock, CalendarCheck, Settings2, LogOut } from 'lucide-react';
 import type { ViewType } from '../../types';
 import { useApp } from '../../state/AppContext';
 import { useAuth } from '../../state/AuthContext';
 
-const TABS: { id: ViewType; label: string; icon: typeof Users }[] = [
-  { id: 'queue', label: 'QUEUE', icon: ClipboardList },
-  { id: 'appointments', label: 'APPTS', icon: CalendarCheck },
-  { id: 'staff', label: 'STAFF', icon: Users },
-  { id: 'services', label: 'SERVICES', icon: Sparkles },
-  { id: 'criteria', label: 'CRITERIA', icon: Scale },
-  { id: 'calendar', label: 'CALENDAR', icon: CalendarDays },
-  { id: 'history', label: 'HISTORY', icon: Clock },
+const TABS: { id: ViewType; label: string; icon: typeof ClipboardList }[] = [
+  { id: 'queue',        label: 'QUEUE',     icon: ClipboardList },
+  { id: 'appointments', label: 'APPTS',     icon: CalendarCheck },
+  { id: 'blueprint',   label: 'BLUEPRINT', icon: Settings2 },
+  { id: 'history',      label: 'HISTORY',   icon: Clock },
 ];
 
 export default function TabBar() {
@@ -30,7 +27,10 @@ export default function TabBar() {
           </div>
           <div className="flex items-center gap-0.5 overflow-x-auto hide-scrollbar">
             {TABS.map((tab) => {
-              const isActive = state.view === tab.id;
+              const blueprintViews = ['blueprint', 'staff', 'services', 'criteria', 'calendar'];
+              const isActive = tab.id === 'blueprint'
+                ? blueprintViews.includes(state.view)
+                : state.view === tab.id;
               const Icon = tab.icon;
               return (
                 <button

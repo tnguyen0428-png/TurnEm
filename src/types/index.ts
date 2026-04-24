@@ -2,7 +2,7 @@ export type ServiceType = string;
 
 export type ManicuristStatus = 'available' | 'busy' | 'break';
 export type ClientStatus = 'waiting' | 'inProgress' | 'complete';
-export type ViewType = 'queue' | 'staff' | 'history' | 'appointments' | 'services' | 'criteria' | 'calendar';
+export type ViewType = 'queue' | 'staff' | 'history' | 'appointments' | 'services' | 'criteria' | 'calendar' | 'blueprint';
 export type ModalType =
   | 'addClient'
   | 'editClient'
@@ -34,11 +34,15 @@ export interface Manicurist {
   pinCode: string;
   breakStartTime: number | null;
   smsOptIn: boolean;
+  showInBook?: boolean;      // if false, hidden from appointment book columns
+  isReceptionist?: boolean;  // if true, shown in security as having booking access
 }
 
 export interface ServiceRequest {
   service: ServiceType;
   manicuristIds: string[];
+  clientRequest?: boolean; // true = client explicitly requested; false/undefined = salon placed
+  startTime?: string;      // HH:MM — per-service start time (overrides appointment time)
 }
 
 export interface QueueEntry {
@@ -122,6 +126,12 @@ export interface DailyHistory {
   entries: CompletedEntry[];
 }
 
+export interface AppointmentDraft {
+  date?: string;
+  time?: string;
+  manicuristId?: string | null;
+}
+
 export interface AppState {
   manicurists: Manicurist[];
   queue: QueueEntry[];
@@ -138,5 +148,6 @@ export interface AppState {
   editingStaffId: string | null;
   editingAppointmentId: string | null;
   editingServiceId: string | null;
+  appointmentDraft: AppointmentDraft | null;
   loaded: boolean;
 }

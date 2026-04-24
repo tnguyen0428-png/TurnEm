@@ -41,6 +41,8 @@ function mapDbManicurist(row: Record<string, unknown>): Manicurist {
     pinCode: (row.pin_code as string) || '',
     breakStartTime: row.break_start_time ? Number(row.break_start_time) : null,
     smsOptIn: (row.sms_opt_in as boolean) || false,
+    showInBook: row.show_in_book === false ? false : true,
+    isReceptionist: (row.is_receptionist as boolean) || false,
   };
 }
 
@@ -166,7 +168,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       { data: calendarRows },
       { data: dailyHistoryRows },
     ] = await Promise.all([
-      supabase.from('manicurists').select('*'),
+      supabase.from('manicurists').select('*').order('sort_order', { ascending: true }),
       supabase.from('queue_entries').select('*'),
       supabase.from('completed_services').select('*'),
       supabase.from('appointments').select('*'),
@@ -523,7 +525,7 @@ async function withRetry<T>(
 }
 
 async function syncManicurists(manicurists: Manicurist[], onError: (msg: string) => void) {
-  const rows = manicurists.map(m => ({
+  const rows = manicurists.map((m, idx) => ({
     id: m.id,
     name: m.name,
     color: m.color,
@@ -544,6 +546,9 @@ async function syncManicurists(manicurists: Manicurist[], onError: (msg: string)
     pin_code: m.pinCode || null,
     break_start_time: m.breakStartTime ?? null,
     sms_opt_in: m.smsOptIn || false,
+    sort_order: idx,
+    show_in_book: m.showInBook !== false,
+    is_receptionist: m.isReceptionist || false,
   }));
   const { error } = await withRetry(() => supabase.from('manicurists').upsert(rows, { onConflict: 'id' }));
   if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }

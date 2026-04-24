@@ -10,6 +10,7 @@ import AppointmentsScreen from './components/appointments/AppointmentsScreen';
 import ServicesScreen from './components/services/ServicesScreen';
 import CriteriaScreen from './components/criteria/CriteriaScreen';
 import CalendarScreen from './components/calendar/CalendarScreen';
+import BlueprintScreen from './components/blueprint/BlueprintScreen';
 import AddClientModal from './components/modals/AddClientModal';
 import EditClientModal from './components/modals/EditClientModal';
 import AssignModal from './components/modals/AssignModal';
@@ -60,12 +61,9 @@ function AppContent() {
       <TabBar />
       <main className="flex-1 overflow-hidden">
         {state.view === 'queue' && <QueueScreen />}
-        {state.view === 'staff' && <StaffScreen />}
         {state.view === 'history' && <HistoryScreen />}
         {state.view === 'appointments' && <AppointmentsScreen />}
-        {state.view === 'services' && <ServicesScreen />}
-        {state.view === 'criteria' && <CriteriaScreen />}
-        {state.view === 'calendar' && <CalendarScreen />}
+        {(state.view === 'blueprint' || state.view === 'staff' || state.view === 'services' || state.view === 'criteria' || state.view === 'calendar') && <BlueprintScreen />}
       </main>
 
       {state.modal === 'addClient' && <AddClientModal />}
