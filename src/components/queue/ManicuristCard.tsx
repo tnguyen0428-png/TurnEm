@@ -282,13 +282,6 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
           <p className="font-mono text-[9px] text-gray-400 tracking-wider mt-0.5">TURNS</p>
         </div>
 
-        {manicurist.status === 'break' && breakElapsed && (
-          <div className="bg-amber-50 rounded-lg px-2 py-1.5 mb-1.5 flex items-center gap-1.5">
-            <Clock size={11} className="text-amber-500 shrink-0" />
-            <span className="font-mono text-[11px] font-bold text-amber-700 tabular-nums">{breakElapsed}</span>
-            <span className="font-mono text-[9px] text-amber-500 tracking-wider">ON BREAK</span>
-          </div>
-        )}
         {manicurist.status === 'busy' && currentClient && (
           <div className="bg-red-50 rounded-lg p-1.5 mb-1.5">
             <div className="flex items-center justify-between mb-1">
