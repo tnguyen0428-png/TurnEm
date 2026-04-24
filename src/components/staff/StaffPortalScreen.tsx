@@ -440,6 +440,27 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             <p className="font-mono text-[10px] text-emerald-600 font-semibold">SOUND ACTIVE — alerts will play automatically</p>
           </div>
         )}
+        {manicurist.phone && (
+          <div className="bg-gray-50 border border-gray-200 rounded-2xl px-4 py-2 flex items-center justify-between">
+            <p className="font-mono text-[10px] text-gray-500 font-semibold">
+              SMS ALERTS — {manicurist.smsOptIn ? 'you will receive a text when assigned' : 'tap to enable text notifications'}
+            </p>
+            <button
+              onClick={async () => {
+                const newVal = !manicurist.smsOptIn;
+                await supabase.from('manicurists').update({ sms_opt_in: newVal }).eq('id', manicurist.id);
+                dispatch({ type: 'UPDATE_MANICURIST', id: manicurist.id, updates: { smsOptIn: newVal } });
+              }}
+              className={`ml-3 shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none ${
+                manicurist.smsOptIn ? 'bg-emerald-500' : 'bg-gray-300'
+              }`}
+            >
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                manicurist.smsOptIn ? 'translate-x-5' : 'translate-x-0.5'
+              }`} />
+            </button>
+          </div>
+        )}
 
         {/* Stats Row */}
         <div className="grid grid-cols-2 gap-3">
@@ -465,36 +486,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             )}
           </div>
         </div>
-
-        {/* SMS Opt-In */}
-        {manicurist.phone && (
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-mono text-xs font-semibold text-gray-900">SMS Alerts</p>
-                <p className="font-mono text-[10px] text-gray-400 mt-0.5">
-                  {manicurist.smsOptIn
-                    ? 'You will receive a text when a client is assigned to you'
-                    : 'Enable to get a text when a client is assigned to you'}
-                </p>
-              </div>
-              <button
-                onClick={async () => {
-                  const newVal = !manicurist.smsOptIn;
-                  await supabase.from('manicurists').update({ sms_opt_in: newVal }).eq('id', manicurist.id);
-                  dispatch({ type: 'UPDATE_MANICURIST', id: manicurist.id, updates: { smsOptIn: newVal } });
-                }}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none ${
-                  manicurist.smsOptIn ? 'bg-emerald-500' : 'bg-gray-200'
-                }`}
-              >
-                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-200 ${
-                  manicurist.smsOptIn ? 'translate-x-5' : 'translate-x-0.5'
-                }`} />
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Services History */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
