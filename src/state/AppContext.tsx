@@ -546,7 +546,7 @@ async function syncManicurists(manicurists: Manicurist[], onError: (msg: string)
     sms_opt_in: m.smsOptIn || false,
   }));
   const { error } = await withRetry(() => supabase.from('manicurists').upsert(rows, { onConflict: 'id' }));
-  if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  if (error) { const msg = (error as any)?.message || JSON.stringify(error); console.error('[syncManicurists] error:', error); onError(`Sync error: ${msg}`); }
 }
 
 async function syncQueue(queue: QueueEntry[], onError: (msg: string) => void) {
