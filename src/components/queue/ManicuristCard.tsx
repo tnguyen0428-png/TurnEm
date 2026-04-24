@@ -292,9 +292,17 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
         {manicurist.status === 'busy' && currentClient && (
           <div className="bg-red-50 rounded-lg p-1.5 mb-1.5">
             <div className="flex items-center justify-between mb-1">
-              <p className="font-mono text-[10px] font-semibold text-red-700 truncate">
-                {currentClient.clientName}
-              </p>
+              <div className="flex items-center gap-1 min-w-0">
+                <p className="font-mono text-[10px] font-semibold text-red-700 truncate">
+                  {currentClient.clientName}
+                </p>
+                {(currentClient.requestedManicuristId === manicurist.id ||
+                  currentClient.serviceRequests?.some(sr => sr.manicuristIds.includes(manicurist.id))) && (
+                  <span className="shrink-0 font-mono text-[9px] font-bold bg-purple-500 text-white rounded px-1 py-0.5 leading-none">
+                    R
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-1">
                 <button
                   onClick={handleEditClient}
