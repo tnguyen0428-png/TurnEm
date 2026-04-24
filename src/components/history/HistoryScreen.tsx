@@ -285,7 +285,7 @@ interface HistoryTableProps {
   manicurists: { id: string; name: string; color: string; totalTurns: number; clockedIn: boolean; clockInTime: number | null }[];
 }
 
-function HistoryTabl({ entries, manicurists }: HistoryTableProps) {
+function HistoryTable({ entries, manicurists }: HistoryTableProps) {
   const [sortMode, setSortMode] = useState<SortMode>('time');
   const [manicuristFilter, setManicuristFilter] = useState<string>('all');
 
