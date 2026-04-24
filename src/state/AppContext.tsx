@@ -523,31 +523,30 @@ async function withRetry<T>(
 }
 
 async function syncManicurists(manicurists: Manicurist[], onError: (msg: string) => void) {
-  for (const m of manicurists) {
-    const { error } = await withRetry(() => supabase.from('manicurists').upsert({
-      id: m.id,
-      name: m.name,
-      color: m.color,
-      phone: m.phone || null,
-      skills: m.skills,
-      clocked_in: m.clockedIn,
-      clock_in_time: m.clockInTime ? new Date(m.clockInTime).toISOString() : null,
-      total_turns: m.totalTurns,
-      current_client_id: m.currentClient,
-      status: m.status,
-      has_fourth_position_special: m.hasFourthPositionSpecial,
-      has_check2: m.hasCheck2,
-      has_check3: m.hasCheck3,
-      has_wax: m.hasWax,
-      has_wax2: m.hasWax2,
-      has_wax3: m.hasWax3,
-      time_adjustments: m.timeAdjustments || {},
-      pin_code: m.pinCode || null,
-      break_start_time: m.breakStartTime ?? null,
-      sms_opt_in: m.smsOptIn || false,
-    }, { onConflict: 'id' }));
-    if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
-  }
+  const rows = manicurists.map(m => ({
+    id: m.id,
+    name: m.name,
+    color: m.color,
+    phone: m.phone || null,
+    skills: m.skills,
+    clocked_in: m.clockedIn,
+    clock_in_time: m.clockInTime ? new Date(m.clockInTime).toISOString() : null,
+    total_turns: m.totalTurns,
+    current_client_id: m.currentClient,
+    status: m.status,
+    has_fourth_position_special: m.hasFourthPositionSpecial,
+    has_check2: m.hasCheck2,
+    has_check3: m.hasCheck3,
+    has_wax: m.hasWax,
+    has_wax2: m.hasWax2,
+    has_wax3: m.hasWax3,
+    time_adjustments: m.timeAdjustments || {},
+    pin_code: m.pinCode || null,
+    break_start_time: m.breakStartTime ?? null,
+    sms_opt_in: m.smsOptIn || false,
+  }));
+  const { error } = await withRetry(() => supabase.from('manicurists').upsert(rows, { onConflict: 'id' }));
+  if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 }
 
 async function syncQueue(queue: QueueEntry[], onError: (msg: string) => void) {
