@@ -487,6 +487,15 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           </div>
         </div>
 
+        {/* Break animation */}
+        {manicurist.status === 'break' && (
+          <div className="text-center py-2">
+            <style>{`@keyframes floatBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }`}</style>
+            <img src="/lunch-break.webp" alt="Enjoy your break!" style={{ width: '180px', height: 'auto', display: 'inline-block', animation: 'floatBob 2s ease-in-out infinite' }} />
+            <p className="font-bebas text-2xl text-sky-600 tracking-[3px] mt-1">ENJOY YOUR BREAK!</p>
+          </div>
+        )}
+
         {/* Services History */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
           {/* Header with date navigation */}
