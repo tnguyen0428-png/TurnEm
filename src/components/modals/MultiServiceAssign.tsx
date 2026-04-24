@@ -51,7 +51,11 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
   const [dismissedSamPrompt, setDismissedSamPrompt] = useState(false);
 
   const sam = getSamPreferenceForServices(state.manicurists, client.services, state.salonServices);
-  const showSamPrompt = !!sam && sam.status === 'busy' && !dismissedSamPrompt;
+  // Suppress Sam prompt if all acrylic rows already have an explicit manicurist request
+  const acrylicRowsWithoutRequest = serviceRows.filter(
+    row => isAcrylicService(row.service, state.salonServices) && !row.requestedId
+  );
+  const showSamPrompt = !!sam && sam.status === 'busy' && !dismissedSamPrompt && acrylicRowsWithoutRequest.length > 0;
   const samCurrentClient = sam ? state.queue.find(c => c.id === sam.currentClient) ?? null : null;
   const samDurationMs = sam ? getClientDurationMs(sam, state.queue, state.salonServices) : 0;
   const { display: samCountdownDisplay } = useCountdown(samCurrentClient?.startedAt ?? null, samDurationMs);
@@ -137,6 +141,9 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       _almostDone: false,
     };
 
+    // When a specific manicurist is explicitly requested, show only that person
+    if (explicitlyRequestedId) return [preferredRow];
+
     return [preferredRow, ...baseRows];
   }
 
@@ -187,7 +194,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     }
 
     const entries: { client: QueueEntry; manicuristId: string | null }[] = [];
-    const smsTargets: { id: string; phone: string; name: string; clientName: string; service: string }[] = [];
+    const smsTargets: { id: string; phone: string; smsOptIn: boolean; name: string; clientName: string; service: string }[] = [];
 
     for (const [mId, group] of manicuristGroups) {
       // If this manicurist was requested for ANY service in the group,
@@ -213,6 +220,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         arrivedAt: client.arrivedAt,
         startedAt: null,
         completedAt: null,
+        extraTimeMs: 0,
       };
 
       entries.push({ client: entry, manicuristId: mId });
@@ -222,6 +230,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         smsTargets.push({
           id: m.id,
           phone: m.phone || '',
+          smsOptIn: m.smsOptIn || false,
           name: m.name,
           clientName: client.clientName,
           service: formatServiceList(group.services),
@@ -245,6 +254,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         arrivedAt: client.arrivedAt,
         startedAt: null,
         completedAt: null,
+        extraTimeMs: 0,
       };
       entries.push({ client: entry, manicuristId: null });
     }
@@ -265,6 +275,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         arrivedAt: Date.now() - 3600000,
         startedAt: null,
         completedAt: null,
+        extraTimeMs: 0,
       };
       entries.push({ client: entry, manicuristId: null });
     }
@@ -276,7 +287,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       sendPushNotification(target.id, target.name, target.clientName, target.service).then((pushResult) => {
         if (pushResult.success) {
           showSmsToast('sent');
-        } else if (target.phone) {
+        } else if (target.phone && target.smsOptIn) {
           sendTurnAlert(target.phone, target.name, target.clientName, target.service).then((smsResult) => {
             showSmsToast(smsResult.success ? 'sent' : 'failed');
           });
@@ -579,7 +590,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                 {!isAlmostDone && m._isSamPreferred && !m._isExplicitlyRequested && <Badge label="PREFERRED" variant="indigo" />}
                                 {!isAlmostDone && !m._isSamPreferred && !m._isExplicitlyRequested && isRequested && <Badge label="REQUESTED" variant="pink" />}
                                 {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && rowIs4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
-                                {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && !rowIs4thSpecial && <Badge label="RECOMMENDED" variant="green" />}
+                                {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && !rowIs4thSpecial && !requestedId && <Badge label="RECOMMENDED" variant="green" />}
                                 {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
                                 {m._takenByOther && (
                                   <span className="font-mono text-[9px] text-amber-500">(assigned above)</span>

@@ -33,7 +33,7 @@ export default function WaitingPanel() {
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
         <div className="flex items-center gap-2">
-          <h2 className="font-bebas text-lg tracking-[2px] text-gray-900">WAITING</h2>
+          <h2 className="font-bebas text-lg tracking-[2px] text-gray-900">CLIENT WAITING</h2>
           {priorityQueue.length > 0 && (
             <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-500 text-white text-[10px] font-mono font-bold">
               {priorityQueue.length}

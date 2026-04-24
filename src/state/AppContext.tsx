@@ -39,6 +39,8 @@ function mapDbManicurist(row: Record<string, unknown>): Manicurist {
     hasWax3: (row.has_wax3 as boolean) || false,
     timeAdjustments: (row.time_adjustments as Record<string, number>) || {},
     pinCode: (row.pin_code as string) || '',
+    breakStartTime: row.break_start_time ? new Date(row.break_start_time as string).getTime() : null,
+    smsOptIn: (row.sms_opt_in as boolean) || false,
   };
 }
 
@@ -71,16 +73,26 @@ function mapDbQueueEntry(row: Record<string, unknown>): QueueEntry {
     arrivedAt: new Date(row.arrived_at as string).getTime(),
     startedAt: row.started_at ? new Date(row.started_at as string).getTime() : null,
     completedAt: row.completed_at ? new Date(row.completed_at as string).getTime() : null,
+    extraTimeMs: Number(row.extra_time_ms) || 0,
   };
 }
 
 function mapDbAppointment(row: Record<string, unknown>): Appointment {
+  const legacyService = (row.service as string) || '';
+  const dbServices = row.services as ServiceType[] | null;
+  const services = dbServices && dbServices.length > 0 ? dbServices : (legacyService ? [legacyService as ServiceType] : []);
+  const serviceRequests = (row.service_requests as ServiceRequest[]) || [];
+  // Derive legacy manicuristId from first service request if available
+  const firstReq = serviceRequests[0];
+  const manicuristId = (row.manicurist_id as string) || (firstReq?.manicuristIds?.[0] ?? null);
   return {
     id: row.id as string,
     clientName: (row.client_name as string) || '',
     clientPhone: (row.client_phone as string) || '',
-    service: row.service as ServiceType,
-    manicuristId: (row.manicurist_id as string) || null,
+    service: services[0] || legacyService as ServiceType,
+    services,
+    serviceRequests,
+    manicuristId,
     date: row.date as string,
     time: row.time as string,
     notes: (row.notes as string) || '',
@@ -166,7 +178,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const appointments = (appointmentRows || []).map(mapDbAppointment);
     // Only seed defaults when the query itself succeeded and genuinely returned nothing.
-    // If serviceError is set it means the DB call failed — we must not overwrite with defaults.
+    // If serviceError is set it means the DB call failed â we must not overwrite with defaults.
     if (!serviceError && (!serviceRows || serviceRows.length === 0)) {
       for (const s of defaultSalonServices) {
         const { error } = await supabase.from('salon_services').upsert({
@@ -196,7 +208,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     let manicurists = (staffRows || []).map(mapDbManicurist);
     // Guard: only seed default manicurists when the query succeeded with zero rows.
-    // A staffError means the DB call failed — seeding here would replace real data with defaults.
+    // A staffError means the DB call failed â seeding here would replace real data with defaults.
     if (!staffError && manicurists.length === 0) {
       for (const m of defaultManicurists) {
         const { error } = await supabase.from('manicurists').insert({
@@ -218,6 +230,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           has_wax3: m.hasWax3,
           time_adjustments: m.timeAdjustments || {},
           pin_code: m.pinCode || null,
+          break_start_time: m.breakStartTime ? new Date(m.breakStartTime).toISOString() : null,
+          sms_opt_in: m.smsOptIn || false,
         });
         if (error) console.error('[loadInitialData] manicurists seed error:', error);
       }
@@ -250,6 +264,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         startedAt: new Date(row.started_at as string).getTime(),
         completedAt: new Date(row.completed_at as string).getTime(),
         requestedServices: isBadPattern ? undefined : (rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined),
+        isAppointment: (row.is_appointment as boolean) || false,
+        isRequested: (row.is_requested as boolean) || false,
       };
     });
 
@@ -258,7 +274,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const rawRow = (completedRows || []).find((r: Record<string, unknown>) => r.id === e.id);
       const rawRequested = Array.isArray(rawRow?.requested_services) ? rawRow.requested_services as string[] : [];
       if (rawRequested.length > 0 && e.requestedServices === undefined) {
-        // This entry had bad data — clear it in the DB too
+        // This entry had bad data â clear it in the DB too
         const { error: cleanupError } = await supabase.from('completed_services').update({ requested_services: [] }).eq('id', e.id);
         if (cleanupError) console.error('[loadInitialData] cleanup error:', cleanupError);
       }
@@ -287,20 +303,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory: cleanedHistory } });
 
     // Startup stale-data check: two conditions trigger an archive+reset on load:
-    // 1. system_state.last_archive_date is behind today — the 11:59pm timer missed (app closed,
+    // 1. system_state.last_archive_date is behind today â the 11:59pm timer missed (app closed,
     //    or stale closure bug prevented it from firing). Archive any missed day's data now.
-    // 2. Stale completed/queue entries exist with dates before today — belt-and-suspenders catch.
+    // 2. Stale completed/queue entries exist with dates before today â belt-and-suspenders catch.
     const today = getTodayLA();
     const { data: sysStateRow } = await supabase.from('system_state').select('last_archive_date').eq('id', 'singleton').single();
     const lastArchiveDate = (sysStateRow as Record<string,unknown> | null)?.last_archive_date as string | null;
     if (lastArchiveDate && lastArchiveDate < today) {
-      console.log('[startup] missed reset detected — system_state.last_archive_date=', lastArchiveDate, 'today=', today);
+      console.log('[startup] missed reset detected â system_state.last_archive_date=', lastArchiveDate, 'today=', today);
     }
     const staleCompleted = completed.filter(c => getLocalDateStr(new Date(c.completedAt)) < today);
     const staleQueue = queue.filter(c => getLocalDateStr(new Date(c.arrivedAt)) < today);
 
     if (staleCompleted.length > 0 || staleQueue.length > 0) {
-      console.log('[startup] stale data detected from previous day — archiving and resetting', { staleCompleted: staleCompleted.length, staleQueue: staleQueue.length });
+      console.log('[startup] stale data detected from previous day â archiving and resetting', { staleCompleted: staleCompleted.length, staleQueue: staleQueue.length });
 
       // Archive stale completed entries grouped by date, update in-memory state too
       const byDate = new Map<string, typeof completed>();
@@ -323,7 +339,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           { id: historyEntry.id, date: historyEntry.date, entries: historyEntry.entries },
           { onConflict: 'date' }
         );
-        if (histErr) { console.error('[startup] daily_history upsert error:', histErr); setSyncError('Failed to archive history — data may not be saved. Check connection.'); }
+        if (histErr) { console.error('[startup] daily_history upsert error:', histErr); setSyncError('Failed to archive history â data may not be saved. Check connection.'); }
         // Update in-memory history so the history screen can find it immediately
         dispatch({ type: 'SAVE_DAILY_HISTORY', entry: historyEntry });
       }
@@ -333,7 +349,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await supabase.from('queue_entries').delete().eq('id', c.id);
       }
       if (staleCompleted.length > 0) {
-        // Delete only the specific stale IDs — never use neq() here as it would wipe the whole table
+        // Delete only the specific stale IDs â never use neq() here as it would wipe the whole table
         const staleIds = staleCompleted.map(c => c.id);
         const { error: deleteErr } = await supabase.from('completed_services').delete().in('id', staleIds);
         if (deleteErr) console.error('[startup] failed to delete stale completed_services:', deleteErr);
@@ -348,18 +364,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (ssErr) console.error('[startup] failed to update system_state:', ssErr);
       else console.log('[startup] system_state updated to', today);
     } else if (lastArchiveDate && lastArchiveDate < today) {
-      // system_state is stale but no stale entries found in DB — the reset DID clear the DB
+      // system_state is stale but no stale entries found in DB â the reset DID clear the DB
       // but system_state was never updated. Fix the date so future startups dont re-run.
       await supabase
         .from('system_state')
         .upsert({ id: 'singleton', last_archive_date: today, updated_at: new Date().toISOString() }, { onConflict: 'id' });
-      console.log('[startup] system_state was stale with no stale data — updated to', today);
+      console.log('[startup] system_state was stale with no stale data â updated to', today);
     }
   }
 
   const saveTodayHistory = useCallback(async (dateOverride?: string): Promise<boolean> => {
     const completed = completedRef.current;
-    if (completed.length === 0) return true; // nothing to save — not an error
+    if (completed.length === 0) return true; // nothing to save â not an error
     const date = dateOverride ?? getTodayLA();
     // Reuse the existing entry's ID for this date so repeated saves don't generate a new
     // UUID each time (which would fight the onConflict 'date' upsert and change the stored id).
@@ -374,13 +390,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .upsert({ id: entry.id, date: entry.date, entries: entry.entries }, { onConflict: 'date' });
     if (error) {
       console.error('[saveTodayHistory] upsert error:', error);
-      setSyncError('Failed to save history — data may not be saved. Check connection.');
+      setSyncError('Failed to save history â data may not be saved. Check connection.');
       return false; // caller must NOT dispatch or reset on failure
     }
     dispatch({ type: 'SAVE_DAILY_HISTORY', entry });
     return true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Intentionally empty — reads completedRef/dailyHistoryRef, never stale state
+  }, []); // Intentionally empty â reads completedRef/dailyHistoryRef, never stale state
 
   const archiveTodayIfNeeded = useCallback(async (skipHourCheck = false) => {
     const now = new Date();
@@ -394,14 +410,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // The hour check is bypassed when called from startup (skipHourCheck=true),
     // since a missed reset from a previous day should always run regardless of current time.
     if (!skipHourCheck && (laHour < 23 || laHour >= 24)) {
-      console.error('[archiveTodayIfNeeded] aborted — not within rollover window', { laHour });
+      console.error('[archiveTodayIfNeeded] aborted â not within rollover window', { laHour });
       return;
     }
     const saved = await saveTodayHistory();
     if (!saved) {
-      // Save failed — do NOT reset. Keeping today's data in memory is safer than
+      // Save failed â do NOT reset. Keeping today's data in memory is safer than
       // wiping it. The scheduler will retry on the next tick.
-      console.error('[archiveTodayIfNeeded] save failed — skipping DAILY_RESET to prevent data loss');
+      console.error('[archiveTodayIfNeeded] save failed â skipping DAILY_RESET to prevent data loss');
       return;
     }
     dispatch({ type: 'DAILY_RESET' });
@@ -421,7 +437,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!state.loaded) return;
-    // Staff mode is read-only — never sync back to DB
+    // Staff mode is read-only â never sync back to DB
     if (isStaffMode) {
       prevStateRef.current = state;
       completedRef.current = state.completed;
@@ -443,6 +459,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prev.salonServices !== state.salonServices) syncSalonServices(state.salonServices, prev.salonServices, setSyncError);
     if (prev.turnCriteria !== state.turnCriteria) syncTurnCriteria(state.turnCriteria, setSyncError);
     if (prev.calendarDays !== state.calendarDays) syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncError);
+    if (prev.dailyHistory !== state.dailyHistory) syncDailyHistory(state.dailyHistory, prev.dailyHistory, setSyncError);
     prevStateRef.current = state;
     completedRef.current = state.completed;
     dailyHistoryRef.current = state.dailyHistory;
@@ -464,11 +481,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const laMinute = Number(parts.find(p => p.type === 'minute')?.value ?? '0');
       const laSecond = Number(parts.find(p => p.type === 'second')?.value ?? '0');
 
-      const CLOSE_HOUR = 23; // 11pm LA — targets 11:59pm
+      const CLOSE_HOUR = 23; // 11pm LA â targets 11:59pm
       const currentLaSeconds = laHour * 3600 + laMinute * 60 + laSecond;
       const targetLaSeconds  = CLOSE_HOUR * 3600 + 59 * 60; // 11:59pm LA
       let deltaSeconds = targetLaSeconds - currentLaSeconds;
-      if (deltaSeconds <= 0) deltaSeconds += 24 * 3600; // already past 9pm — target tomorrow
+      if (deltaSeconds <= 0) deltaSeconds += 24 * 3600; // already past 9pm â target tomorrow
       return deltaSeconds * 1000;
     }
 
@@ -513,8 +530,10 @@ async function syncManicurists(manicurists: Manicurist[], onError: (msg: string)
       has_wax3: m.hasWax3,
       time_adjustments: m.timeAdjustments || {},
       pin_code: m.pinCode || null,
+      break_start_time: m.breakStartTime ? new Date(m.breakStartTime).toISOString() : null,
+      sms_opt_in: m.smsOptIn || false,
     }, { onConflict: 'id' });
-    if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 }
 
@@ -524,7 +543,7 @@ async function syncQueue(queue: QueueEntry[], onError: (msg: string) => void) {
   const toDelete = (existing || []).filter((r: { id: string }) => !currentIds.has(r.id));
   for (const r of toDelete) {
     const { error } = await supabase.from('queue_entries').delete().eq('id', r.id);
-    if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
   for (const c of queue) {
     const { error } = await supabase.from('queue_entries').upsert({
@@ -542,15 +561,44 @@ async function syncQueue(queue: QueueEntry[], onError: (msg: string) => void) {
       arrived_at: new Date(c.arrivedAt).toISOString(),
       started_at: c.startedAt ? new Date(c.startedAt).toISOString() : null,
       completed_at: c.completedAt ? new Date(c.completedAt).toISOString() : null,
+      extra_time_ms: c.extraTimeMs || 0,
     }, { onConflict: 'id' });
-    if (error) { console.error('[syncQueue] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncQueue] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 }
 
 async function syncCompleted(completed: AppState['completed'], prev: AppState['completed'], onError: (msg: string) => void) {
-  const prevIds = new Set(prev.map((c) => c.id));
-  const newEntries = completed.filter((c) => !prevIds.has(c.id));
-  for (const c of newEntries) {
+  const prevById = new Map(prev.map((c) => [c.id, c]));
+  const currentIds = new Set(completed.map((c) => c.id));
+
+  // Handle deletes: entries in prev but not in current
+  const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
+  if (removedIds.length > 0) {
+    const { error } = await supabase.from('completed_services').delete().in('id', removedIds);
+    if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+  }
+
+  // Handle inserts (new entries) and updates (entries that changed)
+  for (const c of completed) {
+    const previous = prevById.get(c.id);
+    // Shallow compare the fields we sync â skip if identical reference AND same data
+    if (previous && previous === c) continue;
+    if (previous) {
+      // Update â only push if any tracked field changed
+      const unchanged =
+        previous.clientName === c.clientName &&
+        previous.turnValue === c.turnValue &&
+        previous.manicuristId === c.manicuristId &&
+        previous.manicuristName === c.manicuristName &&
+        previous.manicuristColor === c.manicuristColor &&
+        previous.startedAt === c.startedAt &&
+        previous.completedAt === c.completedAt &&
+        previous.isAppointment === c.isAppointment &&
+        previous.isRequested === c.isRequested &&
+        JSON.stringify(previous.services) === JSON.stringify(c.services) &&
+        JSON.stringify(previous.requestedServices ?? []) === JSON.stringify(c.requestedServices ?? []);
+      if (unchanged) continue;
+    }
     const { error } = await supabase.from('completed_services').upsert({
       id: c.id,
       client_name: c.clientName,
@@ -563,8 +611,24 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
       started_at: new Date(c.startedAt).toISOString(),
       completed_at: new Date(c.completedAt).toISOString(),
       requested_services: c.requestedServices ?? [],
+      is_appointment: !!c.isAppointment,
+      is_requested: !!c.isRequested,
     }, { onConflict: 'id' });
-    if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+  }
+}
+
+async function syncDailyHistory(current: DailyHistory[], prev: DailyHistory[], onError: (msg: string) => void) {
+  const prevByDate = new Map(prev.map((d) => [d.date, d]));
+  for (const day of current) {
+    const previous = prevByDate.get(day.date);
+    if (previous && previous === day) continue;
+    if (previous && JSON.stringify(previous.entries) === JSON.stringify(day.entries)) continue;
+    // New day or changed entries â upsert
+    const { error } = await supabase
+      .from('daily_history')
+      .upsert({ id: day.id, date: day.date, entries: day.entries }, { onConflict: 'date' });
+    if (error) { console.error('[syncDailyHistory] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 }
 
@@ -574,36 +638,36 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
   const deleted = prev.filter((a) => !currentIds.has(a.id));
   for (const a of deleted) {
     const { error } = await supabase.from('appointments').delete().eq('id', a.id);
-    if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 
   for (const a of appointments) {
     const { error } = await supabase.from('appointments').upsert({
       id: a.id,
       client_name: a.clientName,
-      client_phone: a.clientPhone,
-      service: a.service,
-      manicurist_id: a.manicuristId,
+      client_phone: a.clientPhone || null,
+      service: a.services?.[0] || a.service,
+      services: a.services || [a.service],
+      service_requests: a.serviceRequests || [],
+      manicurist_id: a.manicuristId || null,
       date: a.date,
       time: a.time,
-      notes: a.notes,
+      notes: a.notes || null,
       status: a.status,
-      created_at: new Date(a.createdAt).toISOString(),
+      created_at: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
     }, { onConflict: 'id' });
     if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 }
 
-async function syncSalonServices(services: SalonService[], prev: SalonService[], onError: (msg: string) => void) {
-  const currentIds = new Set(services.map((s) => s.id));
-
+async function syncSalonServices(salonServices: SalonService[], prev: SalonService[], onError: (msg: string) => void) {
+  const currentIds = new Set(salonServices.map((s) => s.id));
   const deleted = prev.filter((s) => !currentIds.has(s.id));
   for (const s of deleted) {
     const { error } = await supabase.from('salon_services').delete().eq('id', s.id);
     if (error) { console.error('[syncSalonServices] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
-
-  for (const s of services) {
+  for (const s of salonServices) {
     const { error } = await supabase.from('salon_services').upsert({
       id: s.id,
       name: s.name,
@@ -615,12 +679,12 @@ async function syncSalonServices(services: SalonService[], prev: SalonService[],
       sort_order: s.sortOrder,
       is_fourth_position_special: s.isFourthPositionSpecial,
     }, { onConflict: 'id' });
-    if (error) { console.error('[syncSalonServices] upsert error for', s.id, error); onError('Sync failed — data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncSalonServices] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 }
 
-async function syncTurnCriteria(criteria: TurnCriteria[], onError: (msg: string) => void) {
-  for (const c of criteria) {
+async function syncTurnCriteria(turnCriteria: TurnCriteria[], onError: (msg: string) => void) {
+  for (const c of turnCriteria) {
     const { error } = await supabase.from('turn_criteria').upsert({
       id: c.id,
       name: c.name,
@@ -630,20 +694,18 @@ async function syncTurnCriteria(criteria: TurnCriteria[], onError: (msg: string)
       type: c.type,
       value: c.value,
     }, { onConflict: 'id' });
-    if (error) { console.error('[syncTurnCriteria] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncTurnCriteria] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 }
 
-async function syncCalendarDays(days: CalendarDay[], prev: CalendarDay[], onError: (msg: string) => void) {
-  const currentDates = new Set(days.map((d) => d.date));
-
+async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[], onError: (msg: string) => void) {
+  const currentDates = new Set(calendarDays.map((d) => d.date));
   const deleted = prev.filter((d) => !currentDates.has(d.date));
   for (const d of deleted) {
     const { error } = await supabase.from('calendar_days').delete().eq('date', d.date);
     if (error) { console.error('[syncCalendarDays] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
-
-  for (const d of days) {
+  for (const d of calendarDays) {
     const { error } = await supabase.from('calendar_days').upsert({
       date: d.date,
       status: d.status,

@@ -61,19 +61,26 @@ export default function AppointmentsScreen() {
   }
 
   function handleCheckIn(appt: Appointment) {
-    dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'checked-in' } });
-    const service = appt.service as ServiceType;
-    const isRequested = !!appt.manicuristId;
-    const baseTurn = SERVICE_TURN_VALUES[service] ?? 1;
-    const turnValue = isRequested && baseTurn > 0 ? 0.5 : baseTurn;
-    const serviceRequests = [{ service, manicuristIds: appt.manicuristId ? [appt.manicuristId] : [] }];
+    dispatch({ type: 'DELETE_APPOINTMENT', id: appt.id });
+    const services = appt.services?.length ? appt.services : [appt.service as ServiceType];
+    const serviceRequests = appt.serviceRequests?.length
+      ? appt.serviceRequests
+      : appt.manicuristId ? [{ service: services[0], manicuristIds: [appt.manicuristId] }] : [];
+    const isRequested = serviceRequests.some((r) => r.manicuristIds.length > 0);
+    const firstRequestedId = serviceRequests[0]?.manicuristIds?.[0] ?? null;
+    const turnValue = services.reduce((sum, svc) => {
+      const s = state.salonServices.find((ss) => ss.name === svc);
+      const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc] ?? 1;
+      const hasReq = serviceRequests.some((r) => r.service === svc && r.manicuristIds.length > 0);
+      return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
+    }, 0);
     const newClient: QueueEntry = {
       id: crypto.randomUUID(),
       clientName: appt.clientName || 'Walk-in',
-      services: [service],
+      services,
       turnValue,
       serviceRequests,
-      requestedManicuristId: appt.manicuristId,
+      requestedManicuristId: firstRequestedId,
       isRequested,
       isAppointment: true,
       assignedManicuristId: null,
@@ -81,14 +88,8 @@ export default function AppointmentsScreen() {
       arrivedAt: Date.now(),
       startedAt: null,
       completedAt: null,
+      extraTimeMs: 0,
     };
-    if (isRequested && appt.manicuristId) {
-      const manicurist = state.manicurists.find((m) => m.id === appt.manicuristId);
-      if (manicurist && manicurist.status === 'available') {
-        dispatch({ type: 'REQUEST_ASSIGN', client: newClient, manicuristId: appt.manicuristId });
-        return;
-      }
-    }
     dispatch({ type: 'ADD_CLIENT', client: newClient });
   }
 
@@ -168,16 +169,18 @@ export default function AppointmentsScreen() {
                         <span className="font-mono text-xs text-gray-600">
                           {formatDateDisplay(appt.date)} at {formatTimeDisplay(appt.time)}
                         </span>
-                        <span className="font-mono text-xs text-gray-500">{appt.service}</span>
-                        <span className="flex items-center gap-1.5">
-                          <span
-                            className="w-2 h-2 rounded-full"
-                            style={{ backgroundColor: getManicuristColor(appt.manicuristId) }}
-                          />
-                          <span className="font-mono text-xs text-gray-500">
-                            {getManicuristName(appt.manicuristId)}
-                          </span>
+                        <span className="font-mono text-xs text-gray-500">
+                          {(appt.services?.length ? appt.services : [appt.service]).join(' + ')}
                         </span>
+                        {(appt.serviceRequests?.length
+                          ? appt.serviceRequests.filter((r) => r.manicuristIds.length > 0)
+                          : appt.manicuristId ? [{ manicuristIds: [appt.manicuristId] }] : []
+                        ).map((r, i) => (
+                          <span key={i} className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getManicuristColor(r.manicuristIds[0]) }} />
+                            <span className="font-mono text-xs text-gray-500">{getManicuristName(r.manicuristIds[0])}</span>
+                          </span>
+                        ))}
                         {appt.clientPhone && (
                           <span className="flex items-center gap-1 font-mono text-[10px] text-gray-400">
                             <Phone size={10} />

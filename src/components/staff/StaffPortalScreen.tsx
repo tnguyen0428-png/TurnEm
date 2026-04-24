@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, Zap } from 'lucide-react';
+import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, Zap, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
-import { formatTime } from '../../utils/time';
-import type { Manicurist } from '../../types';
+import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
+import type { Manicurist, CompletedEntry } from '../../types';
 
 interface StaffPortalScreenProps {
   manicurist: Manicurist;
@@ -17,6 +17,45 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   const [pollCount, setPollCount] = useState(0);
   const [lastPollTime, setLastPollTime] = useState<string>('—');
   const [pollError, setPollError] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayLA());
+  const [historyEntries, setHistoryEntries] = useState<CompletedEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const todayStr = getTodayLA();
+  const isToday = selectedDate === todayStr;
+
+  // Fetch history for a past date from daily_history table
+  useEffect(() => {
+    if (isToday) { setHistoryEntries([]); return; }
+    setHistoryLoading(true);
+    supabase
+      .from('daily_history')
+      .select('entries')
+      .eq('date', selectedDate)
+      .maybeSingle()
+      .then(({ data }) => {
+        const entries: CompletedEntry[] = (data?.entries || [])
+          .filter((e: CompletedEntry) => e.manicuristId === initialManicurist.id)
+          .sort((a: CompletedEntry, b: CompletedEntry) => b.completedAt - a.completedAt);
+        setHistoryEntries(entries);
+        setHistoryLoading(false);
+      });
+  }, [selectedDate, isToday, initialManicurist.id]);
+
+  function shiftDate(days: number) {
+    const d = new Date(selectedDate + 'T12:00:00');
+    d.setDate(d.getDate() + days);
+    const next = getLocalDateStr(d);
+    if (next <= todayStr) setSelectedDate(next);
+  }
+
+  function formatDateLabel(dateStr: string): string {
+    if (dateStr === todayStr) return 'Today';
+    const yesterday = getLocalDateStr(new Date(new Date().setDate(new Date().getDate() - 1)));
+    if (dateStr === yesterday) return 'Yesterday';
+    const d = new Date(dateStr + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
 
   // Poll Supabase every 3s for live data (staff mode sync-back is disabled in AppContext)
   useEffect(() => {
@@ -51,6 +90,8 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 hasCheck2: r.has_check2 || false, hasCheck3: r.has_check3 || false,
                 hasWax: r.has_wax || false, hasWax2: r.has_wax2 || false, hasWax3: r.has_wax3 || false,
                 timeAdjustments: r.time_adjustments || {}, pinCode: r.pin_code || '',
+                breakStartTime: r.break_start_time ? new Date(r.break_start_time).getTime() : null,
+                smsOptIn: r.sms_opt_in || false,
               })),
               queue: queueRows.map((r: any) => ({
                 id: r.id, clientName: r.client_name,
@@ -65,6 +106,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 requestedManicuristId: r.requested_manicurist_id || null,
                 isRequested: r.is_requested || false,
                 isAppointment: r.is_appointment || false,
+                extraTimeMs: Number(r.extra_time_ms) || 0,
               })),
               completed: (completedRows || []).map((r: any) => ({
                 id: r.id, clientName: r.client_name || '',
@@ -518,49 +560,123 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           </div>
         )}
 
-        {/* Services Rendered Today */}
+        {/* SMS Opt-In */}
+        {manicurist.phone && (
+          <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-mono text-xs font-semibold text-gray-900">SMS Alerts</p>
+                <p className="font-mono text-[10px] text-gray-400 mt-0.5">
+                  {manicurist.smsOptIn
+                    ? 'You will receive a text when a client is assigned to you'
+                    : 'Enable to get a text when a client is assigned to you'}
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  const newVal = !manicurist.smsOptIn;
+                  await supabase.from('manicurists').update({ sms_opt_in: newVal }).eq('id', manicurist.id);
+                  dispatch({ type: 'UPDATE_MANICURIST', id: manicurist.id, updates: { smsOptIn: newVal } });
+                }}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none ${
+                  manicurist.smsOptIn ? 'bg-emerald-500' : 'bg-gray-200'
+                }`}
+              >
+                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                  manicurist.smsOptIn ? 'translate-x-5' : 'translate-x-0.5'
+                }`} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Services History */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <p className="font-mono text-xs font-semibold text-gray-900">Services Today</p>
-            <span className="font-mono text-[10px] text-gray-400 font-semibold">
-              {completedToday.length} completed
-            </span>
+          {/* Header with date navigation */}
+          <div className="px-4 py-3 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <p className="font-mono text-xs font-semibold text-gray-900">Services</p>
+              <span className="font-mono text-[10px] text-gray-400 font-semibold">
+                {isToday ? completedToday.length : historyEntries.length} completed
+              </span>
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <button
+                onClick={() => shiftDate(-1)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs font-semibold text-gray-700">
+                  {formatDateLabel(selectedDate)}
+                </span>
+                {!isToday && (
+                  <button
+                    onClick={() => setSelectedDate(todayStr)}
+                    className="px-2 py-0.5 rounded-md bg-pink-100 text-pink-600 font-mono text-[10px] font-semibold hover:bg-pink-200 transition-colors"
+                  >
+                    Today
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => shiftDate(1)}
+                disabled={isToday}
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
 
-          {completedToday.length === 0 ? (
+          {/* Entries */}
+          {historyLoading ? (
             <div className="px-4 py-8 text-center">
-              <CheckCircle size={24} className="mx-auto text-gray-200 mb-2" />
-              <p className="font-mono text-xs text-gray-400">No services completed yet today</p>
+              <p className="font-mono text-xs text-gray-400">Loading...</p>
             </div>
-          ) : (
-            <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
-              {completedToday.map((entry) => (
-                <div key={entry.id} className="px-4 py-3 flex items-center justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {entry.services.map((s, i) => (
-                        <span
-                          key={`${s}-${i}`}
-                          className="inline-block px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600 font-semibold"
-                        >
-                          {s}
+          ) : (() => {
+            const entries = isToday ? completedToday : historyEntries;
+            if (entries.length === 0) {
+              return (
+                <div className="px-4 py-8 text-center">
+                  <CheckCircle size={24} className="mx-auto text-gray-200 mb-2" />
+                  <p className="font-mono text-xs text-gray-400">
+                    {isToday ? 'No services completed yet today' : 'No services recorded for this day'}
+                  </p>
+                </div>
+              );
+            }
+            return (
+              <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
+                {entries.map((entry) => (
+                  <div key={entry.id} className="px-4 py-3 flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {entry.services.map((s, i) => (
+                          <span
+                            key={`${s}-${i}`}
+                            className="inline-block px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600 font-semibold"
+                          >
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="font-mono text-[10px] text-gray-400">
+                          {entry.turnValue} turns
                         </span>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="font-mono text-[10px] text-gray-400">
-                        {entry.turnValue} turns
-                      </span>
-                      <span className="flex items-center gap-1 font-mono text-[10px] text-gray-300">
-                        <Clock size={9} />
-                        {formatTime(entry.completedAt)}
-                      </span>
+                        <span className="flex items-center gap-1 font-mono text-[10px] text-gray-300">
+                          <Clock size={9} />
+                          {formatTime(entry.completedAt)}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

@@ -1,0 +1,2 @@
+ALTER TABLE manicurists
+  ADD COLUMN IF NOT EXISTS break_start_time TIMESTAMPTZ;

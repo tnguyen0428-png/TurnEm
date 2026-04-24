@@ -25,6 +25,7 @@ export default function AddClientModal() {
       arrivedAt: Date.now(),
       startedAt: null,
       completedAt: null,
+      extraTimeMs: 0,
     };
 
     dispatch({ type: 'ADD_CLIENT', client: newClient });

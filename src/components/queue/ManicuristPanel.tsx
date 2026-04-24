@@ -16,7 +16,7 @@ export default function ManicuristPanel() {
   }, []);
 
   const clockedIn = state.manicurists.filter((m) => m.clockedIn);
-  const notClockedIn = state.manicurists.filter((m) => !m.clockedIn);
+  const notClockedIn = state.manicurists.filter((m) => !m.clockedIn).sort((a, b) => a.name.localeCompare(b.name));
   const total = clockedIn.length;
   const totalTurns = clockedIn.reduce((sum, m) => sum + m.totalTurns, 0);
 
@@ -96,7 +96,7 @@ export default function ManicuristPanel() {
       const baseDuration = svc?.duration ?? 30;
       const adjustment = adj[svcName] || 0;
       return sum + Math.max(baseDuration + adjustment, 5);
-    }, 0) * 60000;
+    }, 0) * 60000 + (client.extraTimeMs || 0);
   }
 
   return (

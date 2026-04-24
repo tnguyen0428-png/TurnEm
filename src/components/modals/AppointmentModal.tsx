@@ -1,11 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
-import { ALL_SERVICES } from '../../constants/services';
-import type { ServiceType, Appointment } from '../../types';
+import { SERVICE_CATEGORIES } from '../../constants/services';
+import type { ServiceType, ServiceRequest, Appointment } from '../../types';
 
 interface AppointmentModalProps {
   mode: 'add' | 'edit';
+}
+
+interface SelectedService {
+  serviceId: string;
+  serviceName: string;
+  turnValue: number;
+  requestedManicuristIds: string[];
 }
 
 export default function AppointmentModal({ mode }: AppointmentModalProps) {
@@ -18,26 +26,105 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const today = new Date().toISOString().split('T')[0];
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
-  const [service, setService] = useState<ServiceType>('Manicure');
-  const [manicuristId, setManicuristId] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedServiceId, setSelectedServiceId] = useState('');
+  const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [date, setDate] = useState(today);
   const [time, setTime] = useState('10:00');
   const [notes, setNotes] = useState('');
+
+  const sortedServices = useMemo(
+    () => [...state.salonServices].filter((s) => s.isActive).sort((a, b) => a.sortOrder - b.sortOrder),
+    [state.salonServices]
+  );
+
+  const availableCategories = useMemo(() => {
+    const cats = new Set(sortedServices.map((s) => s.category).filter(Boolean));
+    return SERVICE_CATEGORIES.filter((c) => cats.has(c));
+  }, [sortedServices]);
+
+  const servicesInCategory = useMemo(() => {
+    if (!selectedCategory) return [];
+    return sortedServices.filter((s) => s.category === selectedCategory);
+  }, [sortedServices, selectedCategory]);
+
+  const clockedInStaff = useMemo(
+    () => [...state.manicurists].filter((m) => m.clockedIn).sort((a, b) => a.name.localeCompare(b.name)),
+    [state.manicurists]
+  );
+
+  // All staff sorted alphabetically for request picker (even not clocked in)
+  const allStaffSorted = useMemo(
+    () => [...state.manicurists].sort((a, b) => a.name.localeCompare(b.name)),
+    [state.manicurists]
+  );
 
   useEffect(() => {
     if (editing) {
       setClientName(editing.clientName);
       setClientPhone(editing.clientPhone);
-      setService(editing.service);
-      setManicuristId(editing.manicuristId || '');
       setDate(editing.date);
       setTime(editing.time);
       setNotes(editing.notes);
+
+      // Restore selected services from editing appointment
+      const svcs = editing.services?.length ? editing.services : [editing.service];
+      const restored: SelectedService[] = svcs.map((svcName) => {
+        const svc = state.salonServices.find((s) => s.name === svcName);
+        const req = (editing.serviceRequests || []).find((r) => r.service === svcName);
+        return {
+          serviceId: svc?.id || svcName,
+          serviceName: svcName,
+          turnValue: svc?.turnValue ?? 1,
+          requestedManicuristIds: req?.manicuristIds || [],
+        };
+      });
+      setSelectedServices(restored);
     }
   }, [editing]);
 
+  function handleAddService() {
+    const svc = sortedServices.find((s) => s.id === selectedServiceId);
+    if (!svc) return;
+    setSelectedServices((prev) => [
+      ...prev,
+      { serviceId: svc.id, serviceName: svc.name, turnValue: svc.turnValue, requestedManicuristIds: [] },
+    ]);
+    setSelectedServiceId('');
+    setSelectedCategory('');
+  }
+
+  function handleRemoveService(index: number) {
+    setSelectedServices((prev) => prev.filter((_, i) => i !== index));
+    if (expandedIndex === index) setExpandedIndex(null);
+    else if (expandedIndex !== null && expandedIndex > index) setExpandedIndex(expandedIndex - 1);
+  }
+
+  function toggleManicurist(index: number, manicuristId: string) {
+    setSelectedServices((prev) =>
+      prev.map((s, i) => {
+        if (i !== index) return s;
+        const has = s.requestedManicuristIds.includes(manicuristId);
+        return {
+          ...s,
+          requestedManicuristIds: has
+            ? s.requestedManicuristIds.filter((id) => id !== manicuristId)
+            : [...s.requestedManicuristIds, manicuristId],
+        };
+      })
+    );
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (selectedServices.length === 0) return;
+
+    const services = selectedServices.map((s) => s.serviceName as ServiceType);
+    const serviceRequests: ServiceRequest[] = selectedServices
+      .filter((s) => s.requestedManicuristIds.length > 0)
+      .map((s) => ({ service: s.serviceName as ServiceType, manicuristIds: s.requestedManicuristIds }));
+    const firstRequestedId = serviceRequests[0]?.manicuristIds?.[0] ?? null;
     const name = clientName.trim() || 'Walk-in';
 
     if (mode === 'edit' && editing) {
@@ -47,8 +134,10 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         updates: {
           clientName: name,
           clientPhone: clientPhone.trim(),
-          service,
-          manicuristId: manicuristId || null,
+          service: services[0],
+          services,
+          serviceRequests,
+          manicuristId: firstRequestedId,
           date,
           time,
           notes: notes.trim(),
@@ -59,8 +148,10 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         id: crypto.randomUUID(),
         clientName: name,
         clientPhone: clientPhone.trim(),
-        service,
-        manicuristId: manicuristId || null,
+        service: services[0],
+        services,
+        serviceRequests,
+        manicuristId: firstRequestedId,
         date,
         time,
         notes: notes.trim(),
@@ -84,11 +175,11 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       onClose={handleClose}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+
+        {/* Client info */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-              CLIENT NAME
-            </label>
+            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">CLIENT NAME</label>
             <input
               type="text"
               value={clientName}
@@ -98,9 +189,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             />
           </div>
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-              PHONE
-            </label>
+            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">PHONE</label>
             <input
               type="tel"
               value={clientPhone}
@@ -111,42 +200,132 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           </div>
         </div>
 
+        {/* Services */}
         <div>
-          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-            SERVICE
-          </label>
-          <select
-            value={service}
-            onChange={(e) => setService(e.target.value as ServiceType)}
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 bg-white transition-all"
-          >
-            {ALL_SERVICES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider">SERVICES</label>
+          </div>
+
+          {/* Category + service picker */}
+          <div className="flex gap-2 mb-3">
+            <div className="flex-1">
+              <select
+                value={selectedCategory}
+                onChange={(e) => { setSelectedCategory(e.target.value); setSelectedServiceId(''); }}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer"
+              >
+                <option value="">Category...</option>
+                {availableCategories.map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1">
+              <select
+                value={selectedServiceId}
+                onChange={(e) => setSelectedServiceId(e.target.value)}
+                disabled={!selectedCategory}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
+              >
+                <option value="">Service...</option>
+                {servicesInCategory.map((svc) => (
+                  <option key={svc.id} value={svc.id}>{svc.name}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddService}
+              disabled={!selectedServiceId}
+              className="px-3 py-2.5 rounded-xl bg-pink-500 text-white font-mono text-xs font-semibold hover:bg-pink-600 disabled:bg-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed transition-all"
+            >
+              Add
+            </button>
+          </div>
+
+          {/* Selected services list */}
+          {selectedServices.length === 0 ? (
+            <div className="text-center py-6 border-2 border-dashed border-gray-200 rounded-xl">
+              <p className="font-mono text-xs text-gray-400">No services added yet</p>
+              <p className="font-mono text-[10px] text-gray-300 mt-1">Select a category and service above</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {selectedServices.map((s, idx) => {
+                const isExpanded = expandedIndex === idx;
+                const skilledStaff = allStaffSorted.filter((m) => m.skills.includes(s.serviceName));
+                const displayStaff = skilledStaff.length > 0 ? skilledStaff : allStaffSorted;
+
+                return (
+                  <div key={idx}>
+                    <div className="flex items-center justify-between px-3.5 py-3 rounded-xl border-2 border-pink-300 bg-pink-50 shadow-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-mono text-xs font-semibold text-pink-700">{s.serviceName}</p>
+                          {s.requestedManicuristIds.length > 0 && (
+                            <span className="font-mono text-[10px] text-pink-500">
+                              → {s.requestedManicuristIds.map((id) => state.manicurists.find((m) => m.id === id)?.name).filter(Boolean).join(', ')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedIndex(isExpanded ? null : idx)}
+                          className="p-1 rounded hover:bg-pink-100 transition-colors font-mono text-[10px] text-pink-500 font-semibold"
+                        >
+                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveService(idx)}
+                          className="p-1 rounded hover:bg-pink-100 transition-colors"
+                        >
+                          <X size={14} className="text-pink-400" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white">
+                        <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">REQUEST MANICURIST (OPTIONAL)</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {displayStaff.map((m) => {
+                            const isSelected = s.requestedManicuristIds.includes(m.id);
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => toggleManicurist(idx, m.id)}
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[10px] font-semibold transition-all ${
+                                  isSelected
+                                    ? 'bg-pink-500 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                }`}
+                              >
+                                <span
+                                  className="w-2 h-2 rounded-full shrink-0"
+                                  style={{ backgroundColor: m.color }}
+                                />
+                                {m.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        <div>
-          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-            MANICURIST (OPTIONAL)
-          </label>
-          <select
-            value={manicuristId}
-            onChange={(e) => setManicuristId(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 bg-white transition-all"
-          >
-            <option value="">Any available</option>
-            {state.manicurists.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </div>
-
+        {/* Date & Time */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-              DATE
-            </label>
+            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">DATE</label>
             <input
               type="date"
               value={date}
@@ -157,9 +336,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             />
           </div>
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-              TIME
-            </label>
+            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">TIME</label>
             <input
               type="time"
               value={time}
@@ -170,10 +347,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           </div>
         </div>
 
+        {/* Notes */}
         <div>
-          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-            NOTES
-          </label>
+          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">NOTES</label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
@@ -185,7 +361,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
         <button
           type="submit"
-          className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 active:scale-[0.98] transition-all"
+          disabled={selectedServices.length === 0}
+          className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
         >
           {mode === 'edit' ? 'SAVE CHANGES' : 'BOOK APPOINTMENT'}
         </button>

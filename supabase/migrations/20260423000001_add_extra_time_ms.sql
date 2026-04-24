@@ -1,0 +1,2 @@
+ALTER TABLE queue_entries
+  ADD COLUMN IF NOT EXISTS extra_time_ms INTEGER NOT NULL DEFAULT 0;

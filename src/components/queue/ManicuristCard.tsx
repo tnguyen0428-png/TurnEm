@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff } from 'lucide-react';
+import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff, Clock } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
 import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
 import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
+import { useElapsedTime } from '../../hooks/useElapsedTime';
 
 interface ManicuristCardProps {
   manicurist: Manicurist;
@@ -36,6 +37,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
   const [bellSending, setBellSending] = useState(false);
   const statusConfig = getStatusConfig(manicurist.status);
+  const breakElapsed = useElapsedTime(manicurist.status === 'break' ? (manicurist.breakStartTime ?? null) : null);
 
   function handleClockToggle() {
     if (manicurist.clockedIn) {
@@ -103,7 +105,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
     )}
     {showClockOutConfirm && (
       <ConfirmDialog
-        message={`Clock out ${manicurist.name}? Their turn count will reset to 0.`}
+        message={`Clock out "${manicurist.name.toUpperCase()}"?`}
         confirmLabel="Clock Out"
         onConfirm={handleClockOutConfirm}
         onCancel={() => setShowClockOutConfirm(false)}
@@ -286,20 +288,29 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
               <p className="font-mono text-[10px] font-semibold text-red-700 truncate">
                 {currentClient.clientName}
               </p>
-              <button
-                onClick={handleEditClient}
-                className="flex items-center justify-center p-0.5 rounded hover:bg-red-100 transition-colors"
-                title="Edit client services"
-              >
-                <Edit size={12} className="text-red-500" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleEditClient}
+                  className="flex items-center justify-center p-0.5 rounded hover:bg-red-100 transition-colors"
+                  title="Edit client services"
+                >
+                  <Edit size={12} className="text-red-500" />
+                </button>
+              </div>
             </div>
-            <div className="mb-1">
+            <div className="flex items-center gap-1.5 mb-1">
               <CountdownBadge
                 startedAt={currentClient.startedAt}
                 totalDurationMs={clientDurationMs}
                 status={manicurist.status}
               />
+              <button
+                onClick={() => dispatch({ type: 'UPDATE_CLIENT', id: currentClient.id, updates: { extraTimeMs: (currentClient.extraTimeMs || 0) + 5 * 60000 } })}
+                className="flex items-center justify-center px-1.5 py-0.5 rounded font-mono text-[9px] font-bold bg-red-100 text-red-600 hover:bg-red-200 active:scale-95 transition-all"
+                title="Add 5 minutes"
+              >
+                +5m
+              </button>
             </div>
             {currentClient.services.length > 0 && (
               <div className="flex flex-wrap gap-0.5 mt-1">
@@ -313,6 +324,14 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {manicurist.status === 'break' && breakElapsed && (
+          <div className="bg-amber-50 rounded-lg px-2 py-1.5 mb-1.5 flex items-center gap-1.5">
+            <Clock size={11} className="text-amber-500 shrink-0" />
+            <span className="font-mono text-[11px] font-bold text-amber-700 tabular-nums">{breakElapsed}</span>
+            <span className="font-mono text-[9px] text-amber-500 tracking-wider">ON BREAK</span>
           </div>
         )}
 

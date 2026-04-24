@@ -32,6 +32,8 @@ export interface Manicurist {
   hasWax3: boolean;
   timeAdjustments: Record<string, number>;
   pinCode: string;
+  breakStartTime: number | null;
+  smsOptIn: boolean;
 }
 
 export interface ServiceRequest {
@@ -53,6 +55,7 @@ export interface QueueEntry {
   arrivedAt: number;
   startedAt: number | null;
   completedAt: number | null;
+  extraTimeMs: number;
 }
 
 export interface CompletedEntry {
@@ -66,14 +69,18 @@ export interface CompletedEntry {
   startedAt: number;
   completedAt: number;
   requestedServices?: ServiceType[];
+  isAppointment?: boolean;
+  isRequested?: boolean;
 }
 
 export interface Appointment {
   id: string;
   clientName: string;
   clientPhone: string;
-  service: ServiceType;
-  manicuristId: string | null;
+  service: ServiceType;        // kept for backward compat
+  services: ServiceType[];     // all services
+  serviceRequests: ServiceRequest[];  // per-service manicurist requests
+  manicuristId: string | null; // kept for backward compat (first requested manicurist)
   date: string;
   time: string;
   notes: string;

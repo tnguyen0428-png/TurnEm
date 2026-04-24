@@ -57,11 +57,17 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
       return aTime - bTime;
     });
 
-  const allEligible = sam ? [sam, ...baseList] : baseList;
+  const fullEligible = sam ? [sam, ...baseList] : baseList;
+
+  // When a specific manicurist is requested, lock the list to only that person
+  const allEligible = requestedIds.size > 0
+    ? fullEligible.filter(m => requestedIds.has(m.id))
+    : fullEligible;
 
   const suggestedId = getSuggestedManicurist(client.services, state.manicurists, state.salonServices)?.id ?? null;
 
-  const showSamPrompt = !!sam && sam.status === 'busy' && !dismissedSamPrompt;
+  // No Sam prompt when client has already requested a specific manicurist
+  const showSamPrompt = !!sam && sam.status === 'busy' && !dismissedSamPrompt && requestedIds.size === 0;
   const samCurrentClient = sam ? state.queue.find(c => c.id === sam.currentClient) ?? null : null;
   const samDurationMs = sam ? getClientDurationMs(sam, state.queue, state.salonServices) : 0;
   const { display: samCountdownDisplay } = useCountdown(samCurrentClient?.startedAt ?? null, samDurationMs);
@@ -135,8 +141,8 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
       ).then((pushResult) => {
         if (pushResult.success) {
           showSmsToast('sent');
-        } else if (manicurist.phone) {
-          // Fall back to SMS if push fails
+        } else if (manicurist.phone && manicurist.smsOptIn) {
+          // Fall back to SMS if push fails and manicurist has opted in
           sendTurnAlert(
             manicurist.phone,
             manicurist.name,
@@ -261,7 +267,7 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                         {isSamPreferred && !requestedIds.has(m.id) && <Badge label="PREFERRED" variant="indigo" />}
                         {!isSamPreferred && !isAlmostDone && requestedIds.has(m.id) && <Badge label="REQUESTED" variant="pink" />}
                         {!isSamPreferred && !isAlmostDone && m.id === suggestedId && is4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
-                        {!isSamPreferred && !isAlmostDone && m.id === suggestedId && !is4thSpecial && <Badge label="RECOMMENDED" variant="green" />}
+                        {!isSamPreferred && !isAlmostDone && m.id === suggestedId && !is4thSpecial && requestedIds.size === 0 && <Badge label="RECOMMENDED" variant="green" />}
                         {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
                       </div>
                       <div className="flex items-center gap-4">

@@ -119,6 +119,8 @@ export default function StaffModal({ mode }: StaffModalProps) {
         hasWax3: false,
         timeAdjustments,
         pinCode: pinCode.trim(),
+        breakStartTime: null,
+        smsOptIn: false,
       };
       dispatch({ type: 'ADD_MANICURIST', manicurist: newManicurist });
     }
@@ -192,13 +194,13 @@ export default function StaffModal({ mode }: StaffModalProps) {
           <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-2">
             COLOR
           </label>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-1.5 flex-wrap">
             {STAFF_COLORS.map((c) => (
               <button
                 key={c}
                 type="button"
                 onClick={() => setColor(c)}
-                className={`w-9 h-9 rounded-xl transition-all duration-150 ${
+                className={`w-7 h-7 rounded-lg transition-all duration-150 ${
                   color === c
                     ? 'ring-2 ring-offset-2 ring-gray-400 scale-110'
                     : 'hover:scale-105'

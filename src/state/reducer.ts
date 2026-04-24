@@ -81,7 +81,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         manicurists: state.manicurists.map((m) =>
           m.id === action.id
-            ? { ...m, clockedIn: false, clockInTime: null, status: 'available' as const, currentClient: null, totalTurns: 0 }
+            ? { ...m, clockedIn: false, clockInTime: null, status: 'available' as const, currentClient: null }
             : m
         ),
         queue: clientToReturn
@@ -98,7 +98,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         manicurists: state.manicurists.map((m) =>
-          m.id === action.id ? { ...m, status: 'break' as const } : m
+          m.id === action.id ? { ...m, status: 'break' as const, breakStartTime: Date.now() } : m
         ),
       };
 
@@ -106,7 +106,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         manicurists: state.manicurists.map((m) =>
-          m.id === action.id ? { ...m, status: 'available' as const } : m
+          m.id === action.id ? { ...m, status: 'available' as const, breakStartTime: null } : m
         ),
       };
 
@@ -269,6 +269,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const requestedServices = (client.serviceRequests || [])
         .filter((r) => r.manicuristIds && r.manicuristIds.includes(action.manicuristId))
         .map((r) => r.service);
+      // Whole-entry request flag: set when the client was requested AND this manicurist
+      // is the requested one. Covers the SingleServiceAssign path where isRequested is
+      // set but serviceRequests isn't populated per-service.
+      const wholeEntryRequested = !!client.isRequested &&
+        client.requestedManicuristId === action.manicuristId;
       const completedEntry = {
         id: crypto.randomUUID(),
         clientName: client.clientName,
@@ -280,6 +285,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         startedAt: client.startedAt ?? now,
         completedAt: now,
         requestedServices: requestedServices.length > 0 ? requestedServices : undefined,
+        isAppointment: !!client.isAppointment,
+        isRequested: wholeEntryRequested,
       };
       return {
         ...state,
