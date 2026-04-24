@@ -24,7 +24,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   const todayStr = getTodayLA();
   const isToday = selectedDate === todayStr;
 
-  // Fetch history for a past date from daily_history table
   useEffect(() => {
     if (isToday) { setHistoryEntries([]); return; }
     setHistoryLoading(true);
@@ -56,7 +55,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     const d = new Date(dateStr + 'T12:00:00');
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   }
-
   // Poll Supabase every 3s for live data (staff mode sync-back is disabled in AppContext)
   useEffect(() => {
     let count = 0;

@@ -36,17 +36,6 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
   const [bellSending, setBellSending] = useState(false);
-    const [isDoneSubmitting, setIsDoneSubmitting] = useState(false);
-    const [breakNow, setBreakNow] = useState(() => Date.now());
-    useEffect(() => {
-          if (manicurist.status !== 'break' || !manicurist.breakStartTime) return;
-          const id = setInterval(() => setBreakNow(Date.now()), 1000);
-          return () => clearInterval(id);
-    }, [manicurist.status, manicurist.breakStartTime]);
-    const breakElapsedSecs = manicurist.breakStartTime && manicurist.status === 'break'
-      ? Math.floor((breakNow - manicurist.breakStartTime) / 1000) : null;
-    const breakDisplay = breakElapsedSecs !== null
-      ? `${Math.floor(breakElapsedSecs / 60)}:${String(breakElapsedSecs % 60).padStart(2, '0')}` : null;
   const statusConfig = getStatusConfig(manicurist.status);
   const breakElapsed = useElapsedTime(manicurist.status === 'break' ? (manicurist.breakStartTime ?? null) : null);
 
@@ -72,9 +61,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   }
 
   function handleDone() {
-        if (isDoneSubmitting) return;
-        setIsDoneSubmitting(true);
-    dispatch({ type: 'COMPLETE_SERVICE', manicuristId: manicurist.id });
+        dispatch({ type: 'COMPLETE_SERVICE', manicuristId: manicurist.id });
   }
 
   function handleCancel() {
@@ -295,14 +282,13 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
           <p className="font-mono text-[9px] text-gray-400 tracking-wider mt-0.5">TURNS</p>
         </div>
 
-        {manicurist.status === 'break' && breakDisplay && (
-                <div className="bg-amber-50 rounded-lg p-1.5 mb-1.5 text-center">
-                            <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-amber-700">
-                                          <Coffee size={11} />
-                              {breakDisplay}
-                            </span>
-                </div>
-                      )}
+        {manicurist.status === 'break' && breakElapsed && (
+          <div className="bg-amber-50 rounded-lg px-2 py-1.5 mb-1.5 flex items-center gap-1.5">
+            <Clock size={11} className="text-amber-500 shrink-0" />
+            <span className="font-mono text-[11px] font-bold text-amber-700 tabular-nums">{breakElapsed}</span>
+            <span className="font-mono text-[9px] text-amber-500 tracking-wider">ON BREAK</span>
+          </div>
+        )}
         {manicurist.status === 'busy' && currentClient && (
           <div className="bg-red-50 rounded-lg p-1.5 mb-1.5">
             <div className="flex items-center justify-between mb-1">
@@ -368,11 +354,10 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
               </button>
               <button
                 onClick={handleDone}
-                                disabled={isDoneSubmitting}
-                className="flex-1 flex items-center justify-center gap-0.5 py-1.5 rounded-lg bg-emerald-500 text-white font-mono text-[10px] font-semibold hover:bg-emerald-600 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 flex items-center justify-center gap-0.5 py-1.5 rounded-lg bg-emerald-500 text-white font-mono text-[10px] font-semibold hover:bg-emerald-600 active:scale-[0.98] transition-all"
               >
                 <CheckCircle size={11} />
-                {isDoneSubmitting ? 'SAVING...' : 'DONE'}
+                DONE
               </button>
             </>
           ) : (

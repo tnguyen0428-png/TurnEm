@@ -3,6 +3,7 @@ import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_CATEGORIES } from '../../constants/services';
+import { getTodayLA } from '../../utils/time';
 import type { ServiceType, ServiceRequest, Appointment } from '../../types';
 
 interface AppointmentModalProps {
@@ -23,7 +24,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     ? state.appointments.find((a) => a.id === state.editingAppointmentId)
     : null;
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayLA();
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -49,12 +50,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     return sortedServices.filter((s) => s.category === selectedCategory);
   }, [sortedServices, selectedCategory]);
 
-  const clockedInStaff = useMemo(
-    () => [...state.manicurists].filter((m) => m.clockedIn).sort((a, b) => a.name.localeCompare(b.name)),
-    [state.manicurists]
-  );
-
-  // All staff sorted alphabetically for request picker (even not clocked in)
   const allStaffSorted = useMemo(
     () => [...state.manicurists].sort((a, b) => a.name.localeCompare(b.name)),
     [state.manicurists]
@@ -68,7 +63,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       setTime(editing.time);
       setNotes(editing.notes);
 
-      // Restore selected services from editing appointment
       const svcs = editing.services?.length ? editing.services : [editing.service];
       const restored: SelectedService[] = svcs.map((svcName) => {
         const svc = state.salonServices.find((s) => s.name === svcName);
@@ -206,7 +200,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider">SERVICES</label>
           </div>
 
-          {/* Category + service picker */}
           <div className="flex gap-2 mb-3">
             <div className="flex-1">
               <select
@@ -243,7 +236,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             </button>
           </div>
 
-          {/* Selected services list */}
           {selectedServices.length === 0 ? (
             <div className="text-center py-6 border-2 border-dashed border-gray-200 rounded-xl">
               <p className="font-mono text-xs text-gray-400">No services added yet</p>
@@ -273,9 +265,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                         <button
                           type="button"
                           onClick={() => setExpandedIndex(isExpanded ? null : idx)}
-                          className="p-1 rounded hover:bg-pink-100 transition-colors font-mono text-[10px] text-pink-500 font-semibold"
+                          className="p-1 rounded hover:bg-pink-100 transition-colors"
                         >
-                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          {isExpanded ? <ChevronUp size={14} className="text-pink-500" /> : <ChevronDown size={14} className="text-pink-500" />}
                         </button>
                         <button
                           type="button"
@@ -299,15 +291,10 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                                 type="button"
                                 onClick={() => toggleManicurist(idx, m.id)}
                                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[10px] font-semibold transition-all ${
-                                  isSelected
-                                    ? 'bg-pink-500 text-white'
-                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                  isSelected ? 'bg-pink-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                 }`}
                               >
-                                <span
-                                  className="w-2 h-2 rounded-full shrink-0"
-                                  style={{ backgroundColor: m.color }}
-                                />
+                                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
                                 {m.name}
                               </button>
                             );
@@ -330,8 +317,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              min={today}
-              required
               className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>

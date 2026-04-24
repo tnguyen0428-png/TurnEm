@@ -5,6 +5,7 @@ import Badge from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
+import { getTodayLA } from '../../utils/time';
 import type { Appointment, QueueEntry, ServiceType } from '../../types';
 
 const STATUS_CONFIG: Record<Appointment['status'], { label: string; variant: 'green' | 'blue' | 'amber' | 'pink' | 'red' | 'gray' }> = {
@@ -30,7 +31,7 @@ function formatTimeDisplay(time: string): string {
 export default function AppointmentsScreen() {
   const { state, dispatch } = useApp();
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
+  const [filterDate, setFilterDate] = useState(getTodayLA());
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
   const filtered = state.appointments
