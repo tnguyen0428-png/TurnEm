@@ -21,3 +21,16 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Claude Code worktrees
+.claude/worktrees/
+
+# Build artifacts
+tsconfig.app.tsbuildinfo
+tsconfig.node.tsbuildinfo
+vite.config.ts.timestamp-*.mjs
+
+# Local dev files
+break-preview.html
+PENDING_DEPLOY.md
+deploy.bat
