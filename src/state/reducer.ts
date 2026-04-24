@@ -242,7 +242,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ),
         manicurists: state.manicurists.map((m) =>
           m.id === action.manicuristId
-            ? { ...m, status: 'available' as const, currentClient: null, totalTurns: Math.max(0, m.totalTurns - turnDeduction), hasFourthPositionSpecial: false }
+            ? { ...m, status: 'available' as const, currentClient: null, totalTurns: Math.max(0, m.totalTurns - turnDeduction), hasFourthPositionSpecial: false, hasCheck2: false, hasCheck3: false }
             : m
         ),
       };
