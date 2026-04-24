@@ -39,7 +39,7 @@ function mapDbManicurist(row: Record<string, unknown>): Manicurist {
     hasWax3: (row.has_wax3 as boolean) || false,
     timeAdjustments: (row.time_adjustments as Record<string, number>) || {},
     pinCode: (row.pin_code as string) || '',
-    breakStartTime: row.break_start_time ? new Date(row.break_start_time as string).getTime() : null,
+    breakStartTime: row.break_start_time ? Number(row.break_start_time) : null,
     smsOptIn: (row.sms_opt_in as boolean) || false,
   };
 }
@@ -230,7 +230,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           has_wax3: m.hasWax3,
           time_adjustments: m.timeAdjustments || {},
           pin_code: m.pinCode || null,
-          break_start_time: m.breakStartTime ? new Date(m.breakStartTime).toISOString() : null,
+          break_start_time: m.breakStartTime ?? null,
           sms_opt_in: m.smsOptIn || false,
         });
         if (error) console.error('[loadInitialData] manicurists seed error:', error);
@@ -543,7 +543,7 @@ async function syncManicurists(manicurists: Manicurist[], onError: (msg: string)
       has_wax3: m.hasWax3,
       time_adjustments: m.timeAdjustments || {},
       pin_code: m.pinCode || null,
-      break_start_time: m.breakStartTime ? new Date(m.breakStartTime).toISOString() : null,
+      break_start_time: m.breakStartTime ?? null,
       sms_opt_in: m.smsOptIn || false,
     }, { onConflict: 'id' }));
     if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed â data may not be saved. Check connection.'); }

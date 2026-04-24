@@ -80,7 +80,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 hasCheck2: r.has_check2 || false, hasCheck3: r.has_check3 || false,
                 hasWax: r.has_wax || false, hasWax2: r.has_wax2 || false, hasWax3: r.has_wax3 || false,
                 timeAdjustments: r.time_adjustments || {}, pinCode: r.pin_code || '',
-                breakStartTime: r.break_start_time ? new Date(r.break_start_time).getTime() : null,
+                breakStartTime: r.break_start_time ? Number(r.break_start_time) : null,
                 smsOptIn: r.sms_opt_in || false,
               })),
               queue: queueRows.map((r: any) => ({
