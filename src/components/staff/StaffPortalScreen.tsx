@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, Zap, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
@@ -14,9 +14,6 @@ interface StaffPortalScreenProps {
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
   const { state, dispatch } = useApp();
   const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
-  const [pollCount, setPollCount] = useState(0);
-  const [lastPollTime, setLastPollTime] = useState<string>('—');
-  const [pollError, setPollError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(getTodayLA());
   const [historyEntries, setHistoryEntries] = useState<CompletedEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -57,7 +54,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   }
   // Poll Supabase every 3s for live data (staff mode sync-back is disabled in AppContext)
   useEffect(() => {
-    let count = 0;
     const interval = setInterval(async () => {
       try {
         const [{ data: staffRows, error: staffErr }, { data: queueRows, error: queueErr }, { data: completedRows }] = await Promise.all([
@@ -66,14 +62,10 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           supabase.from('completed_services').select('*'),
         ]);
         if (staffErr || queueErr) {
-          setPollError(`DB error: ${staffErr?.message || queueErr?.message}`);
+          console.error('[staff poll] DB error:', staffErr?.message || queueErr?.message);
           return;
         }
         if (staffRows && queueRows) {
-          count++;
-          setPollCount(count);
-          setLastPollTime(new Date().toLocaleTimeString());
-          setPollError(null);
           dispatch({
             type: 'LOAD_STATE',
             state: {
@@ -120,7 +112,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           });
         }
       } catch (e) {
-        setPollError(e instanceof Error ? e.message : String(e));
+        console.error('[staff poll] error:', e);
       }
     }, 3000);
     return () => clearInterval(interval);
@@ -421,17 +413,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               {soundEnabled ? 'ON' : 'OFF'}
             </button>
             <button
-              onClick={() => {
-                handleScreenTap();
-                setAlert({ type: 'assigned', clientName: 'TEST CLIENT', services: ['Test Service'] });
-                playAssignedSound();
-              }}
-              className="flex items-center gap-1 px-2.5 py-2 rounded-lg border border-purple-200 text-purple-600 bg-purple-50 font-mono text-xs font-semibold transition-all"
-            >
-              <Zap size={14} />
-              TEST
-            </button>
-            <button
               onClick={onLogout}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
             >
@@ -484,79 +465,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             )}
           </div>
         </div>
-
-        {/* Debug: Polling Status */}
-        <div className="bg-gray-800 rounded-xl p-3 text-white font-mono text-[10px] space-y-1">
-          <div className="flex justify-between">
-            <span className="text-gray-400">Polling:</span>
-            <span className={pollError ? 'text-red-400' : 'text-emerald-400'}>
-              {pollError ? `ERROR: ${pollError}` : `OK (${pollCount} polls)`}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Last update:</span>
-            <span>{lastPollTime}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Status:</span>
-            <span className={manicurist.status === 'busy' ? 'text-red-400' : manicurist.status === 'break' ? 'text-amber-400' : 'text-emerald-400'}>
-              {manicurist.status}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">currentClient:</span>
-            <span>{manicurist.currentClient || 'null'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Queue pos:</span>
-            <span>{queuePosition ?? 'null'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Audio:</span>
-            <span className={audioReady ? 'text-emerald-400' : 'text-red-400'}>
-              {audioReady ? 'READY' : 'NOT ACTIVATED'}
-            </span>
-          </div>
-        </div>
-
-        {/* Push Notifications */}
-        {isPushSupported() && (
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-mono text-xs font-semibold text-gray-900">Push Notifications</p>
-                <p className="font-mono text-[10px] text-gray-400 mt-0.5">
-                  {pushStatus === 'subscribed' || getPermissionState() === 'granted'
-                    ? 'You will be notified when a client is assigned to you'
-                    : 'Enable to get notified when a client is assigned to you'
-                  }
-                </p>
-              </div>
-              {pushStatus === 'subscribed' || getPermissionState() === 'granted' ? (
-                <span className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 font-mono text-xs font-semibold">
-                  <Bell size={14} /> ACTIVE
-                </span>
-              ) : (
-                <button
-                  onClick={handleEnablePush}
-                  disabled={pushStatus === 'subscribing'}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-xs font-semibold transition-all ${
-                    pushStatus === 'error'
-                      ? 'bg-red-50 text-red-500 border border-red-200'
-                      : 'bg-indigo-500 text-white hover:bg-indigo-600 active:scale-[0.98]'
-                  }`}
-                >
-                  {pushStatus === 'subscribing'
-                    ? 'ENABLING...'
-                    : pushStatus === 'error'
-                    ? 'FAILED — TAP TO RETRY'
-                    : <><BellOff size={14} /> ENABLE</>
-                  }
-                </button>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* SMS Opt-In */}
         {manicurist.phone && (

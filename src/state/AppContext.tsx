@@ -509,9 +509,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
+async function withRetry<T>(
+  fn: () => Promise<{ data?: T; error: unknown }>,
+  retries = 3,
+  delayMs = 2000
+): Promise<{ data?: T; error: unknown }> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const result = await fn();
+    if (!result.error) return result;
+    if (attempt < retries) await new Promise(res => setTimeout(res, delayMs * attempt));
+  }
+  return fn();
+}
+
 async function syncManicurists(manicurists: Manicurist[], onError: (msg: string) => void) {
   for (const m of manicurists) {
-    const { error } = await supabase.from('manicurists').upsert({
+    const { error } = await withRetry(() => supabase.from('manicurists').upsert({
       id: m.id,
       name: m.name,
       color: m.color,
@@ -532,21 +545,21 @@ async function syncManicurists(manicurists: Manicurist[], onError: (msg: string)
       pin_code: m.pinCode || null,
       break_start_time: m.breakStartTime ? new Date(m.breakStartTime).toISOString() : null,
       sms_opt_in: m.smsOptIn || false,
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id' }));
     if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 }
 
 async function syncQueue(queue: QueueEntry[], onError: (msg: string) => void) {
-  const { data: existing } = await supabase.from('queue_entries').select('id');
+  const { data: existing } = await withRetry(() => supabase.from('queue_entries').select('id'));
   const currentIds = new Set(queue.map((c) => c.id));
   const toDelete = (existing || []).filter((r: { id: string }) => !currentIds.has(r.id));
   for (const r of toDelete) {
-    const { error } = await supabase.from('queue_entries').delete().eq('id', r.id);
+    const { error } = await withRetry(() => supabase.from('queue_entries').delete().eq('id', r.id));
     if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
   for (const c of queue) {
-    const { error } = await supabase.from('queue_entries').upsert({
+    const { error } = await withRetry(() => supabase.from('queue_entries').upsert({
       id: c.id,
       client_name: c.clientName,
       service: c.services[0] || '',
@@ -562,7 +575,7 @@ async function syncQueue(queue: QueueEntry[], onError: (msg: string) => void) {
       started_at: c.startedAt ? new Date(c.startedAt).toISOString() : null,
       completed_at: c.completedAt ? new Date(c.completedAt).toISOString() : null,
       extra_time_ms: c.extraTimeMs || 0,
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id' }));
     if (error) { console.error('[syncQueue] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 }
@@ -574,7 +587,7 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
   // Handle deletes: entries in prev but not in current
   const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
   if (removedIds.length > 0) {
-    const { error } = await supabase.from('completed_services').delete().in('id', removedIds);
+    const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', removedIds));
     if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 
@@ -599,7 +612,7 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
         JSON.stringify(previous.requestedServices ?? []) === JSON.stringify(c.requestedServices ?? []);
       if (unchanged) continue;
     }
-    const { error } = await supabase.from('completed_services').upsert({
+    const { error } = await withRetry(() => supabase.from('completed_services').upsert({
       id: c.id,
       client_name: c.clientName,
       service: c.services[0] || '',
@@ -613,7 +626,7 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
       requested_services: c.requestedServices ?? [],
       is_appointment: !!c.isAppointment,
       is_requested: !!c.isRequested,
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id' }));
     if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 }
@@ -637,12 +650,12 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
 
   const deleted = prev.filter((a) => !currentIds.has(a.id));
   for (const a of deleted) {
-    const { error } = await supabase.from('appointments').delete().eq('id', a.id);
+    const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
     if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
 
   for (const a of appointments) {
-    const { error } = await supabase.from('appointments').upsert({
+    const { error } = await withRetry(() => supabase.from('appointments').upsert({
       id: a.id,
       client_name: a.clientName,
       client_phone: a.clientPhone || null,
@@ -655,7 +668,7 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
       notes: a.notes || null,
       status: a.status,
       created_at: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id' }));
     if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 }
@@ -664,11 +677,11 @@ async function syncSalonServices(salonServices: SalonService[], prev: SalonServi
   const currentIds = new Set(salonServices.map((s) => s.id));
   const deleted = prev.filter((s) => !currentIds.has(s.id));
   for (const s of deleted) {
-    const { error } = await supabase.from('salon_services').delete().eq('id', s.id);
+    const { error } = await withRetry(() => supabase.from('salon_services').delete().eq('id', s.id));
     if (error) { console.error('[syncSalonServices] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
   for (const s of salonServices) {
-    const { error } = await supabase.from('salon_services').upsert({
+    const { error } = await withRetry(() => supabase.from('salon_services').upsert({
       id: s.id,
       name: s.name,
       turn_value: s.turnValue,
@@ -678,14 +691,14 @@ async function syncSalonServices(salonServices: SalonService[], prev: SalonServi
       category: s.category,
       sort_order: s.sortOrder,
       is_fourth_position_special: s.isFourthPositionSpecial,
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id' }));
     if (error) { console.error('[syncSalonServices] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 }
 
 async function syncTurnCriteria(turnCriteria: TurnCriteria[], onError: (msg: string) => void) {
   for (const c of turnCriteria) {
-    const { error } = await supabase.from('turn_criteria').upsert({
+    const { error } = await withRetry(() => supabase.from('turn_criteria').upsert({
       id: c.id,
       name: c.name,
       description: c.description,
@@ -693,7 +706,7 @@ async function syncTurnCriteria(turnCriteria: TurnCriteria[], onError: (msg: str
       enabled: c.enabled,
       type: c.type,
       value: c.value,
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id' }));
     if (error) { console.error('[syncTurnCriteria] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 }
@@ -702,15 +715,15 @@ async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[]
   const currentDates = new Set(calendarDays.map((d) => d.date));
   const deleted = prev.filter((d) => !currentDates.has(d.date));
   for (const d of deleted) {
-    const { error } = await supabase.from('calendar_days').delete().eq('date', d.date);
+    const { error } = await withRetry(() => supabase.from('calendar_days').delete().eq('date', d.date));
     if (error) { console.error('[syncCalendarDays] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
   for (const d of calendarDays) {
-    const { error } = await supabase.from('calendar_days').upsert({
+    const { error } = await withRetry(() => supabase.from('calendar_days').upsert({
       date: d.date,
       status: d.status,
       note: d.note,
-    }, { onConflict: 'date' });
+    }, { onConflict: 'date' }));
     if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 }
