@@ -41,7 +41,7 @@ function timeInputToTimestamp(val: string): number | null {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0).getTime();
 }
 
-// ─── Sortable clock-in row ────────────────────────────────────────────────────
+// âââ Sortable clock-in row ââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 interface SortableClockInRowProps {
   manicurist: Pick<Manicurist, 'id' | 'name' | 'color' | 'clockInTime'>;
@@ -103,7 +103,7 @@ function SortableClockInRow({
         {manicurist.name}
       </span>
 
-      {/* clock-in time — editable */}
+      {/* clock-in time â editable */}
       {isEditing ? (
         <div className="flex items-center gap-1.5">
           <input
@@ -134,7 +134,7 @@ function SortableClockInRow({
           className="flex items-center gap-1.5 font-mono text-[11px] text-gray-500 hover:text-pink-500 border border-gray-200 hover:border-pink-200 rounded-lg px-2 py-1 transition-colors"
         >
           <Clock size={10} />
-          {manicurist.clockInTime ? formatTime(manicurist.clockInTime) : '—'}
+          {manicurist.clockInTime ? formatTime(manicurist.clockInTime) : 'â'}
           <Pencil size={9} className="ml-0.5 opacity-50" />
         </button>
       )}
@@ -142,7 +142,7 @@ function SortableClockInRow({
   );
 }
 
-// ─── Clock-in order section ────────────────────────────────────────────────────
+// âââ Clock-in order section ââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 interface ClockInOrderSectionProps {
   manicurists: Manicurist[];
@@ -224,7 +224,7 @@ function ClockInOrderSection({ manicurists, dispatch }: ClockInOrderSectionProps
       <div className="flex items-center gap-2 mb-3">
         <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold">CLOCK IN ORDER</h3>
         <span className="font-mono text-[9px] text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 tracking-wider">
-          DRAG TO REORDER · TAP TIME TO EDIT
+          DRAG TO REORDER Â· TAP TIME TO EDIT
         </span>
       </div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -249,7 +249,7 @@ function ClockInOrderSection({ manicurists, dispatch }: ClockInOrderSectionProps
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function groupServices(services: string[]): [string, number][] {
   const map = new Map<string, number>();
@@ -449,7 +449,7 @@ export default function HistoryScreen() {
       ? state.completed
       : (todayArchivedEntries ?? []);
 
-  // Bar chart data — shown whenever manicurists are clocked in, even before any services complete
+  // Bar chart data â shown whenever manicurists are clocked in, even before any services complete
   const turnsPerManicurist = useMemo(() => {
     if (!viewingPastDay) {
       const clockedIn = state.manicurists
@@ -534,7 +534,7 @@ export default function HistoryScreen() {
               }`}
             >
               <Save size={14} />
-              {saving ? 'SAVING...' : saveError ? 'SAVE FAILED — RETRY' : 'SAVE TODAY'}
+              {saving ? 'SAVING...' : saveError ? 'SAVE FAILED â RETRY' : 'SAVE TODAY'}
             </button>
           )}
           <button
@@ -644,7 +644,7 @@ export default function HistoryScreen() {
         </div>
       )}
 
-      {/* Clock-in order — drag to reorder, tap time to edit (today only) */}
+      {/* Clock-in order â drag to reorder, tap time to edit (today only) */}
       {!viewingPastDay && (
         <ClockInOrderSection manicurists={state.manicurists} dispatch={dispatch} />
       )}
