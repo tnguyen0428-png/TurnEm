@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { Plus, Trash2, GripVertical } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
+import { formatTimeOfDay } from '../../utils/time';
 import type { Appointment, Manicurist, QueueEntry, ServiceType } from '../../types';
 
 const START_HOUR   = 8;
@@ -62,11 +63,6 @@ function slotType(i: number): 'hour' | 'half' | 'quarter' {
   if (m === 0) return 'hour';
   if (m === 30) return 'half';
   return 'quarter';
-}
-
-function fmtTime(time: string): string {
-  const [h, m] = time.split(':').map(Number);
-  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
 interface ServiceBlock {
@@ -427,7 +423,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
                 {height > 56 && (
                   <p className="font-mono text-[11px] text-gray-500 truncate leading-tight" style={{ paddingLeft: pl }}>
-                    {fmtTime(blockTime)}
+                    {formatTimeOfDay(blockTime)}
                   </p>
                 )}
 
@@ -546,7 +542,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               <p className="font-mono text-sm text-gray-500 mb-1">
                 <span className="font-semibold text-gray-700">{pendingDrop.info.serviceName}</span> was requested for a specific manicurist.
               </p>
-              {targetMani && <p className="font-mono text-sm text-gray-500 mb-4">Moving to <span className="font-semibold" style={{ color: targetMani.color }}>{targetMani.name}</span> at {fmtTime(slotToTime(pendingDrop.slot))}.</p>}
+              {targetMani && <p className="font-mono text-sm text-gray-500 mb-4">Moving to <span className="font-semibold" style={{ color: targetMani.color }}>{targetMani.name}</span> at {formatTimeOfDay(slotToTime(pendingDrop.slot))}.</p>}
               <p className="font-mono text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2 mb-4">\u26a0 The client requested a specific technician for this service.</p>
               <div className="flex gap-3">
                 <button onClick={() => setPendingDrop(null)} className="flex-1 py-2.5 rounded-xl border border-gray-200 font-mono text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">KEEP ORIGINAL</button>

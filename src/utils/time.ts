@@ -43,11 +43,10 @@ export function formatTime(ts: number): string {
   });
 }
 
-export function formatDuration(start: number, end: number): string {
-  const diff = end - start;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins} min`;
-  const hrs = Math.floor(mins / 60);
-  const remainMins = mins % 60;
-  return `${hrs}h ${remainMins}m`;
+/** Format an "HH:MM" 24-hour string into a 12-hour display string (e.g. "14:30" -> "2:30 PM"). */
+export function formatTimeOfDay(hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hour = h % 12 || 12;
+  return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }

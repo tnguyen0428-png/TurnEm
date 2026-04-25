@@ -9,7 +9,7 @@ import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import AppointmentBookView from './AppointmentBookView';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
-import { getTodayLA } from '../../utils/time';
+import { getTodayLA, formatTimeOfDay } from '../../utils/time';
 import type { Appointment, QueueEntry, ServiceType } from '../../types';
 
 const STATUS_CONFIG: Record<Appointment['status'], { label: string; variant: 'green' | 'blue' | 'amber' | 'pink' | 'red' | 'gray' }> = {
@@ -28,13 +28,6 @@ function formatDateDisplay(dateStr: string): string {
 function formatDateFull(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-}
-
-function formatTimeDisplay(time: string): string {
-  const [h, m] = time.split(':').map(Number);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const hour = h % 12 || 12;
-  return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
 function shiftDate(dateStr: string, delta: number): string {
@@ -165,7 +158,7 @@ export default function AppointmentsScreen() {
                               <Badge label={statusConf.label} variant={statusConf.variant} />
                             </div>
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                              <span className="font-mono text-xs text-gray-600">{formatTimeDisplay(appt.time)}</span>
+                              <span className="font-mono text-xs text-gray-600">{formatTimeOfDay(appt.time)}</span>
                               <span className="font-mono text-xs text-gray-500">{(appt.services?.length ? appt.services : [appt.service]).join(' + ')}</span>
                               {(appt.serviceRequests?.length ? appt.serviceRequests.filter((r) => r.manicuristIds.length > 0) : appt.manicuristId ? [{ manicuristIds: [appt.manicuristId] }] : []).map((r, i) => (
                                 <span key={i} className="flex items-center gap-1.5">

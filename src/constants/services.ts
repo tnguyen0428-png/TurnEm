@@ -1,5 +1,7 @@
 import type { ServiceType } from '../types';
 
+// Legacy fallback turn values for old service names. New services come from
+// the salon_services table via the salonServices state slice.
 export const SERVICE_TURN_VALUES: Record<ServiceType, number> = {
   'Manicure': 0.5,
   'Pedicure': 1.0,
@@ -7,27 +9,6 @@ export const SERVICE_TURN_VALUES: Record<ServiceType, number> = {
   'Fills': 1.0,
   'Waxing': 0.5,
 };
-
-export const REQUESTED_PER_SERVICE_VALUE = 0.5;
-
-export function getRequestedTurnValue(
-  services: ServiceType[],
-  salonServices: { name: string; turnValue: number }[] = []
-): number {
-  return services.reduce((sum, s) => {
-    const dynamic = salonServices.find((sv) => sv.name === s);
-    const val = dynamic?.turnValue ?? SERVICE_TURN_VALUES[s] ?? REQUESTED_PER_SERVICE_VALUE;
-    return sum + (val >= 0.5 ? REQUESTED_PER_SERVICE_VALUE : val);
-  }, 0);
-}
-
-export const ALL_SERVICES: ServiceType[] = [
-  'Manicure',
-  'Pedicure',
-  'Acrylics/Full',
-  'Fills',
-  'Waxing',
-];
 
 export const SERVICE_CATEGORIES = [
   'Acrylic Fill',

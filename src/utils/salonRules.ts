@@ -21,10 +21,6 @@ export function clientHasAnyWaxService(services: ServiceType[], salonServices: S
   return services.some((s) => waxNames.has(s));
 }
 
-export function clientHasAnyAcrylicService(services: ServiceType[], salonServices: SalonService[]): boolean {
-  return services.some(s => isAcrylicService(s, salonServices));
-}
-
 export function isSam(m: Manicurist): boolean {
   return m.name.toLowerCase() === 'sam';
 }
