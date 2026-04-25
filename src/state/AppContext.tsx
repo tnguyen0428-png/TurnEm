@@ -236,6 +236,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // prevents Device B from writing back a row it just received from the subscription.
   const isApplyingRemoteRef = useRef(false);
 
+  // Tombstone map: when we delete an appt locally, we remember its id for ~10 seconds.
+  // The race we're protecting against: a stale UPDATE event for that appt may already be
+  // in flight from a prior write. When it arrives AFTER the local DELETE, the reducer's
+  // "if idx === -1, add as new" branch resurrects the row. With a tombstone, the realtime
+  // handler refuses to dispatch REMOTE_APPOINTMENT_UPSERT for IDs we just nuked.
+  const apptTombstonesRef = useRef<Map<string, number>>(new Map());
+  const TOMBSTONE_MS = 10000;
+  function tombstone(id: string) {
+    apptTombstonesRef.current.set(id, Date.now());
+    // Sweep old entries
+    const cutoff = Date.now() - TOMBSTONE_MS;
+    for (const [k, ts] of apptTombstonesRef.current) {
+      if (ts < cutoff) apptTombstonesRef.current.delete(k);
+    }
+  }
+  function isTombstoned(id: string): boolean {
+    const ts = apptTombstonesRef.current.get(id);
+    if (!ts) return false;
+    if (Date.now() - ts > TOMBSTONE_MS) {
+      apptTombstonesRef.current.delete(id);
+      return false;
+    }
+    return true;
+  }
+
   useEffect(() => {
     if (!_dataLoadStarted) {
       _dataLoadStarted = true;
@@ -554,7 +579,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prev.manicurists !== state.manicurists) trackSave(() => syncManicurists(state.manicurists, prev.manicurists, setSyncErrorTracked));
     if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked));
     if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked));
-    if (prev.appointments !== state.appointments) trackSave(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked));
+    if (prev.appointments !== state.appointments) {
+      // Detect local deletions and tombstone their IDs so a stale realtime UPSERT can't resurrect them
+      const currentApptIds = new Set(state.appointments.map((a) => a.id));
+      for (const a of prev.appointments) {
+        if (!currentApptIds.has(a.id)) tombstone(a.id);
+      }
+      trackSave(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked));
+    }
     if (prev.salonServices !== state.salonServices) trackSave(() => syncSalonServices(state.salonServices, prev.salonServices, setSyncErrorTracked));
     if (prev.turnCriteria !== state.turnCriteria) trackSave(() => syncTurnCriteria(state.turnCriteria, prev.turnCriteria, setSyncErrorTracked));
     if (prev.calendarDays !== state.calendarDays) trackSave(() => syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncErrorTracked));
@@ -616,13 +648,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const appointmentsChan = supabase
       .channel('realtime:appointments')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, (payload) => {
-        isApplyingRemoteRef.current = true;
         if (payload.eventType === 'DELETE') {
           const id = (payload.old as { id?: string } | null)?.id;
-          if (id) dispatch({ type: 'REMOTE_APPOINTMENT_DELETE', id });
-          else isApplyingRemoteRef.current = false;
+          if (id) {
+            tombstone(id); // remember it so any stale UPDATE that arrives later is ignored
+            isApplyingRemoteRef.current = true;
+            dispatch({ type: 'REMOTE_APPOINTMENT_DELETE', id });
+          }
         } else {
-          dispatch({ type: 'REMOTE_APPOINTMENT_UPSERT', appointment: mapDbAppointment(payload.new as Record<string, unknown>) });
+          const row = mapDbAppointment(payload.new as Record<string, unknown>);
+          // Reject resurrections: if we just deleted this id locally (or saw a remote DELETE),
+          // ignore any stale UPSERT that's still in flight.
+          if (isTombstoned(row.id)) return; // stale UPSERT for an id we just deleted — ignore
+          isApplyingRemoteRef.current = true;
+          dispatch({ type: 'REMOTE_APPOINTMENT_UPSERT', appointment: row });
         }
       })
       .subscribe();
@@ -1070,40 +1109,4 @@ async function syncTurnCriteria(turnCriteria: TurnCriteria[], prev: TurnCriteria
     changed.push(turnCriteriaToRow(c));
   }
   if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from('turn_criteria').upsert(changed, { onConflict: 'id' }));
-  if (error) { console.error('[syncTurnCriteria] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-}
-
-function calendarDayUnchanged(a: CalendarDay, b: CalendarDay): boolean {
-  if (a === b) return true;
-  return a.status === b.status && a.note === b.note;
-}
-
-function calendarDayToRow(d: CalendarDay) {
-  return { date: d.date, status: d.status, note: d.note };
-}
-
-async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[], onError: (msg: string) => void) {
-  const currentDates = new Set(calendarDays.map((d) => d.date));
-  const removed = prev.filter((d) => !currentDates.has(d.date));
-  if (removed.length > 0) {
-    const { error } = await withRetry(() => supabase.from('calendar_days').delete().in('date', removed.map((d) => d.date)));
-    if (error) { console.error('[syncCalendarDays] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
-  const prevByDate = new Map(prev.map((d) => [d.date, d]));
-  const changed: ReturnType<typeof calendarDayToRow>[] = [];
-  for (const d of calendarDays) {
-    const previous = prevByDate.get(d.date);
-    if (previous && calendarDayUnchanged(previous, d)) continue;
-    changed.push(calendarDayToRow(d));
-  }
-  if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from('calendar_days').upsert(changed, { onConflict: 'date' }));
-  if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-}
-
-export function useApp() {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used within AppProvider');
-  return ctx;
-}
+  const { error } = await withRetry(() => supabase.from

@@ -1,4 +1,4 @@
-import { UserPlus, Pencil, X, Clock, Timer } from 'lucide-react';
+import { UserPlus, Pencil, X, Clock, Timer, Undo2 } from 'lucide-react';
 import type { QueueEntry, Manicurist, SalonService } from '../../types';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import { formatWaitTime, formatTime } from '../../utils/time';
@@ -13,6 +13,7 @@ interface QueueCardProps {
   onAssign: () => void;
   onEdit: () => void;
   onRemove: () => void;
+  onRevertToAppt?: () => void;
 }
 
 function groupServices(services: string[], salonServices: SalonService[]): [string, number][] {
@@ -25,7 +26,7 @@ function groupServices(services: string[], salonServices: SalonService[]): [stri
 }
 
 
-export default function QueueCard({ client, rank, isNext = false, isDeferred = false, manicurists, salonServices, onAssign, onEdit, onRemove }: QueueCardProps) {
+export default function QueueCard({ client, rank, isNext = false, isDeferred = false, manicurists, salonServices, onAssign, onEdit, onRemove, onRevertToAppt }: QueueCardProps) {
   const requestedServices = (client.serviceRequests || []).filter((r) => r.manicuristIds && r.manicuristIds.length > 0);
 
   function getManicuristName(id: string) {
@@ -136,6 +137,15 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          {isAppt && onRevertToAppt && (
+            <button
+              onClick={onRevertToAppt}
+              className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors"
+              title="Revert back to appointment"
+            >
+              <Undo2 size={14} />
+            </button>
+          )}
           <button
             onClick={onEdit}
             className="p-1.5 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
-import { Plus, Trash2, GripVertical } from 'lucide-react';
+import { Plus, Trash2, GripVertical, XCircle } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import { formatTimeOfDay } from '../../utils/time';
@@ -12,7 +12,7 @@ const HEADER_H     = 48;
 const TIME_COL_W   = 56;
 
 // Min/max bounds when auto-fitting columns and rows to the viewport
-const MIN_COL_WIDTH  = 80;
+const MIN_COL_WIDTH  = 110;
 const MAX_COL_WIDTH  = 220;
 const MIN_SLOT_HEIGHT = 22;
 const MAX_SLOT_HEIGHT = 60;
@@ -154,9 +154,75 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const [dragInfo, setDragInfo]         = useState<DragInfo | null>(null);
   const [dropTarget, setDropTarget]     = useState<{ mId: string | null; slot: number } | null>(null);
 
+  // Safety net: if a drag never finishes (dropped outside, Escape, etc.),
+  // clear dragInfo on any document-level dragend or mouseup. Without this,
+  // dragInfo can get stuck non-null which puts pointer-events: none on every
+  // block — making all action buttons (delete/cancel/edit/Q) unclickable.
+  useEffect(() => {
+    function clearDrag() {
+      setDragInfo(null);
+      setDropTarget(null);
+    }
+    document.addEventListener('dragend', clearDrag);
+    document.addEventListener('drop', clearDrag);
+    return () => {
+      document.removeEventListener('dragend', clearDrag);
+      document.removeEventListener('drop', clearDrag);
+    };
+  }, []);
+
   // ── Column-reorder drag/drop state ───────────────────────────────────────
   const [colDragId, setColDragId]         = useState<string | null>(null);
   const [colDropTargetId, setColDropTargetId] = useState<string | null>(null);
+
+  // ── Right-click drag-to-pan state (hold right mouse button to swipe view) ──
+  const panRef = useRef<{ active: boolean; startX: number; startY: number; startScrollLeft: number; startScrollTop: number; moved: boolean }>({
+    active: false, startX: 0, startY: 0, startScrollLeft: 0, startScrollTop: 0, moved: false,
+  });
+  const [isPanning, setIsPanning] = useState(false);
+
+  const onBodyMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 2) return; // right click only
+    if (!bodyRef.current) return;
+    e.preventDefault();
+    panRef.current = {
+      active: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      startScrollLeft: bodyRef.current.scrollLeft,
+      startScrollTop: bodyRef.current.scrollTop,
+      moved: false,
+    };
+    setIsPanning(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isPanning) return;
+    const handleMove = (e: MouseEvent) => {
+      if (!panRef.current.active || !bodyRef.current) return;
+      const dx = e.clientX - panRef.current.startX;
+      const dy = e.clientY - panRef.current.startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panRef.current.moved = true;
+      bodyRef.current.scrollLeft = panRef.current.startScrollLeft - dx;
+      bodyRef.current.scrollTop = panRef.current.startScrollTop - dy;
+    };
+    const handleUp = () => {
+      panRef.current.active = false;
+      setIsPanning(false);
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [isPanning]);
+
+  // Always suppress the browser context menu inside the book so right-click is reserved for panning
+  const onBodyContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    panRef.current.moved = false;
+  }, []);
 
   function svcDuration(name: string): number {
     return state.salonServices.find((s) => s.name === name)?.duration || 60;
@@ -223,7 +289,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           top: blockTopPx, height, isFirst, isApptFirst, colManicuristId: mId,
           hasRequest, requestedManicuristId });
 
-        if (!req?.startTime) colOffsetMins += dur;
+        // Always advance the offset by this service's duration so any later
+        // services that don't have their own startTime stack correctly even when
+        // an earlier one has been pinned via drag-and-drop.
+        colOffsetMins += dur;
         isFirst = false;
       }
     }
@@ -343,6 +412,26 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       }
     }
 
+    // No-overlap check: dropping here would span [slot, slot+span) — make sure no other block in this column overlaps
+    const dur = svcDuration(info.serviceName);
+    const span = Math.max(1, Math.ceil(dur / SLOT_MINUTES));
+    const dropStart = slot;
+    const dropEnd   = slot + span;
+    // Exclude every block from the same appointment from the overlap check —
+    // otherwise you can't rearrange services within a multi-service appointment.
+    const others = getServiceBlocks(mId).filter((b) => b.appt.id !== info!.apptId);
+    const slotPx = slotHeight; // current slot height
+    const overlap = others.find((b) => {
+      const bStart = Math.round(b.top / slotPx);
+      const bEnd   = bStart + Math.max(1, Math.round(b.height / slotPx));
+      return bStart < dropEnd && bEnd > dropStart;
+    });
+    if (overlap) {
+      setCannotParkMsg(`slot is occupied by ${overlap.appt.clientName || 'another appointment'}`);
+      setTimeout(() => setCannotParkMsg(null), 3000);
+      return;
+    }
+
     executeDrop(info!, mId, slot);
   }
 
@@ -454,6 +543,8 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               style={{
                 top: top + 1, height, backgroundColor: bg, borderLeftColor: border,
                 borderTop: `1px solid ${border}60`, borderRight: `1px solid ${border}40`, borderBottom: `1px solid ${border}40`,
+                // While a drag is in progress, let drop events pass through other blocks to the slot grid underneath
+                pointerEvents: dragInfo && !isDragging ? 'none' : undefined,
               }}
               onClick={() => !isDragging && openEditModal(appt)}>
 
@@ -476,7 +567,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   )}
                 </div>
 
-                {height > 56 && (
+                {height > 28 && (
                   <p className="font-mono text-[11px] text-gray-500 truncate leading-tight" style={{ paddingLeft: pl }}>
                     {formatTimeOfDay(blockTime)}
                   </p>
@@ -485,23 +576,52 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 {height > 36 && !isCompleted && (
                   <div className="flex gap-1 mt-auto opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{ paddingLeft: pl }}
+                    draggable={false}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
                     onClick={(e) => e.stopPropagation()}>
                     {appt.status === 'scheduled' && (
-                      <button onClick={(e) => addApptToQueue(e, appt)}
+                      <button
+                        draggable={false}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onDragStart={(e) => e.preventDefault()}
+                        onClick={(e) => addApptToQueue(e, appt)}
                         title="Send whole appointment to waiting queue"
                         className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-mono text-[10px] font-bold">
                         Q
                       </button>
                     )}
-                    <button onClick={(e) => { e.stopPropagation(); openEditModal(appt); }}
+                    <button
+                      draggable={false}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onDragStart={(e) => e.preventDefault()}
+                      onClick={(e) => { e.stopPropagation(); openEditModal(appt); }}
                       title="Edit appointment"
                       className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 font-mono text-[9px] font-bold">
                       &#x270E;
                     </button>
-                    <button onClick={(e) => deleteSvcBlock(e, appt, serviceName)}
+                    <button
+                      draggable={false}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onDragStart={(e) => e.preventDefault()}
+                      onClick={(e) => deleteSvcBlock(e, appt, serviceName)}
                       title="Remove this service"
                       className="p-0.5 rounded bg-red-100 text-red-500 hover:bg-red-200">
                       <Trash2 size={9} />
+                    </button>
+                    <button
+                      draggable={false}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onDragStart={(e) => e.preventDefault()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Cancel appointment for ${appt.clientName || 'Walk-in'}?`)) {
+                          dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'cancelled' } });
+                        }
+                      }}
+                      title="Cancel appointment"
+                      className="p-0.5 rounded bg-orange-100 text-orange-600 hover:bg-orange-200">
+                      <XCircle size={9} />
                     </button>
                   </div>
                 )}
@@ -532,34 +652,36 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               style={{ width: TIME_COL_W }}>
               <span className="font-mono text-[9px] text-gray-400 tracking-widest">TIME</span>
             </div>
-            {/* Manicurist column headers — draggable to reorder */}
+            {/* Manicurist column headers — drag the whole column header to reorder */}
             {columns.map((m) => {
               const mId = m ? m.id : null;
-              const cnt = new Set(getServiceBlocks(mId).map((b) => b.appt.id)).size;
               const isReorderTarget = m && colDropTargetId === m.id;
               const isReorderSource = m && colDragId === m.id;
+              const accentColor = m ? m.color : '#d1d5db';
               return (
                 <div
                   key={mId ?? 'any'}
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-2 border-r border-gray-200 transition-colors ${
-                    isReorderSource ? 'opacity-40' : ''
-                  } ${isReorderTarget ? 'bg-pink-50 ring-2 ring-pink-300 ring-inset' : ''}`}
-                  style={{ width: colWidth }}
+                  draggable={!!m}
+                  onDragStart={(e) => m && onColDragStart(e, m.id)}
+                  onDragEnd={onColDragEnd}
                   onDragOver={(e) => m && onColDragOver(e, m.id)}
-                  onDrop={(e) => m && onColDrop(e, m.id)}>
-                  {m && (
-                    <div
-                      draggable
-                      onDragStart={(e) => onColDragStart(e, m.id)}
-                      onDragEnd={onColDragEnd}
-                      className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0"
-                      title="Drag to reorder column">
-                      <GripVertical size={12} />
-                    </div>
-                  )}
-                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: m ? m.color : '#d1d5db' }} />
-                  <span className="font-mono text-[13px] font-bold text-gray-700 truncate flex-1">{m ? m.name : 'ANY'}</span>
-                  {cnt > 0 && <span className="font-mono text-[9px] text-white bg-pink-400 rounded-full w-4 h-4 flex items-center justify-center flex-shrink-0">{cnt}</span>}
+                  onDrop={(e) => m && onColDrop(e, m.id)}
+                  title={m ? 'Drag to reorder column' : undefined}
+                  className={`relative flex-shrink-0 flex items-center justify-center px-2 border-r border-gray-200 transition-colors ${
+                    m ? 'cursor-grab active:cursor-grabbing' : ''
+                  } ${isReorderSource ? 'opacity-40' : ''} ${
+                    isReorderTarget ? 'bg-pink-50 ring-2 ring-pink-300 ring-inset' : ''
+                  }`}
+                  style={{ width: colWidth }}>
+                  <span className="font-mono text-[13px] font-bold text-gray-700 truncate text-center">
+                    {m ? m.name : 'ANY'}
+                  </span>
+                  {/* Color bar under the name */}
+                  <span
+                    aria-hidden
+                    className="absolute left-2 right-2 bottom-1 rounded-full pointer-events-none"
+                    style={{ height: 3, backgroundColor: accentColor }}
+                  />
                 </div>
               );
             })}
@@ -570,7 +692,9 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         <div
           ref={bodyRef}
           onScroll={onBodyScroll}
-          className="flex-1 min-h-0 overflow-auto">
+          onMouseDown={onBodyMouseDown}
+          onContextMenu={onBodyContextMenu}
+          className={`flex-1 min-h-0 overflow-auto ${isPanning ? 'cursor-grabbing select-none' : ''}`}>
           <div className="flex relative" style={{ width: totalGridW, height: TOTAL_H }}>
             {/* Time column (sticky left so it stays put on horizontal scroll) */}
             <div className="flex-shrink-0 sticky left-0 z-20 bg-white border-r border-gray-300" style={{ width: TIME_COL_W }}>
@@ -600,4 +724,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       {cannotParkMsg && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
           <div className="bg-gray-900 text-white font-mono text-sm font-semibold px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3">
-            <span className="text-red
+            <span className="text-red-400 text-lg">&#x26D4;</span>
+            Cannot park here &mdash; {cannotParkMsg}
+          </div>
+        </div>
+      )}
+
+      {/* Pending drop c

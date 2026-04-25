@@ -22,6 +22,35 @@ export default function WaitingPanel() {
     dispatch({ type: 'SET_MODAL', modal: 'editClient' });
   }
 
+  function handleRevertToAppt(clientId: string) {
+    const entry = state.queue.find((c) => c.id === clientId);
+    if (!entry) return;
+    const today = new Date().toISOString().split('T')[0];
+    const firstReqTime = entry.serviceRequests?.[0]?.startTime;
+    const now = new Date();
+    const time =
+      firstReqTime ||
+      `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    dispatch({
+      type: 'ADD_APPOINTMENT',
+      appointment: {
+        id: crypto.randomUUID(),
+        clientName: entry.clientName,
+        clientPhone: '',
+        service: entry.services[0] || '',
+        services: entry.services,
+        serviceRequests: entry.serviceRequests || [],
+        manicuristId: entry.requestedManicuristId,
+        date: today,
+        time,
+        notes: '',
+        status: 'scheduled',
+        createdAt: Date.now(),
+      },
+    });
+    dispatch({ type: 'REMOVE_CLIENT', id: clientId });
+  }
+
   function confirmRemove() {
     if (removeId) {
       dispatch({ type: 'REMOVE_CLIENT', id: removeId });
@@ -69,6 +98,7 @@ export default function WaitingPanel() {
               onAssign={() => handleAssign(client.id)}
               onEdit={() => handleEdit(client.id)}
               onRemove={() => setRemoveId(client.id)}
+              onRevertToAppt={() => handleRevertToAppt(client.id)}
             />
           ))
         )}
