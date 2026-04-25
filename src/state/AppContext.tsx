@@ -268,6 +268,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // When a tab is hidden, the browser throttles its WebSocket and it can miss realtime
+  // events. On return-to-foreground we re-fetch appointments from DB so this tab can't
+  // push a stale local copy back over a row another tab just deleted.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    async function reconcileAppts() {
+      if (document.visibilityState !== 'visible') return;
+      const { data, error } = await supabase.from('appointments').select('*');
+      if (error || !data) return;
+      const fresh = data.map((row) => mapDbAppointment(row as Record<string, unknown>));
+      isApplyingRemoteRef.current = true;
+      dispatch({ type: 'LOAD_STATE', state: { appointments: fresh } });
+    }
+    document.addEventListener('visibilitychange', reconcileAppts);
+    window.addEventListener('focus', reconcileAppts);
+    return () => {
+      document.removeEventListener('visibilitychange', reconcileAppts);
+      window.removeEventListener('focus', reconcileAppts);
+    };
+  }, []);
+
   async function loadInitialData() {
     const [
       { data: staffRows, error: staffError },
@@ -1015,32 +1036,62 @@ async function syncDailyHistory(current: DailyHistory[], prev: DailyHistory[], o
   }
 }
 
+function appointmentUnchanged(a: Appointment, b: Appointment): boolean {
+  if (a === b) return true;
+  return (
+    a.clientName === b.clientName &&
+    (a.clientPhone || null) === (b.clientPhone || null) &&
+    (a.services?.[0] || a.service) === (b.services?.[0] || b.service) &&
+    JSON.stringify(a.services || [a.service]) === JSON.stringify(b.services || [b.service]) &&
+    JSON.stringify(a.serviceRequests || []) === JSON.stringify(b.serviceRequests || []) &&
+    (a.manicuristId || null) === (b.manicuristId || null) &&
+    a.date === b.date &&
+    a.time === b.time &&
+    (a.notes || null) === (b.notes || null) &&
+    a.status === b.status
+  );
+}
+
+function appointmentToRow(a: Appointment) {
+  return {
+    id: a.id,
+    client_name: a.clientName,
+    client_phone: a.clientPhone || null,
+    service: a.services?.[0] || a.service,
+    services: a.services || [a.service],
+    service_requests: a.serviceRequests || [],
+    manicurist_id: a.manicuristId || null,
+    date: a.date,
+    time: a.time,
+    notes: a.notes || null,
+    status: a.status,
+    created_at: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
+  };
+}
+
 async function syncAppointments(appointments: Appointment[], prev: Appointment[], onError: (msg: string) => void) {
   const currentIds = new Set(appointments.map((a) => a.id));
 
+  // Delete appts that disappeared since last sync.
   const deleted = prev.filter((a) => !currentIds.has(a.id));
   for (const a of deleted) {
     const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
-    if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed - data may not be saved. Check connection.'); }
   }
 
+  // Per-row diff: only upsert appts whose data actually changed. Stops stale tabs from
+  // re-uploading every appt (which would resurrect rows another tab just deleted) and
+  // cuts realtime echo traffic by orders of magnitude.
+  const prevById = new Map(prev.map((a) => [a.id, a]));
+  const changed: ReturnType<typeof appointmentToRow>[] = [];
   for (const a of appointments) {
-    const { error } = await withRetry(() => supabase.from('appointments').upsert({
-      id: a.id,
-      client_name: a.clientName,
-      client_phone: a.clientPhone || null,
-      service: a.services?.[0] || a.service,
-      services: a.services || [a.service],
-      service_requests: a.serviceRequests || [],
-      manicurist_id: a.manicuristId || null,
-      date: a.date,
-      time: a.time,
-      notes: a.notes || null,
-      status: a.status,
-      created_at: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
-    }, { onConflict: 'id' }));
-    if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    const previous = prevById.get(a.id);
+    if (previous && appointmentUnchanged(previous, a)) continue;
+    changed.push(appointmentToRow(a));
   }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('appointments').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed - data may not be saved. Check connection.'); }
 }
 
 function salonServiceUnchanged(a: SalonService, b: SalonService): boolean {
@@ -1148,23 +1199,4 @@ async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[]
   const currentDates = new Set(calendarDays.map((d) => d.date));
   const removed = prev.filter((d) => !currentDates.has(d.date));
   if (removed.length > 0) {
-    const { error } = await withRetry(() => supabase.from('calendar_days').delete().in('date', removed.map((d) => d.date)));
-    if (error) { console.error('[syncCalendarDays] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
-  const prevByDate = new Map(prev.map((d) => [d.date, d]));
-  const changed: ReturnType<typeof calendarDayToRow>[] = [];
-  for (const d of calendarDays) {
-    const previous = prevByDate.get(d.date);
-    if (previous && calendarDayUnchanged(previous, d)) continue;
-    changed.push(calendarDayToRow(d));
-  }
-  if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from('calendar_days').upsert(changed, { onConflict: 'date' }));
-  if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-}
-
-export function useApp() {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used within AppProvider');
-  return ctx;
-}
+    const 
