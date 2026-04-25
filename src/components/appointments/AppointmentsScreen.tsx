@@ -106,7 +106,24 @@ export default function AppointmentsScreen() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
-      {/* ── Toolbar — hidden when book is expanded ──────────────────────────── */}
+      {/* ── Compact top bar (expanded book mode) ─────────────────────────────── */}
+      {expanded && bookMode === 'book' && (
+        <div className="flex-shrink-0 border-b border-gray-100 bg-white px-4 py-2 flex items-center gap-3">
+          <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1">
+            <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-1.5 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={14} /></button>
+            <button onClick={() => setSelectedDate(today)} className={`px-2.5 py-1 rounded-lg font-mono text-[10px] font-semibold transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
+            <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-1.5 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronRight size={14} /></button>
+          </div>
+          <span className="font-bebas text-base tracking-[2px] text-gray-700 flex-1 truncate">{formatDateFull(selectedDate)}</span>
+          {dayTotal > 0 && <span className="font-mono text-[10px] text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
+          <button onClick={openNewAppointment} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-pink-500 text-white font-mono text-[10px] font-semibold hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={12} />NEW</button>
+          <button onClick={() => setExpanded((e) => !e)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-[10px] text-gray-600 font-semibold transition-all flex-shrink-0">
+            <Minimize2 size={12} />COMPACT
+          </button>
+        </div>
+      )}
+
+      {/* ── Full toolbar — hidden when book is expanded ──────────────────────── */}
       {!(expanded && bookMode === 'book') && (
         <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 sm:px-6 py-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -205,25 +222,12 @@ export default function AppointmentsScreen() {
         )}
       </div>
 
-      {/* ── Bottom bar (book view only) ───────────────────────────────────────── */}
-      {bookMode === 'book' && (
+      {/* ── Bottom bar (compact book view only — FULL PAGE toggle + hint) ───── */}
+      {bookMode === 'book' && !expanded && (
         <div className="flex-shrink-0 border-t border-gray-100 bg-white px-4 py-2 flex items-center gap-3">
-          {expanded ? (
-            <>
-              <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1">
-                <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-1.5 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={14} /></button>
-                <button onClick={() => setSelectedDate(today)} className={`px-2.5 py-1 rounded-lg font-mono text-[10px] font-semibold transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
-                <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-1.5 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronRight size={14} /></button>
-              </div>
-              <span className="font-bebas text-base tracking-[2px] text-gray-700 flex-1 truncate">{formatDateFull(selectedDate)}</span>
-              {dayTotal > 0 && <span className="font-mono text-[10px] text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
-              <button onClick={openNewAppointment} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-pink-500 text-white font-mono text-[10px] font-semibold hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={12} />NEW</button>
-            </>
-          ) : (
-            <span className="font-mono text-[10px] text-gray-400 flex-1">Drag column headers to reorder staff</span>
-          )}
+          <span className="font-mono text-[10px] text-gray-400 flex-1">Drag column headers to reorder staff</span>
           <button onClick={() => setExpanded((e) => !e)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-[10px] text-gray-600 font-semibold transition-all flex-shrink-0">
-            {expanded ? <><Minimize2 size={12} />COMPACT</> : <><Maximize2 size={12} />FULL PAGE</>}
+            <Maximize2 size={12} />FULL PAGE
           </button>
         </div>
       )}
