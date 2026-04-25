@@ -25,6 +25,26 @@ export default function WaitingPanel() {
   function handleRevertToAppt(clientId: string) {
     const entry = state.queue.find((c) => c.id === clientId);
     if (!entry) return;
+    // Preferred path: restore from the snapshot captured when the appointment was
+    // originally promoted via the "Q" key. This puts the appointment back into its
+    // exact original date, time, column, and per-service placement — including the
+    // manicuristIds we cleared from the queue's serviceRequests for parked entries.
+    if (entry.originalAppointment) {
+      dispatch({
+        type: 'ADD_APPOINTMENT',
+        appointment: {
+          ...entry.originalAppointment,
+          // Use a fresh id since the original was deleted on promotion.
+          id: crypto.randomUUID(),
+          status: 'scheduled',
+          createdAt: Date.now(),
+        },
+      });
+      dispatch({ type: 'REMOVE_CLIENT', id: clientId });
+      return;
+    }
+    // Fallback for queue entries that were never an appointment (legacy data
+    // or direct walk-ins): drop them onto today at the current time.
     const today = new Date().toISOString().split('T')[0];
     const firstReqTime = entry.serviceRequests?.[0]?.startTime;
     const now = new Date();

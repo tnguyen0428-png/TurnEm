@@ -84,6 +84,7 @@ function mapDbQueueEntry(row: Record<string, unknown>): QueueEntry {
     startedAt: row.started_at ? new Date(row.started_at as string).getTime() : null,
     completedAt: row.completed_at ? new Date(row.completed_at as string).getTime() : null,
     extraTimeMs: Number(row.extra_time_ms) || 0,
+    originalAppointment: (row.original_appointment as Appointment | null) || undefined,
   };
 }
 
@@ -945,7 +946,8 @@ function queueEntryUnchanged(a: QueueEntry, b: QueueEntry): boolean {
     a.completedAt === b.completedAt &&
     a.extraTimeMs === b.extraTimeMs &&
     JSON.stringify(a.services) === JSON.stringify(b.services) &&
-    JSON.stringify(a.serviceRequests) === JSON.stringify(b.serviceRequests)
+    JSON.stringify(a.serviceRequests) === JSON.stringify(b.serviceRequests) &&
+    JSON.stringify(a.originalAppointment ?? null) === JSON.stringify(b.originalAppointment ?? null)
   );
 }
 
@@ -966,6 +968,7 @@ function queueEntryToRow(c: QueueEntry) {
     started_at: c.startedAt ? new Date(c.startedAt).toISOString() : null,
     completed_at: c.completedAt ? new Date(c.completedAt).toISOString() : null,
     extra_time_ms: c.extraTimeMs || 0,
+    original_appointment: c.originalAppointment ?? null,
   };
 }
 

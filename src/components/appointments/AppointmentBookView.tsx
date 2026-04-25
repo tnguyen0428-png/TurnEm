@@ -347,6 +347,13 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       services, turnValue, serviceRequests, requestedManicuristId: firstRequestedId,
       isRequested, isAppointment: true, assignedManicuristId: null, status: 'waiting',
       arrivedAt: Date.now(), startedAt: null, completedAt: null, extraTimeMs: 0,
+      // Snapshot the original appointment so the Revert button on the queue card
+      // can restore it back into its exact slot (date, time, column, per-service
+      // placements). The snapshot keeps the original serviceRequests with their
+      // manicuristIds intact — distinct from the queue's `serviceRequests` above
+      // which has parked-column manicuristIds cleared so the queue doesn't see
+      // them as requests.
+      originalAppointment: appt,
     } as QueueEntry });
   }
 

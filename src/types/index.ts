@@ -60,6 +60,11 @@ export interface QueueEntry {
   startedAt: number | null;
   completedAt: number | null;
   extraTimeMs: number;
+  // Snapshot of the original Appointment captured when this queue entry was
+  // promoted from the appointment book via the "Q" key. The Revert button uses
+  // it to restore the appointment back into its exact original date, time,
+  // column, and per-service placements. Undefined for direct walk-ins.
+  originalAppointment?: Appointment;
 }
 
 export interface CompletedEntry {
