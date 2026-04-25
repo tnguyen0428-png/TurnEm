@@ -3,7 +3,7 @@ import { Plus, Trash2, GripVertical, XCircle } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import { formatTimeOfDay } from '../../utils/time';
-import type { Appointment, Manicurist, QueueEntry, ServiceType } from '../../types';
+import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType } from '../../types';
 
 const START_HOUR   = 8;
 const END_HOUR     = 20;
@@ -324,15 +324,22 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     e.stopPropagation();
     dispatch({ type: 'DELETE_APPOINTMENT', id: appt.id });
     const services = getApptSvcs(appt) as ServiceType[];
-    const serviceRequests = (appt.serviceRequests || []).length > 0
-      ? appt.serviceRequests
-      : appt.manicuristId ? [{ service: services[0], manicuristIds: [appt.manicuristId] }] : [];
-    const isRequested      = serviceRequests.some((r) => r.manicuristIds.length > 0);
-    const firstRequestedId = serviceRequests[0]?.manicuristIds?.[0] ?? null;
+    // CRITICAL: only ServiceRequests with clientRequest === true represent an actual
+    // request from the customer. Anything else is just a salon-placed parking slot in
+    // the calendar column (e.g. dragged into Brian's column for visual scheduling) and
+    // must NOT be carried into the queue as a request — assignment for those is
+    // determined when the customer arrives. We strip manicuristIds from non-request
+    // entries so downstream queue/turn logic doesn't treat them as requests.
+    const rawRequests = appt.serviceRequests || [];
+    const serviceRequests: ServiceRequest[] = rawRequests.map((r) =>
+      r.clientRequest === true ? r : { ...r, manicuristIds: [] }
+    );
+    const isRequested      = serviceRequests.some((r) => r.clientRequest === true && r.manicuristIds.length > 0);
+    const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
     const turnValue = services.reduce((sum, svc) => {
       const s = state.salonServices.find((ss) => ss.name === svc);
       const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc] ?? 1;
-      const hasReq = serviceRequests.some((r) => r.service === svc && r.manicuristIds.length > 0);
+      const hasReq = serviceRequests.some((r) => r.service === svc && r.clientRequest === true && r.manicuristIds.length > 0);
       return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
     }, 0);
     dispatch({ type: 'ADD_CLIENT', client: {
