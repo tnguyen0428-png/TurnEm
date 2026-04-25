@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import { Plus, Trash2, GripVertical } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
@@ -8,13 +8,16 @@ import type { Appointment, Manicurist, QueueEntry, ServiceType } from '../../typ
 const START_HOUR   = 8;
 const END_HOUR     = 20;
 const SLOT_MINUTES = 15;
-const SLOT_HEIGHT  = 34;
-const COL_WIDTH    = 96;           // narrower columns
-const TIME_COL_W   = 56;
 const HEADER_H     = 48;
+const TIME_COL_W   = 56;
+
+// Min/max bounds when auto-fitting columns and rows to the viewport
+const MIN_COL_WIDTH  = 80;
+const MAX_COL_WIDTH  = 220;
+const MIN_SLOT_HEIGHT = 22;
+const MAX_SLOT_HEIGHT = 60;
 
 const TOTAL_SLOTS = ((END_HOUR - START_HOUR) * 60) / SLOT_MINUTES;
-const TOTAL_H     = TOTAL_SLOTS * SLOT_HEIGHT;
 
 // Pastel palette — one per appointment (consistent across all its service blocks)
 const APPT_PALETTES = [
@@ -43,9 +46,9 @@ function slotToTime(i: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
-function timeToTopPx(time: string): number {
+function timeToTopPx(time: string, slotHeight: number): number {
   const [h, m] = time.split(':').map(Number);
-  return ((h - START_HOUR) * 60 + m) / SLOT_MINUTES * SLOT_HEIGHT;
+  return ((h - START_HOUR) * 60 + m) / SLOT_MINUTES * slotHeight;
 }
 
 function hourLabel(i: number): string | null {
@@ -86,29 +89,74 @@ interface Props { selectedDate: string }
 
 export default function AppointmentBookView({ selectedDate }: Props) {
   const { state, dispatch } = useApp();
-  const scrollRef    = useRef<HTMLDivElement>(null);
-  const topScrollRef = useRef<HTMLDivElement>(null);
-  const [cannotParkMsg, setCannotParkMsg] = useState<string | null>(null);
 
-  // Keep top scrollbar in sync with main grid
-  const onMainScroll = useCallback(() => {
-    if (topScrollRef.current && scrollRef.current)
-      topScrollRef.current.scrollLeft = scrollRef.current.scrollLeft;
-  }, []);
-  const onTopScroll = useCallback(() => {
-    if (scrollRef.current && topScrollRef.current)
-      scrollRef.current.scrollLeft = topScrollRef.current.scrollLeft;
-  }, []);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const headerRef    = useRef<HTMLDivElement>(null);
+  const bodyRef      = useRef<HTMLDivElement>(null);
+
+  const [cannotParkMsg, setCannotParkMsg] = useState<string | null>(null);
+  const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
+
+  // Auto-fit dimensions
+  const [colWidth, setColWidth]     = useState(96);
+  const [slotHeight, setSlotHeight] = useState(34);
 
   const manicurists = state.manicurists.filter((m) => m.showInBook !== false);
-  const totalGridW  = TIME_COL_W + manicurists.length * COL_WIDTH;
-  const dayAppts    = state.appointments.filter(
+  const totalGridW  = TIME_COL_W + manicurists.length * colWidth;
+  const TOTAL_H     = TOTAL_SLOTS * slotHeight;
+
+  const dayAppts = state.appointments.filter(
     (a) => a.date === selectedDate && a.status !== 'cancelled' && a.status !== 'no-show'
   );
 
-  const [dragInfo, setDragInfo]       = useState<DragInfo | null>(null);
-  const [dropTarget, setDropTarget]   = useState<{ mId: string | null; slot: number } | null>(null);
-  const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
+  // ── Auto-fit columns + slots to viewport ────────────────────────────────
+  useLayoutEffect(() => {
+    if (!containerRef.current) return;
+
+    const recalc = () => {
+      const el = containerRef.current;
+      if (!el) return;
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w <= 0 || h <= 0) return;
+
+      const n = Math.max(1, manicurists.length);
+      // Horizontal: divide remaining width evenly across manicurist columns
+      const fitColW = Math.floor((w - TIME_COL_W) / n);
+      const newColW = Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, fitColW));
+      // Vertical: divide remaining height across all 15-minute slots
+      const fitSlotH = Math.floor((h - HEADER_H) / TOTAL_SLOTS);
+      const newSlotH = Math.max(MIN_SLOT_HEIGHT, Math.min(MAX_SLOT_HEIGHT, fitSlotH));
+
+      setColWidth((c) => (c !== newColW ? newColW : c));
+      setSlotHeight((s) => (s !== newSlotH ? newSlotH : s));
+    };
+
+    recalc();
+    const ro = new ResizeObserver(recalc);
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, [manicurists.length]);
+
+  // ── Sync horizontal scroll between header and body ──────────────────────
+  const onBodyScroll = useCallback(() => {
+    if (headerRef.current && bodyRef.current) {
+      headerRef.current.scrollLeft = bodyRef.current.scrollLeft;
+    }
+  }, []);
+  const onHeaderScroll = useCallback(() => {
+    if (headerRef.current && bodyRef.current) {
+      bodyRef.current.scrollLeft = headerRef.current.scrollLeft;
+    }
+  }, []);
+
+  // ── Service-block drag/drop state ────────────────────────────────────────
+  const [dragInfo, setDragInfo]         = useState<DragInfo | null>(null);
+  const [dropTarget, setDropTarget]     = useState<{ mId: string | null; slot: number } | null>(null);
+
+  // ── Column-reorder drag/drop state ───────────────────────────────────────
+  const [colDragId, setColDragId]         = useState<string | null>(null);
+  const [colDropTargetId, setColDropTargetId] = useState<string | null>(null);
 
   function svcDuration(name: string): number {
     return state.salonServices.find((s) => s.name === name)?.duration || 60;
@@ -118,7 +166,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     return (appt.services?.length ? appt.services : [appt.service as string]).filter(Boolean);
   }
 
-
   function getServiceBlocks(mId: string | null): ServiceBlock[] {
     const blocks: ServiceBlock[] = [];
 
@@ -127,9 +174,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       const allReqs = appt.serviceRequests || [];
       const [startH, startM] = appt.time.split(':').map(Number);
 
-      // Track occurrence counts per service name for positional matching
       const occurrenceCount: Record<string, number> = {};
-      // Track offset only within THIS column (parallel services in other columns don't add offset)
       let colOffsetMins = 0;
       let isFirst = true;
 
@@ -138,44 +183,38 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         const occ = occurrenceCount[svcName] ?? 0;
         occurrenceCount[svcName] = occ + 1;
 
-        // Find the (occ)-th serviceRequest for this service name
         const reqsForSvc = allReqs.filter((r) => r.service === svcName);
         const req = reqsForSvc[occ] ?? null;
 
-        // Determine which column this service belongs to
         let assignedMId: string | null;
         if (req && req.manicuristIds.length > 0) {
           assignedMId = req.manicuristIds[0];
         } else if (req && req.manicuristIds.length === 0) {
-          assignedMId = null; // explicitly unassigned
+          assignedMId = null;
         } else {
-          // No serviceRequest — falls back to appointment's manicuristId column,
-          // but ONLY if that manicurist has the skill for this service.
           const fallbackMId = appt.manicuristId ?? null;
           const colMani = fallbackMId ? state.manicurists.find((m) => m.id === fallbackMId) : null;
           const hasSkill = !colMani || colMani.skills.length === 0 || colMani.skills.includes(svcName);
           assignedMId = (hasSkill && fallbackMId) ? fallbackMId : null;
         }
 
-        if (assignedMId !== mId) continue; // skip services not in this column
+        if (assignedMId !== mId) continue;
 
         const dur = svcDuration(svcName);
 
-        // Per-service time: use explicit startTime if set (from drag), else appt time + column offset
         let blockTopPx: number;
         let blockTime: string;
         if (req?.startTime) {
-          blockTopPx = timeToTopPx(req.startTime);
+          blockTopPx = timeToTopPx(req.startTime, slotHeight);
           blockTime  = req.startTime;
         } else {
           const startMins = (startH - START_HOUR) * 60 + startM + colOffsetMins;
-          blockTopPx = startMins / SLOT_MINUTES * SLOT_HEIGHT;
-          // Convert back to HH:MM string
+          blockTopPx = startMins / SLOT_MINUTES * slotHeight;
           const totalMins = startH * 60 + startM + colOffsetMins;
           blockTime = `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`;
         }
 
-        const height     = Math.max(dur / SLOT_MINUTES * SLOT_HEIGHT - 3, 20);
+        const height     = Math.max(dur / SLOT_MINUTES * slotHeight - 3, 20);
         const isApptFirst = isFirst && i === 0;
         const hasRequest  = !!(req && req.manicuristIds.length > 0 && req.clientRequest === true);
         const requestedManicuristId = hasRequest ? (req!.manicuristIds[0] ?? null) : null;
@@ -184,7 +223,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           top: blockTopPx, height, isFirst, isApptFirst, colManicuristId: mId,
           hasRequest, requestedManicuristId });
 
-        // Only accumulate offset for services stacking in THIS column
         if (!req?.startTime) colOffsetMins += dur;
         isFirst = false;
       }
@@ -193,7 +231,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   }
 
   function removeSvcFromAppt(appt: Appointment, svcName: string) {
-    // Only remove the FIRST occurrence so duplicate services stay independent
     const all = getApptSvcs(appt);
     const firstIdx = all.indexOf(svcName);
     const svcs = firstIdx >= 0 ? [...all.slice(0, firstIdx), ...all.slice(firstIdx + 1)] : all;
@@ -237,8 +274,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     } as QueueEntry });
   }
 
-  // Drag changes TIME and COLUMN independently per service occurrence.
-  // Same column → time only. Different column → also updates that service's assignment.
   function executeDrop(info: DragInfo, mId: string | null, slot: number) {
     const { apptId, serviceName, occurrence } = info;
     const appt = state.appointments.find((a) => a.id === apptId);
@@ -246,20 +281,14 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     const newTime = slotToTime(slot);
     const allReqs = appt.serviceRequests || [];
 
-    // Find what column this occurrence is currently in
     const reqsForSvc = allReqs.filter((r) => r.service === serviceName);
     const currentReq = reqsForSvc[occurrence] ?? null;
-    // Build the new serviceRequest entry for this service occurrence
     const allIdxsForSvc = allReqs.reduce<number[]>((acc, r, i) => {
       if (r.service === serviceName) acc.push(i);
       return acc;
     }, []);
     const targetIdx = allIdxsForSvc[occurrence];
 
-    // Determine the startTime to store:
-    // - If column changed → store explicit startTime so this service has its own position
-    // - If same column → store startTime to record the new time
-    // First appointment's service also updates appt.time for the default
     const isFirstService = occurrence === 0 && serviceName === appt.services?.[0];
 
     const newEntry = {
@@ -277,7 +306,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     }
 
     const updates: Partial<typeof appt> = { serviceRequests: updatedReqs };
-    // Update appointment-level time only if this is the first/primary service
     if (isFirstService) updates.time = newTime;
 
     dispatch({ type: 'UPDATE_APPOINTMENT', id: apptId, updates });
@@ -306,7 +334,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     setDragInfo(null);
     setDropTarget(null);
 
-    // Check if target column's manicurist can do this service
     if (mId !== null) {
       const colMani = state.manicurists.find((m) => m.id === mId);
       if (colMani && colMani.skills.length > 0 && !colMani.skills.includes(info.serviceName)) {
@@ -321,17 +348,48 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
   function onDragEnd() { setDragInfo(null); setDropTarget(null); }
 
-  // Current time
+  // ── Column reorder drag handlers ────────────────────────────────────────
+  function onColDragStart(e: React.DragEvent, mId: string) {
+    e.stopPropagation();
+    setColDragId(mId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-column-reorder', mId);
+  }
+  function onColDragOver(e: React.DragEvent, mId: string) {
+    if (!colDragId || colDragId === mId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setColDropTargetId(mId);
+  }
+  function onColDrop(e: React.DragEvent, mId: string) {
+    if (!colDragId || colDragId === mId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // Reorder full manicurist list (preserve hidden ones in original order)
+    const fullIds = state.manicurists.map((m) => m.id);
+    const fromIdx = fullIds.indexOf(colDragId);
+    const toIdx   = fullIds.indexOf(mId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    const next = [...fullIds];
+    next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, colDragId);
+    dispatch({ type: 'SET_MANICURIST_ORDER', ids: next });
+    setColDragId(null);
+    setColDropTargetId(null);
+  }
+  function onColDragEnd() { setColDragId(null); setColDropTargetId(null); }
+
+  // ── Current time indicator ──────────────────────────────────────────────
   const todayKey = new Date().toISOString().split('T')[0];
   const isToday  = selectedDate === todayKey;
   const now      = new Date();
   const nowMins  = isToday ? (now.getHours() - START_HOUR) * 60 + now.getMinutes() : null;
   const nowTopPx = nowMins !== null && nowMins >= 0 && nowMins <= (END_HOUR - START_HOUR) * 60
-    ? nowMins / SLOT_MINUTES * SLOT_HEIGHT : null;
+    ? nowMins / SLOT_MINUTES * slotHeight : null;
 
   useEffect(() => {
-    if (scrollRef.current)
-      scrollRef.current.scrollTop = nowTopPx != null ? Math.max(0, nowTopPx - 120) : 0;
+    if (bodyRef.current)
+      bodyRef.current.scrollTop = nowTopPx != null ? Math.max(0, nowTopPx - 120) : 0;
   }, [selectedDate]); // eslint-disable-line
 
   function openAddModal(mId: string | null, slotIdx: number) {
@@ -349,7 +407,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     const blocks = getServiceBlocks(mId);
     return (
       <div key={mId ?? 'any'} className="flex-shrink-0 relative border-r border-gray-200"
-        style={{ width: COL_WIDTH, height: TOTAL_H }}
+        style={{ width: colWidth, height: TOTAL_H }}
         onDragLeave={() => setDropTarget(null)}>
 
         {Array.from({ length: TOTAL_SLOTS }).map((_, i) => {
@@ -360,7 +418,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
             <div key={i}
               className={`absolute left-0 right-0 cursor-pointer group transition-colors ${isDropOver ? 'bg-pink-100 ring-1 ring-pink-400 ring-inset' : 'hover:bg-pink-50/60'}`}
               style={{
-                top: i * SLOT_HEIGHT, height: SLOT_HEIGHT,
+                top: i * slotHeight, height: slotHeight,
                 borderTop:    isHour ? '2px solid #6b7280' : 'none',
                 borderBottom: isHour ? '1px solid #e5e7eb' : type === 'half' ? '1px solid #d1d5db' : '1px solid #e5e7eb',
               }}
@@ -390,7 +448,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               className={`absolute left-1 right-1 rounded-lg overflow-hidden border-l-[3px] select-none group z-10 transition-all ${
                 isDragging ? 'opacity-30 cursor-grabbing' : !isCompleted ? 'cursor-grab hover:shadow-md hover:-translate-y-px shadow-sm' : 'shadow-sm'
               } ${
-                // Pulse only when requested but not yet in the right column
                 hasRequest && !isCompleted && colManicuristId !== requestedManicuristId
                   ? 'ring-2 ring-pink-500 ring-offset-1 animate-pulse' : ''
               }`}
@@ -401,7 +458,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               onClick={() => !isDragging && openEditModal(appt)}>
 
               <div className="px-1.5 py-1 h-full flex flex-col overflow-hidden gap-0.5">
-                {/* Client name on every block */}
                 <div className="flex items-center gap-1 min-w-0">
                   {!isCompleted && <GripVertical size={10} className="text-gray-400 flex-shrink-0 cursor-grab" />}
                   <p className="font-mono text-[13px] font-bold truncate leading-tight flex-1"
@@ -410,7 +466,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   </p>
                 </div>
 
-                {/* Service name + R badge */}
                 <div className="flex items-center gap-1 min-w-0" style={{ paddingLeft: pl }}>
                   <p className="font-mono text-xs font-semibold truncate leading-tight flex-1"
                     style={{ color: isCompleted ? '#9ca3af' : border }}>
@@ -427,13 +482,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   </p>
                 )}
 
-                {/* Action buttons on hover */}
-                {/* Action buttons — on every service block */}
                 {height > 36 && !isCompleted && (
                   <div className="flex gap-1 mt-auto opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{ paddingLeft: pl }}
                     onClick={(e) => e.stopPropagation()}>
-                    {/* Q — queues the whole appointment */}
                     {appt.status === 'scheduled' && (
                       <button onClick={(e) => addApptToQueue(e, appt)}
                         title="Send whole appointment to waiting queue"
@@ -441,13 +493,11 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                         Q
                       </button>
                     )}
-                    {/* Edit — opens appointment modal */}
                     <button onClick={(e) => { e.stopPropagation(); openEditModal(appt); }}
                       title="Edit appointment"
                       className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 font-mono text-[9px] font-bold">
-                      ✎
+                      &#x270E;
                     </button>
-                    {/* Delete — removes just this service */}
                     <button onClick={(e) => deleteSvcBlock(e, appt, serviceName)}
                       title="Remove this service"
                       className="p-0.5 rounded bg-red-100 text-red-500 hover:bg-red-200">
@@ -463,32 +513,50 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     );
   }
 
-  // No ANY column — unassigned services park in list view, not on the book
   const columns: (Manicurist | null)[] = [...manicurists];
 
   return (
     <>
-      <div ref={scrollRef} onScroll={onMainScroll} style={{ height: '100%', overflowX: 'auto', overflowY: 'auto' }}>
-        <div style={{
-          minWidth: totalGridW }}>
+      {/* Outer container — holds header (fixed) + body (scrolls) */}
+      <div ref={containerRef} className="flex flex-col w-full h-full">
 
-          {/* Mirrored top scrollbar */}
-          <div ref={topScrollRef} onScroll={onTopScroll}
-            className="sticky top-0 z-40 overflow-x-auto overflow-y-hidden bg-gray-100 border-b border-gray-200"
-            style={{ height: 10, cursor: 'ew-resize' }}>
-            <div style={{ width: totalGridW, height: 1 }} />
-          </div>
-
-          {/* Header */}
-          <div className="sticky top-[10px] z-30 flex bg-white border-b-2 border-gray-300 shadow-sm" style={{ height: HEADER_H }}>
-            <div className="flex-shrink-0 sticky left-0 z-40 bg-white border-r border-gray-300 flex items-end justify-end pb-2 pr-2" style={{ width: TIME_COL_W }}>
+        {/* ── Fixed header row — never scrolls vertically ─────────────────── */}
+        <div
+          ref={headerRef}
+          onScroll={onHeaderScroll}
+          className="flex-shrink-0 overflow-x-auto overflow-y-hidden bg-white border-b-2 border-gray-300 shadow-sm"
+          style={{ height: HEADER_H }}>
+          <div className="flex" style={{ width: totalGridW, height: HEADER_H }}>
+            {/* Time column header */}
+            <div className="flex-shrink-0 sticky left-0 z-30 bg-white border-r border-gray-300 flex items-end justify-end pb-2 pr-2"
+              style={{ width: TIME_COL_W }}>
               <span className="font-mono text-[9px] text-gray-400 tracking-widest">TIME</span>
             </div>
+            {/* Manicurist column headers — draggable to reorder */}
             {columns.map((m) => {
               const mId = m ? m.id : null;
               const cnt = new Set(getServiceBlocks(mId).map((b) => b.appt.id)).size;
+              const isReorderTarget = m && colDropTargetId === m.id;
+              const isReorderSource = m && colDragId === m.id;
               return (
-                <div key={mId ?? 'any'} className="flex-shrink-0 flex items-center gap-1.5 px-2 border-r border-gray-200" style={{ width: COL_WIDTH }}>
+                <div
+                  key={mId ?? 'any'}
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-2 border-r border-gray-200 transition-colors ${
+                    isReorderSource ? 'opacity-40' : ''
+                  } ${isReorderTarget ? 'bg-pink-50 ring-2 ring-pink-300 ring-inset' : ''}`}
+                  style={{ width: colWidth }}
+                  onDragOver={(e) => m && onColDragOver(e, m.id)}
+                  onDrop={(e) => m && onColDrop(e, m.id)}>
+                  {m && (
+                    <div
+                      draggable
+                      onDragStart={(e) => onColDragStart(e, m.id)}
+                      onDragEnd={onColDragEnd}
+                      className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0"
+                      title="Drag to reorder column">
+                      <GripVertical size={12} />
+                    </div>
+                  )}
                   <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: m ? m.color : '#d1d5db' }} />
                   <span className="font-mono text-[13px] font-bold text-gray-700 truncate flex-1">{m ? m.name : 'ANY'}</span>
                   {cnt > 0 && <span className="font-mono text-[9px] text-white bg-pink-400 rounded-full w-4 h-4 flex items-center justify-center flex-shrink-0">{cnt}</span>}
@@ -496,16 +564,22 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               );
             })}
           </div>
+        </div>
 
-          {/* Body */}
-          <div className="flex relative" style={{ height: TOTAL_H }}>
+        {/* ── Body — scrolls vertically and horizontally; horizontal synced to header ─ */}
+        <div
+          ref={bodyRef}
+          onScroll={onBodyScroll}
+          className="flex-1 min-h-0 overflow-auto">
+          <div className="flex relative" style={{ width: totalGridW, height: TOTAL_H }}>
+            {/* Time column (sticky left so it stays put on horizontal scroll) */}
             <div className="flex-shrink-0 sticky left-0 z-20 bg-white border-r border-gray-300" style={{ width: TIME_COL_W }}>
               {Array.from({ length: TOTAL_SLOTS }).map((_, i) => {
                 const label = hourLabel(i);
                 const isHour = slotType(i) === 'hour';
                 return (
                   <div key={i} className="flex items-start justify-end pr-2 pt-0.5"
-                    style={{ height: SLOT_HEIGHT, borderTop: isHour ? '2px solid #6b7280' : 'none', borderBottom: isHour ? '1px solid #e5e7eb' : slotType(i) === 'half' ? '1px solid #d1d5db' : '1px solid #e5e7eb' }}>
+                    style={{ height: slotHeight, borderTop: isHour ? '2px solid #6b7280' : 'none', borderBottom: isHour ? '1px solid #e5e7eb' : slotType(i) === 'half' ? '1px solid #d1d5db' : '1px solid #e5e7eb' }}>
                     {label && <span className="font-mono text-[11px] text-gray-700 leading-none whitespace-nowrap font-bold">{label}</span>}
                   </div>
                 );
@@ -526,32 +600,4 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       {cannotParkMsg && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
           <div className="bg-gray-900 text-white font-mono text-sm font-semibold px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3">
-            <span className="text-red-400 text-lg">&#x26D4;</span>
-            Cannot park here \u2014 {cannotParkMsg}
-          </div>
-        </div>
-      )}
-
-      {/* Pending drop confirmation for client-requested services */}
-      {pendingDrop && (() => {
-        const targetMani = pendingDrop.mId ? state.manicurists.find((m) => m.id === pendingDrop.mId) : null;
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPendingDrop(null)}>
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
-              <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 mb-2">MOVE REQUESTED SERVICE?</h3>
-              <p className="font-mono text-sm text-gray-500 mb-1">
-                <span className="font-semibold text-gray-700">{pendingDrop.info.serviceName}</span> was requested for a specific manicurist.
-              </p>
-              {targetMani && <p className="font-mono text-sm text-gray-500 mb-4">Moving to <span className="font-semibold" style={{ color: targetMani.color }}>{targetMani.name}</span> at {formatTimeOfDay(slotToTime(pendingDrop.slot))}.</p>}
-              <p className="font-mono text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2 mb-4">\u26a0 The client requested a specific technician for this service.</p>
-              <div className="flex gap-3">
-                <button onClick={() => setPendingDrop(null)} className="flex-1 py-2.5 rounded-xl border border-gray-200 font-mono text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">KEEP ORIGINAL</button>
-                <button onClick={() => { executeDrop(pendingDrop.info, pendingDrop.mId, pendingDrop.slot); setPendingDrop(null); }} className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white font-mono text-sm font-semibold hover:bg-amber-600 transition-colors">MOVE ANYWAY</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-    </>
-  );
-}
+            <span className="text-red
