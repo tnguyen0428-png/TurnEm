@@ -203,12 +203,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           });
         }
       }
+      // Idempotent merge by id — combined with deterministic child ids in
+      // MultiServiceAssign, re-dispatching the same SPLIT_AND_ASSIGN settles
+      // to the same queue state instead of duplicating children.
+      const filteredQueue = state.queue.filter((c) => c.id !== action.originalId);
+      const queueById = new Map(filteredQueue.map((c) => [c.id, c]));
+      for (const e of newEntries) queueById.set(e.id, e);
       return {
         ...state,
-        queue: [
-          ...state.queue.filter((c) => c.id !== action.originalId),
-          ...newEntries,
-        ],
+        queue: Array.from(queueById.values()),
         manicurists: state.manicurists.map((m) => {
           const assignment = assignMap.get(m.id);
           if (!assignment) return m;
@@ -275,8 +278,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // set but serviceRequests isn't populated per-service.
       const wholeEntryRequested = !!client.isRequested &&
         client.requestedManicuristId === action.manicuristId;
+      // Deterministic ID — the queue entry's own id. A queue entry can only be
+      // completed once (it's removed from the queue below), so using its id as
+      // the completed_services row id makes COMPLETE_SERVICE idempotent at the
+      // PRIMARY KEY layer. If two devices both fire COMPLETE_SERVICE for the
+      // same queue entry, both produce the same id and the second upsert is a
+      // no-op instead of a duplicate row.
       const completedEntry = {
-        id: crypto.randomUUID(),
+        id: client.id,
         clientName: client.clientName,
         services: client.services,
         turnValue: client.turnValue,
@@ -289,11 +298,20 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         isAppointment: !!client.isAppointment,
         isRequested: wholeEntryRequested,
       };
+      // Idempotent merge: if a row with this id already exists in completed
+      // (e.g. a remote echo or a duplicate dispatch), replace it in place
+      // instead of appending a second copy. Combined with the deterministic
+      // id above, this makes COMPLETE_SERVICE safe to fire any number of
+      // times for the same queue entry.
+      const completedAlreadyExists = state.completed.some((c) => c.id === completedEntry.id);
+      const nextCompleted = completedAlreadyExists
+        ? state.completed.map((c) => (c.id === completedEntry.id ? completedEntry : c))
+        : [...state.completed, completedEntry];
       return {
         ...state,
         queue: updatedQueue,
         manicurists: updatedManicurists,
-        completed: [...state.completed, completedEntry],
+        completed: nextCompleted,
       };
     }
 

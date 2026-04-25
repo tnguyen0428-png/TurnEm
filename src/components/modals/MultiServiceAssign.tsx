@@ -205,8 +205,11 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         ? group.services.map((s) => ({ service: s as ServiceType, manicuristIds: [mId] }))
         : [];
 
+      // Deterministic id derived from the parent + manicurist slot — re-firing
+      // SPLIT_AND_ASSIGN with the same selections produces the same child id,
+      // so the upsert is idempotent at the PRIMARY KEY layer.
       const entry: QueueEntry = {
-        id: crypto.randomUUID(),
+        id: `${client.id}-${mId}`,
         clientName: client.clientName,
         services: group.services,
         turnValue: group.turnValue,
@@ -239,8 +242,10 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
     for (const { service, mId } of deferredRows) {
       const baseTurn = getTurnValueForService(service);
+      // Deterministic id — parent + manicurist + service uniquely identifies
+      // a deferred-row slot, so re-firing produces the same child id.
       const entry: QueueEntry = {
-        id: crypto.randomUUID(),
+        id: `${client.id}-${mId}-${service}`,
         clientName: client.clientName,
         services: [service],
         turnValue: baseTurn > 0 ? (state.salonServices.find((s) => s.name === service)?.category === 'Combo' ? 1 : 0.5) : 0,
@@ -260,8 +265,10 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
     if (waitingServices.length > 0) {
       const turnValue = waitingServices.reduce((sum, s) => sum + getTurnValueForService(s), 0);
+      // Deterministic id — there's only one "waiting bucket" per parent, so
+      // ${parent.id}-waiting collapses any double-fires to a single row.
       const entry: QueueEntry = {
-        id: crypto.randomUUID(),
+        id: `${client.id}-waiting`,
         clientName: client.clientName,
         services: waitingServices,
         turnValue,
