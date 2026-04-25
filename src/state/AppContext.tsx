@@ -1131,4 +1131,40 @@ async function syncTurnCriteria(turnCriteria: TurnCriteria[], prev: TurnCriteria
     changed.push(turnCriteriaToRow(c));
   }
   if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from
+  const { error } = await withRetry(() => supabase.from('turn_criteria').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncTurnCriteria] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function calendarDayUnchanged(a: CalendarDay, b: CalendarDay): boolean {
+  if (a === b) return true;
+  return a.status === b.status && a.note === b.note;
+}
+
+function calendarDayToRow(d: CalendarDay) {
+  return { date: d.date, status: d.status, note: d.note };
+}
+
+async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[], onError: (msg: string) => void) {
+  const currentDates = new Set(calendarDays.map((d) => d.date));
+  const removed = prev.filter((d) => !currentDates.has(d.date));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('calendar_days').delete().in('date', removed.map((d) => d.date)));
+    if (error) { console.error('[syncCalendarDays] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevByDate = new Map(prev.map((d) => [d.date, d]));
+  const changed: ReturnType<typeof calendarDayToRow>[] = [];
+  for (const d of calendarDays) {
+    const previous = prevByDate.get(d.date);
+    if (previous && calendarDayUnchanged(previous, d)) continue;
+    changed.push(calendarDayToRow(d));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('calendar_days').upsert(changed, { onConflict: 'date' }));
+  if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used within AppProvider');
+  return ctx;
+}
