@@ -59,4 +59,10 @@ export type AppAction =
   | { type: 'REMOTE_COMPLETED_DELETE'; id: string }
   | { type: 'REMOTE_APPOINTMENT_UPSERT'; appointment: Appointment }
   | { type: 'REMOTE_APPOINTMENT_DELETE'; id: string }
+  | { type: 'REMOTE_SALON_SERVICE_UPSERT'; service: SalonService }
+  | { type: 'REMOTE_SALON_SERVICE_DELETE'; id: string }
+  | { type: 'REMOTE_TURN_CRITERIA_UPSERT'; criteria: TurnCriteria }
+  | { type: 'REMOTE_TURN_CRITERIA_DELETE'; id: string }
+  | { type: 'REMOTE_CALENDAR_DAY_UPSERT'; day: CalendarDay }
+  | { type: 'REMOTE_CALENDAR_DAY_DELETE'; date: string }
   | { type: 'REMOTE_SYSTEM_STATE_UPDATE'; lastArchiveDate: string | null };

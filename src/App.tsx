@@ -19,7 +19,7 @@ import { Loader2 } from 'lucide-react';
 import type { Manicurist } from './types';
 
 function AppContent() {
-  const { state, syncError, clearSyncError } = useApp();
+  const { state, syncError, clearSyncError, saveStatus } = useApp();
 
   if (!state.loaded) {
     return (
@@ -54,6 +54,45 @@ function AppContent() {
           <button onClick={clearSyncError} style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer' }}>✕</button>
         </div>
       )}
+      {!syncError && (saveStatus === 'saving' || saveStatus === 'saved') && (
+        <div style={{
+          position: 'fixed',
+          bottom: 16,
+          right: 16,
+          zIndex: 9999,
+          background: saveStatus === 'saving' ? '#1f2937' : '#10b981',
+          color: 'white',
+          padding: '8px 14px',
+          borderRadius: 999,
+          fontSize: 12,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontWeight: 600,
+          letterSpacing: '0.05em',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          transition: 'opacity 200ms ease',
+        }}>
+          {saveStatus === 'saving' ? (
+            <>
+              <span style={{
+                display: 'inline-block',
+                width: 10,
+                height: 10,
+                borderRadius: '50%',
+                border: '2px solid rgba(255,255,255,0.3)',
+                borderTopColor: 'white',
+                animation: 'turnem-spin 0.8s linear infinite',
+              }} />
+              SAVING…
+            </>
+          ) : (
+            <>✓ SAVED</>
+          )}
+        </div>
+      )}
+      <style>{`@keyframes turnem-spin { to { transform: rotate(360deg); } }`}</style>
       <TabBar />
       <main className="flex-1 overflow-hidden">
         {state.view === 'queue' && <QueueScreen />}

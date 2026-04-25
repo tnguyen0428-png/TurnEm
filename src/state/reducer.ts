@@ -560,6 +560,33 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'REMOTE_APPOINTMENT_DELETE':
       return { ...state, appointments: state.appointments.filter((a) => a.id !== action.id) };
 
+    case 'REMOTE_SALON_SERVICE_UPSERT': {
+      const idx = state.salonServices.findIndex((s) => s.id === action.service.id);
+      if (idx === -1) return { ...state, salonServices: [...state.salonServices, action.service] };
+      return { ...state, salonServices: state.salonServices.map((s, i) => i === idx ? action.service : s) };
+    }
+
+    case 'REMOTE_SALON_SERVICE_DELETE':
+      return { ...state, salonServices: state.salonServices.filter((s) => s.id !== action.id) };
+
+    case 'REMOTE_TURN_CRITERIA_UPSERT': {
+      const idx = state.turnCriteria.findIndex((c) => c.id === action.criteria.id);
+      if (idx === -1) return { ...state, turnCriteria: [...state.turnCriteria, action.criteria] };
+      return { ...state, turnCriteria: state.turnCriteria.map((c, i) => i === idx ? action.criteria : c) };
+    }
+
+    case 'REMOTE_TURN_CRITERIA_DELETE':
+      return { ...state, turnCriteria: state.turnCriteria.filter((c) => c.id !== action.id) };
+
+    case 'REMOTE_CALENDAR_DAY_UPSERT': {
+      const idx = state.calendarDays.findIndex((d) => d.date === action.day.date);
+      if (idx === -1) return { ...state, calendarDays: [...state.calendarDays, action.day] };
+      return { ...state, calendarDays: state.calendarDays.map((d, i) => i === idx ? action.day : d) };
+    }
+
+    case 'REMOTE_CALENDAR_DAY_DELETE':
+      return { ...state, calendarDays: state.calendarDays.filter((d) => d.date !== action.date) };
+
     case 'REMOTE_SYSTEM_STATE_UPDATE':
       // system_state is a singleton whose only field the app reads (last_archive_date) is
       // consulted on startup directly from the DB. There's no local state to update here;

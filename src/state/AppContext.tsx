@@ -7,6 +7,13 @@ import { defaultSalonServices } from '../constants/salonServices';
 import { defaultManicurists } from '../constants/manicurists';
 import { getLocalDateStr, getTodayLA } from '../utils/time';
 
+// Visible save status. Driven by a counter of in-flight DB writes:
+// - 'saving': at least one upsert/delete is awaiting a response
+// - 'saved': all in-flight writes resolved successfully (auto-fades to 'idle' after ~1.5s)
+// - 'error': a write failed; cleared by the next successful save
+// - 'idle': nothing to show
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
 interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
@@ -14,6 +21,7 @@ interface AppContextType {
   archiveTodayIfNeeded: (skipHourCheck?: boolean) => Promise<void>;
   syncError: string | null;
   clearSyncError: () => void;
+  saveStatus: SaveStatus;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -169,10 +177,58 @@ let _dataLoadStarted = false;
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const clearSyncError = useCallback(() => setSyncError(null), []);
+  const clearSyncError = useCallback(() => {
+    setSyncError(null);
+    setSaveStatus((current) => (current === 'error' ? 'idle' : current));
+  }, []);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  // Counter of currently in-flight sync operations. When this drops back to zero with
+  // no error, status flips to 'saved' and auto-fades. On error, status flips to 'error'.
+  const pendingSavesRef = useRef(0);
+  const savedFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevStateRef = useRef<AppState>(INITIAL_STATE);
   const completedRef = useRef<AppState['completed']>(INITIAL_STATE.completed);
   const dailyHistoryRef = useRef<AppState['dailyHistory']>(INITIAL_STATE.dailyHistory);
+
+  // Wraps a sync function so we track in-flight count and surface 'saving' / 'saved' /
+  // 'error' to the UI. Each call increments the counter and shows 'saving'; when the
+  // last in-flight resolves we either flip to 'saved' (auto-fade) or 'error'.
+  const trackSave = useCallback(async (fn: () => Promise<void>) => {
+    pendingSavesRef.current += 1;
+    setSaveStatus('saving');
+    if (savedFadeTimerRef.current) {
+      clearTimeout(savedFadeTimerRef.current);
+      savedFadeTimerRef.current = null;
+    }
+    let failed = false;
+    try {
+      await fn();
+    } catch (err) {
+      failed = true;
+      console.error('[trackSave] uncaught error:', err);
+    } finally {
+      pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
+      if (pendingSavesRef.current === 0) {
+        if (failed) {
+          setSaveStatus('error');
+        } else {
+          // The sync function reports its own errors via setSyncError. If syncError is
+          // already set we surface 'error'; otherwise show a brief 'saved' confirmation.
+          setSaveStatus((current) => (current === 'error' ? 'error' : 'saved'));
+          savedFadeTimerRef.current = setTimeout(() => {
+            setSaveStatus((current) => (current === 'saved' ? 'idle' : current));
+          }, 1500);
+        }
+      }
+    }
+  }, []);
+
+  // When setSyncError is called by a sync function, also surface 'error' status so the
+  // banner+toast pair stay consistent. Wrap the setter so callers don't need to know.
+  const setSyncErrorTracked = useCallback((msg: string | null) => {
+    setSyncError(msg);
+    if (msg) setSaveStatus('error');
+  }, []);
   // When a REMOTE_* action is about to be dispatched, the subscription handler sets this
   // to true so the sync effect below skips its DB flush for that state transition.
   // This prevents echo loops: Device A writes → subscription fires on A → dispatch REMOTE_*
@@ -495,14 +551,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       prevStateRef.current = state;
       return;
     }
-    if (prev.manicurists !== state.manicurists) syncManicurists(state.manicurists, prev.manicurists, setSyncError);
-    if (prev.queue !== state.queue) syncQueue(state.queue, prev.queue, setSyncError);
-    if (prev.completed !== state.completed) syncCompleted(state.completed, prev.completed, setSyncError);
-    if (prev.appointments !== state.appointments) syncAppointments(state.appointments, prev.appointments, setSyncError);
-    if (prev.salonServices !== state.salonServices) syncSalonServices(state.salonServices, prev.salonServices, setSyncError);
-    if (prev.turnCriteria !== state.turnCriteria) syncTurnCriteria(state.turnCriteria, setSyncError);
-    if (prev.calendarDays !== state.calendarDays) syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncError);
-    if (prev.dailyHistory !== state.dailyHistory) syncDailyHistory(state.dailyHistory, prev.dailyHistory, setSyncError);
+    if (prev.manicurists !== state.manicurists) trackSave(() => syncManicurists(state.manicurists, prev.manicurists, setSyncErrorTracked));
+    if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked));
+    if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked));
+    if (prev.appointments !== state.appointments) trackSave(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked));
+    if (prev.salonServices !== state.salonServices) trackSave(() => syncSalonServices(state.salonServices, prev.salonServices, setSyncErrorTracked));
+    if (prev.turnCriteria !== state.turnCriteria) trackSave(() => syncTurnCriteria(state.turnCriteria, prev.turnCriteria, setSyncErrorTracked));
+    if (prev.calendarDays !== state.calendarDays) trackSave(() => syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncErrorTracked));
+    if (prev.dailyHistory !== state.dailyHistory) trackSave(() => syncDailyHistory(state.dailyHistory, prev.dailyHistory, setSyncErrorTracked));
     prevStateRef.current = state;
     completedRef.current = state.completed;
     dailyHistoryRef.current = state.dailyHistory;
@@ -571,6 +627,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .subscribe();
 
+    const salonServicesChan = supabase
+      .channel('realtime:salon_services')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'salon_services' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_SALON_SERVICE_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_SALON_SERVICE_UPSERT', service: mapDbSalonService(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const turnCriteriaChan = supabase
+      .channel('realtime:turn_criteria')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'turn_criteria' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_TURN_CRITERIA_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_TURN_CRITERIA_UPSERT', criteria: mapDbTurnCriteria(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const calendarDaysChan = supabase
+      .channel('realtime:calendar_days')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_days' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const date = (payload.old as { date?: string } | null)?.date;
+          if (date) dispatch({ type: 'REMOTE_CALENDAR_DAY_DELETE', date });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_CALENDAR_DAY_UPSERT', day: mapDbCalendarDay(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
     // system_state is a singleton and the reducer's REMOTE_SYSTEM_STATE_UPDATE case
     // returns state unchanged (no local field tracks it — the startup check reads from DB
     // directly). We therefore DO NOT set isApplyingRemoteRef here: if we did, the reducer
@@ -590,6 +688,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(queueChan);
       supabase.removeChannel(completedChan);
       supabase.removeChannel(appointmentsChan);
+      supabase.removeChannel(salonServicesChan);
+      supabase.removeChannel(turnCriteriaChan);
+      supabase.removeChannel(calendarDaysChan);
       supabase.removeChannel(systemStateChan);
     };
   }, [state.loaded]);
@@ -632,7 +733,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.loaded, archiveTodayIfNeeded]);
 
   return (
-    <AppContext.Provider value={{ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError }}>
+    <AppContext.Provider value={{ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus }}>
       {children}
     </AppContext.Provider>
   );
@@ -881,59 +982,124 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
   }
 }
 
-async function syncSalonServices(salonServices: SalonService[], prev: SalonService[], onError: (msg: string) => void) {
-  const currentIds = new Set(salonServices.map((s) => s.id));
-  const deleted = prev.filter((s) => !currentIds.has(s.id));
-  for (const s of deleted) {
-    const { error } = await withRetry(() => supabase.from('salon_services').delete().eq('id', s.id));
-    if (error) { console.error('[syncSalonServices] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
-  for (const s of salonServices) {
-    const { error } = await withRetry(() => supabase.from('salon_services').upsert({
-      id: s.id,
-      name: s.name,
-      turn_value: s.turnValue,
-      duration: s.duration,
-      price: s.price,
-      is_active: s.isActive,
-      category: s.category,
-      sort_order: s.sortOrder,
-      is_fourth_position_special: s.isFourthPositionSpecial,
-    }, { onConflict: 'id' }));
-    if (error) { console.error('[syncSalonServices] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
+function salonServiceUnchanged(a: SalonService, b: SalonService): boolean {
+  if (a === b) return true;
+  return (
+    a.name === b.name &&
+    a.turnValue === b.turnValue &&
+    a.duration === b.duration &&
+    a.price === b.price &&
+    a.isActive === b.isActive &&
+    a.category === b.category &&
+    a.sortOrder === b.sortOrder &&
+    a.isFourthPositionSpecial === b.isFourthPositionSpecial
+  );
 }
 
-async function syncTurnCriteria(turnCriteria: TurnCriteria[], onError: (msg: string) => void) {
-  for (const c of turnCriteria) {
-    const { error } = await withRetry(() => supabase.from('turn_criteria').upsert({
-      id: c.id,
-      name: c.name,
-      description: c.description,
-      priority: c.priority,
-      enabled: c.enabled,
-      type: c.type,
-      value: c.value,
-    }, { onConflict: 'id' }));
-    if (error) { console.error('[syncTurnCriteria] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+function salonServiceToRow(s: SalonService) {
+  return {
+    id: s.id,
+    name: s.name,
+    turn_value: s.turnValue,
+    duration: s.duration,
+    price: s.price,
+    is_active: s.isActive,
+    category: s.category,
+    sort_order: s.sortOrder,
+    is_fourth_position_special: s.isFourthPositionSpecial,
+  };
+}
+
+async function syncSalonServices(salonServices: SalonService[], prev: SalonService[], onError: (msg: string) => void) {
+  const currentIds = new Set(salonServices.map((s) => s.id));
+  const removed = prev.filter((s) => !currentIds.has(s.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('salon_services').delete().in('id', removed.map((s) => s.id)));
+    if (error) { console.error('[syncSalonServices] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
+  // Per-row diff — only upsert services that actually changed since prev. This stops a stale
+  // device from clobbering another device's recent edit by re-pushing every row on every save.
+  const prevById = new Map(prev.map((s) => [s.id, s]));
+  const changed: ReturnType<typeof salonServiceToRow>[] = [];
+  for (const s of salonServices) {
+    const previous = prevById.get(s.id);
+    if (previous && salonServiceUnchanged(previous, s)) continue;
+    changed.push(salonServiceToRow(s));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('salon_services').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncSalonServices] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function turnCriteriaUnchanged(a: TurnCriteria, b: TurnCriteria): boolean {
+  if (a === b) return true;
+  return (
+    a.name === b.name &&
+    a.description === b.description &&
+    a.priority === b.priority &&
+    a.enabled === b.enabled &&
+    a.type === b.type &&
+    a.value === b.value
+  );
+}
+
+function turnCriteriaToRow(c: TurnCriteria) {
+  return {
+    id: c.id,
+    name: c.name,
+    description: c.description,
+    priority: c.priority,
+    enabled: c.enabled,
+    type: c.type,
+    value: c.value,
+  };
+}
+
+async function syncTurnCriteria(turnCriteria: TurnCriteria[], prev: TurnCriteria[], onError: (msg: string) => void) {
+  const currentIds = new Set(turnCriteria.map((c) => c.id));
+  const removed = prev.filter((c) => !currentIds.has(c.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('turn_criteria').delete().in('id', removed.map((c) => c.id)));
+    if (error) { console.error('[syncTurnCriteria] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((c) => [c.id, c]));
+  const changed: ReturnType<typeof turnCriteriaToRow>[] = [];
+  for (const c of turnCriteria) {
+    const previous = prevById.get(c.id);
+    if (previous && turnCriteriaUnchanged(previous, c)) continue;
+    changed.push(turnCriteriaToRow(c));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('turn_criteria').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncTurnCriteria] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function calendarDayUnchanged(a: CalendarDay, b: CalendarDay): boolean {
+  if (a === b) return true;
+  return a.status === b.status && a.note === b.note;
+}
+
+function calendarDayToRow(d: CalendarDay) {
+  return { date: d.date, status: d.status, note: d.note };
 }
 
 async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[], onError: (msg: string) => void) {
   const currentDates = new Set(calendarDays.map((d) => d.date));
-  const deleted = prev.filter((d) => !currentDates.has(d.date));
-  for (const d of deleted) {
-    const { error } = await withRetry(() => supabase.from('calendar_days').delete().eq('date', d.date));
+  const removed = prev.filter((d) => !currentDates.has(d.date));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('calendar_days').delete().in('date', removed.map((d) => d.date)));
     if (error) { console.error('[syncCalendarDays] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
+  const prevByDate = new Map(prev.map((d) => [d.date, d]));
+  const changed: ReturnType<typeof calendarDayToRow>[] = [];
   for (const d of calendarDays) {
-    const { error } = await withRetry(() => supabase.from('calendar_days').upsert({
-      date: d.date,
-      status: d.status,
-      note: d.note,
-    }, { onConflict: 'date' }));
-    if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    const previous = prevByDate.get(d.date);
+    if (previous && calendarDayUnchanged(previous, d)) continue;
+    changed.push(calendarDayToRow(d));
   }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('calendar_days').upsert(changed, { onConflict: 'date' }));
+  if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 }
 
 export function useApp() {
