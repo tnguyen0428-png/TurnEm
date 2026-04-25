@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { CalendarCheck, ChevronDown, ChevronUp, X, MessageSquare } from 'lucide-react';
+import { CalendarCheck, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import type { SalonService, ServiceType, Manicurist, ServiceRequest } from '../../types';
 
@@ -299,48 +299,33 @@ export default function ClientForm({
                   </div>
 
                   {isExpanded && (
-                    <div className="mt-1.5 ml-3 border border-pink-100 rounded-lg bg-white overflow-hidden">
-                      <div className="px-3 py-2 border-b border-gray-100 bg-gray-50">
-                        <p className="font-mono text-[10px] text-gray-500 font-semibold">
-                          REQUEST SPECIFIC MANICURIST (optional)
-                        </p>
-                      </div>
+                    <div className="mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white">
+                      <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">
+                        REQUEST MANICURIST <span className="text-gray-300 font-normal">(optional)</span>
+                      </p>
                       {skilledStaff.length === 0 ? (
-                        <p className="px-3 py-2 font-mono text-[10px] text-gray-400">
+                        <p className="font-mono text-[10px] text-gray-400">
                           No staff with this skill clocked in
                         </p>
                       ) : (
-                        skilledStaff.map((m) => {
-                          const isSelected = assignedIds.includes(m.id);
-                          return (
-                            <label
-                              key={m.id}
-                              className={`flex items-center gap-2.5 px-3 py-2.5 cursor-pointer transition-colors ${
-                                isSelected ? 'bg-pink-50' : 'hover:bg-gray-50'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleManicurist(idx, m.id)}
-                                className="w-4 h-4 rounded border-gray-300 text-pink-500 focus:ring-pink-300"
-                              />
-                              <div
-                                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                style={{ backgroundColor: m.color }}
-                              />
-                              <span className="font-mono text-[11px] font-medium text-gray-800">
+                        <div className="flex flex-wrap gap-1.5">
+                          {skilledStaff.map((m) => {
+                            const isSelected = assignedIds.includes(m.id);
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => toggleManicurist(idx, m.id)}
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[10px] font-semibold transition-all ${
+                                  isSelected ? 'bg-pink-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                }`}
+                              >
+                                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
                                 {m.name}
-                              </span>
-                              {m.phone && (
-                                <MessageSquare size={10} className="text-emerald-400" />
-                              )}
-                              <span className="font-mono text-[10px] text-gray-400 ml-auto">
-                                {m.totalTurns.toFixed(1)} turns
-                              </span>
-                            </label>
-                          );
-                        })
+                              </button>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
                   )}
