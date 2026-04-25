@@ -1,7 +1,7 @@
 import { UserPlus, Pencil, X, Clock, Timer, Undo2 } from 'lucide-react';
 import type { QueueEntry, Manicurist, SalonService } from '../../types';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
-import { formatWaitTime, formatTime } from '../../utils/time';
+import { formatWaitTime, formatTime, formatTimeOfDay } from '../../utils/time';
 
 interface QueueCardProps {
   client: QueueEntry;
@@ -93,6 +93,14 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
                 style={{ background: '#378add', color: 'white' }}
               >
                 APPT
+              </span>
+            )}
+            {isAppt && client.originalAppointment?.time && (
+              <span
+                className="font-mono text-[11px] font-semibold"
+                style={{ color: '#185fa5' }}
+              >
+                {formatTimeOfDay(client.originalAppointment.time)}
               </span>
             )}
             {client.isRequested && <Badge label="REQ" variant="pink" />}

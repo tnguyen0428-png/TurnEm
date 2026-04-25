@@ -569,6 +569,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     style={{ color: isCompleted ? '#9ca3af' : '#111827' }}>
                     {appt.clientName || 'Walk-in'}
                   </p>
+                  {isFirst && appt.time && (
+                    <span className="font-mono text-[10px] font-semibold flex-shrink-0 leading-tight"
+                      style={{ color: isCompleted ? '#9ca3af' : '#6b7280' }}>
+                      {formatTimeOfDay(appt.time)}
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-1 min-w-0" style={{ paddingLeft: pl }}>
