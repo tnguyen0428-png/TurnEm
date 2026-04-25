@@ -502,6 +502,52 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    // --- Remote-sync handlers ---
+    // Each replaces-or-inserts by id. Idempotent: if the row hasn't materially changed,
+    // the merge still produces a fresh state reference, but the AppContext sync effect
+    // will skip its DB flush because the `isApplyingRemoteRef` flag is set by the caller.
+    case 'REMOTE_MANICURIST_UPSERT': {
+      const idx = state.manicurists.findIndex((m) => m.id === action.manicurist.id);
+      if (idx === -1) return { ...state, manicurists: [...state.manicurists, action.manicurist] };
+      return { ...state, manicurists: state.manicurists.map((m, i) => i === idx ? action.manicurist : m) };
+    }
+
+    case 'REMOTE_MANICURIST_DELETE':
+      return { ...state, manicurists: state.manicurists.filter((m) => m.id !== action.id) };
+
+    case 'REMOTE_QUEUE_UPSERT': {
+      const idx = state.queue.findIndex((c) => c.id === action.entry.id);
+      if (idx === -1) return { ...state, queue: [...state.queue, action.entry] };
+      return { ...state, queue: state.queue.map((c, i) => i === idx ? action.entry : c) };
+    }
+
+    case 'REMOTE_QUEUE_DELETE':
+      return { ...state, queue: state.queue.filter((c) => c.id !== action.id) };
+
+    case 'REMOTE_COMPLETED_UPSERT': {
+      const idx = state.completed.findIndex((c) => c.id === action.entry.id);
+      if (idx === -1) return { ...state, completed: [...state.completed, action.entry] };
+      return { ...state, completed: state.completed.map((c, i) => i === idx ? action.entry : c) };
+    }
+
+    case 'REMOTE_COMPLETED_DELETE':
+      return { ...state, completed: state.completed.filter((c) => c.id !== action.id) };
+
+    case 'REMOTE_APPOINTMENT_UPSERT': {
+      const idx = state.appointments.findIndex((a) => a.id === action.appointment.id);
+      if (idx === -1) return { ...state, appointments: [...state.appointments, action.appointment] };
+      return { ...state, appointments: state.appointments.map((a, i) => i === idx ? action.appointment : a) };
+    }
+
+    case 'REMOTE_APPOINTMENT_DELETE':
+      return { ...state, appointments: state.appointments.filter((a) => a.id !== action.id) };
+
+    case 'REMOTE_SYSTEM_STATE_UPDATE':
+      // system_state is a singleton whose only field the app reads (last_archive_date) is
+      // consulted on startup directly from the DB. There's no local state to update here;
+      // we keep the case so the subscription handler can dispatch uniformly for every table.
+      return state;
+
     default:
       return state;
   }

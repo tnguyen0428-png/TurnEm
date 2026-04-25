@@ -15,7 +15,6 @@ import type { QueueEntry, ServiceType, Manicurist } from '../../types';
 import { isAcrylicService, getSamPreferenceForServices, findSamIfActive, isSam } from '../../utils/salonRules';
 import {
   getClientDurationMs,
-  getAlmostDoneMs,
   formatServiceList,
   getDistinctServices,
   getEligibleForService,
@@ -343,44 +342,6 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: 0, isDeferred: true, isRequested: wasRequested });
     }
     return rows;
-  }
-
-  function buildConfirmMessage() {
-    const parts: string[] = [];
-    const assignable = new Map<string, ServiceType[]>();
-    const deferred = new Map<string, ServiceType[]>();
-    const unassigned: ServiceType[] = [];
-
-    for (const row of serviceRows) {
-      const key = row.uniqueKey;
-      const mId = assignments[key];
-      if (mId) {
-        const m = state.manicurists.find((x) => x.id === mId);
-        if (m && m.status === 'available') {
-          if (!assignable.has(mId)) assignable.set(mId, []);
-          assignable.get(mId)!.push(row.service);
-        } else {
-          if (!deferred.has(mId)) deferred.set(mId, []);
-          deferred.get(mId)!.push(row.service);
-        }
-      } else {
-        unassigned.push(row.service);
-      }
-    }
-
-    for (const [mId, services] of assignable) {
-      const m = state.manicurists.find((x) => x.id === mId);
-      parts.push(`${formatServiceList(services)} -> ${m?.name ?? '?'}`);
-    }
-    for (const [mId, services] of deferred) {
-      const m = state.manicurists.find((x) => x.id === mId);
-      parts.push(`${formatServiceList(services)} -> Waiting for ${m?.name ?? '?'}`);
-    }
-    if (unassigned.length > 0) {
-      parts.push(`${formatServiceList(unassigned)} -> Waiting`);
-    }
-
-    return `Assign ${client.clientName}?\n\n${parts.join('\n')}`;
   }
 
   return (

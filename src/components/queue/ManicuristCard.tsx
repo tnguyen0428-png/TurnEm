@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff, Clock } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
 import CountdownBadge from '../shared/CountdownBadge';

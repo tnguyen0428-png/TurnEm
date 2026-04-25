@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LogOut, Bell, CheckCircle, Clock, Volume2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
-import { subscribeToPush, isPushSupported, getPermissionState } from '../../utils/pushNotifications';
+import { getPermissionState } from '../../utils/pushNotifications';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { Manicurist, CompletedEntry } from '../../types';
 
@@ -13,7 +13,6 @@ interface StaffPortalScreenProps {
 
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
   const { state, dispatch } = useApp();
-  const [pushStatus, setPushStatus] = useState<'idle' | 'subscribing' | 'subscribed' | 'error'>('idle');
   const [selectedDate, setSelectedDate] = useState<string>(getTodayLA());
   const [historyEntries, setHistoryEntries] = useState<CompletedEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -315,15 +314,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     }
   }
 
-  async function handleEnablePush() {
-    setPushStatus('subscribing');
-    const result = await subscribeToPush(manicurist.id);
-    setPushStatus(result.success ? 'subscribed' : 'error');
-    if (!result.success) {
-      setTimeout(() => setPushStatus('idle'), 3000);
-    }
-  }
-
   const statusLabel = manicurist.status === 'available' ? 'Available' :
     manicurist.status === 'busy' ? 'Busy' : 'On Break';
   const statusColor = manicurist.status === 'available' ? 'text-emerald-500' :
@@ -388,7 +378,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             <div>
               <div className="flex items-center gap-1.5">
                 <h1 className="font-bebas text-xl tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h1>
-                {(pushStatus === 'subscribed' || getPermissionState() === 'granted') && (
+                {getPermissionState() === 'granted' && (
                   <Bell size={14} className="text-emerald-500" />
                 )}
               </div>

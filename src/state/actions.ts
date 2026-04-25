@@ -1,4 +1,4 @@
-import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft } from '../types';
+import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft, CompletedEntry } from '../types';
 
 export type AppAction =
   | { type: 'SET_VIEW'; view: ViewType }
@@ -46,4 +46,17 @@ export type AppAction =
   | { type: 'TOGGLE_WAX2'; id: string }
   | { type: 'TOGGLE_WAX3'; id: string }
   | { type: 'SAVE_DAILY_HISTORY'; entry: DailyHistory }
-  | { type: 'DAILY_RESET' };
+  | { type: 'DAILY_RESET' }
+  // --- Remote-sync actions ---
+  // Dispatched by the realtime subscription when another device writes to the DB.
+  // The AppContext sync effect checks `isApplyingRemoteRef` and skips its DB flush
+  // for any state change caused by these actions, preventing echo loops.
+  | { type: 'REMOTE_MANICURIST_UPSERT'; manicurist: Manicurist }
+  | { type: 'REMOTE_MANICURIST_DELETE'; id: string }
+  | { type: 'REMOTE_QUEUE_UPSERT'; entry: QueueEntry }
+  | { type: 'REMOTE_QUEUE_DELETE'; id: string }
+  | { type: 'REMOTE_COMPLETED_UPSERT'; entry: CompletedEntry }
+  | { type: 'REMOTE_COMPLETED_DELETE'; id: string }
+  | { type: 'REMOTE_APPOINTMENT_UPSERT'; appointment: Appointment }
+  | { type: 'REMOTE_APPOINTMENT_DELETE'; id: string }
+  | { type: 'REMOTE_SYSTEM_STATE_UPDATE'; lastArchiveDate: string | null };

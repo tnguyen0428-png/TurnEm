@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Plus, UserCheck, Trash2, GripVertical, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, GripVertical } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import type { Appointment, Manicurist, QueueEntry, ServiceType } from '../../types';
@@ -122,11 +122,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     return (appt.services?.length ? appt.services : [appt.service as string]).filter(Boolean);
   }
 
-  // R badge only for explicit client requests (not salon-placed)
-  function svcHasRequest(appt: Appointment, svcName: string): boolean {
-    const req = (appt.serviceRequests || []).find((r) => r.service === svcName);
-    return !!(req && req.manicuristIds.length > 0 && req.clientRequest === true);
-  }
 
   function getServiceBlocks(mId: string | null): ServiceBlock[] {
     const blocks: ServiceBlock[] = [];
@@ -258,10 +253,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     // Find what column this occurrence is currently in
     const reqsForSvc = allReqs.filter((r) => r.service === serviceName);
     const currentReq = reqsForSvc[occurrence] ?? null;
-    const currentMId = currentReq
-      ? (currentReq.manicuristIds[0] ?? null)
-      : (appt.manicuristId ?? null);
-
     // Build the new serviceRequest entry for this service occurrence
     const allIdxsForSvc = allReqs.reduce<number[]>((acc, r, i) => {
       if (r.service === serviceName) acc.push(i);
@@ -360,8 +351,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   function renderColumn(m: Manicurist | null) {
     const mId    = m ? m.id : null;
     const blocks = getServiceBlocks(mId);
-    const apptCnt = new Set(blocks.map((b) => b.appt.id)).size;
-
     return (
       <div key={mId ?? 'any'} className="flex-shrink-0 relative border-r border-gray-200"
         style={{ width: COL_WIDTH, height: TOTAL_H }}
@@ -388,7 +377,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         })}
 
         {blocks.map((blk, idx) => {
-          const { appt, serviceName, occurrence, blockTime, top, height, isFirst, isApptFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;
+          const { appt, serviceName, occurrence, blockTime, top, height, isFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;
           const palette     = apptPalette(appt);
           const isDragging  = dragInfo?.apptId === appt.id && dragInfo?.serviceName === serviceName;
           const isCompleted = appt.status === 'completed';
@@ -549,7 +538,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
       {/* Pending drop confirmation for client-requested services */}
       {pendingDrop && (() => {
-        const appt = state.appointments.find((a) => a.id === pendingDrop.info.apptId);
         const targetMani = pendingDrop.mId ? state.manicurists.find((m) => m.id === pendingDrop.mId) : null;
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPendingDrop(null)}>

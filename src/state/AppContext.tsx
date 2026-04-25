@@ -79,6 +79,30 @@ function mapDbQueueEntry(row: Record<string, unknown>): QueueEntry {
   };
 }
 
+// Used by the realtime subscription on completed_services. The initial-load path has its own
+// inline mapper with extra "bad pattern" cleanup — that cleanup is only relevant for historic
+// rows and doesn't belong in a realtime event handler.
+function mapDbCompleted(row: Record<string, unknown>): CompletedEntry {
+  const dbSvcs = row.services as string[] | null;
+  const fallbackSvc = row.service as string;
+  const services = (dbSvcs && dbSvcs.length > 0 ? dbSvcs : [fallbackSvc]).filter(Boolean) as ServiceType[];
+  const rawRequested = Array.isArray(row.requested_services) ? (row.requested_services as string[]) : [];
+  return {
+    id: row.id as string,
+    clientName: row.client_name as string,
+    services,
+    turnValue: Number(row.turn_value) || 0,
+    manicuristId: row.manicurist_id as string,
+    manicuristName: row.manicurist_name as string,
+    manicuristColor: row.manicurist_color as string,
+    startedAt: new Date(row.started_at as string).getTime(),
+    completedAt: new Date(row.completed_at as string).getTime(),
+    requestedServices: rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined,
+    isAppointment: (row.is_appointment as boolean) || false,
+    isRequested: (row.is_requested as boolean) || false,
+  };
+}
+
 function mapDbAppointment(row: Record<string, unknown>): Appointment {
   const legacyService = (row.service as string) || '';
   const dbServices = row.services as ServiceType[] | null;
@@ -149,6 +173,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const prevStateRef = useRef<AppState>(INITIAL_STATE);
   const completedRef = useRef<AppState['completed']>(INITIAL_STATE.completed);
   const dailyHistoryRef = useRef<AppState['dailyHistory']>(INITIAL_STATE.dailyHistory);
+  // When a REMOTE_* action is about to be dispatched, the subscription handler sets this
+  // to true so the sync effect below skips its DB flush for that state transition.
+  // This prevents echo loops: Device A writes → subscription fires on A → dispatch REMOTE_*
+  // → flag=true → sync effect skips so A doesn't re-upsert its own change. Same logic
+  // prevents Device B from writing back a row it just received from the subscription.
+  const isApplyingRemoteRef = useRef(false);
 
   useEffect(() => {
     if (!_dataLoadStarted) {
@@ -439,8 +469,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!state.loaded) return;
-    // Staff mode is read-only â never sync back to DB
+    // Snapshot-and-clear the remote flag up front so every early-return path clears it too.
+    const wasRemote = isApplyingRemoteRef.current;
+    isApplyingRemoteRef.current = false;
+    // Staff mode is read-onlyâ never sync back to DB
     if (isStaffMode) {
+      prevStateRef.current = state;
+      completedRef.current = state.completed;
+      dailyHistoryRef.current = state.dailyHistory;
+      return;
+    }
+    // This state change came from a realtime subscription. Skip the flush so we don't
+    // echo the remote change back to the DB (which would re-broadcast and loop).
+    if (wasRemote) {
       prevStateRef.current = state;
       completedRef.current = state.completed;
       dailyHistoryRef.current = state.dailyHistory;
@@ -466,6 +507,92 @@ export function AppProvider({ children }: { children: ReactNode }) {
     completedRef.current = state.completed;
     dailyHistoryRef.current = state.dailyHistory;
   }, [state]);
+
+  // Realtime multi-device sync. Subscribes to postgres_changes on the five live-ops tables
+  // after the initial data load. Each INSERT/UPDATE/DELETE from another device (or an echo
+  // of our own write) becomes a REMOTE_* action. The sync effect above checks isApplyingRemoteRef
+  // and skips the DB flush for any state change caused by these actions, preventing echo loops.
+  useEffect(() => {
+    if (!state.loaded) return;
+
+    const manicuristsChan = supabase
+      .channel('realtime:manicurists')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'manicurists' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_MANICURIST_DELETE', id });
+          else isApplyingRemoteRef.current = false; // nothing dispatched, clear flag
+        } else {
+          dispatch({ type: 'REMOTE_MANICURIST_UPSERT', manicurist: mapDbManicurist(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const queueChan = supabase
+      .channel('realtime:queue_entries')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'queue_entries' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_QUEUE_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_QUEUE_UPSERT', entry: mapDbQueueEntry(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const completedChan = supabase
+      .channel('realtime:completed_services')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'completed_services' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_COMPLETED_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_COMPLETED_UPSERT', entry: mapDbCompleted(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const appointmentsChan = supabase
+      .channel('realtime:appointments')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_APPOINTMENT_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_APPOINTMENT_UPSERT', appointment: mapDbAppointment(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    // system_state is a singleton and the reducer's REMOTE_SYSTEM_STATE_UPDATE case
+    // returns state unchanged (no local field tracks it — the startup check reads from DB
+    // directly). We therefore DO NOT set isApplyingRemoteRef here: if we did, the reducer
+    // would short-circuit, useReducer would skip re-rendering, the sync effect would never
+    // run, and the flag would stay true — poisoning the next real local change.
+    const systemStateChan = supabase
+      .channel('realtime:system_state')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, (payload) => {
+        const newRow = payload.new as Record<string, unknown> | null;
+        const lastArchiveDate = (newRow?.last_archive_date as string) ?? null;
+        dispatch({ type: 'REMOTE_SYSTEM_STATE_UPDATE', lastArchiveDate });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(manicuristsChan);
+      supabase.removeChannel(queueChan);
+      supabase.removeChannel(completedChan);
+      supabase.removeChannel(appointmentsChan);
+      supabase.removeChannel(systemStateChan);
+    };
+  }, [state.loaded]);
 
   useEffect(() => {
     if (!state.loaded) return;
@@ -512,7 +639,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 }
 
 async function withRetry<T>(
-  fn: () => Promise<{ data?: T; error: unknown }>,
+  fn: () => PromiseLike<{ data?: T; error: unknown }>,
   retries = 3,
   delayMs = 2000
 ): Promise<{ data?: T; error: unknown }> {

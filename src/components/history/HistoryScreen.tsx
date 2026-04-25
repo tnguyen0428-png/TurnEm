@@ -698,17 +698,17 @@ export default function HistoryScreen() {
                 dataKey="turns"
                 radius={[0, 8, 8, 0]}
                 maxBarSize={24}
-                label={({ x, y, width, height, value }: { x: number; y: number; width: number; height: number; value: number }) => (
+                label={({ x, y, width, height, value }) => (
                   <text
-                    x={x + width + 6}
-                    y={y + height / 2}
+                    x={Number(x) + Number(width) + 6}
+                    y={Number(y) + Number(height) / 2}
                     dy={4}
                     fill="#374151"
                     fontSize={11}
                     fontFamily="IBM Plex Mono"
                     fontWeight={600}
                   >
-                    {value.toFixed(1)}
+                    {Number(value).toFixed(1)}
                   </text>
                 )}
               >
@@ -743,221 +743,6 @@ export default function HistoryScreen() {
           confirmLabel="Clear All"
           danger
           onConfirm={() => {
-            dispatch({ type: 'CLEAR_HISTORY' });
-            setShowClearConfirm(false);
-          }}
-          onCancel={() => setShowClearConfirm(false)}
-        />
-      )}
-    </div>
-  );
-}
-            BROWSE DAYS
-          </button>
-          {!viewingPastDay && state.completed.length > 0 && (
-            <button
-              onClick={() => setShowClearConfirm(true)}
-              disabled={!todayAlreadySaved}
-              title={!todayAlreadySaved ? 'Save today first before clearing' : "Clear today's history"}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 font-mono text-xs font-semibold transition-colors ${
-                !todayAlreadySaved
-                  ? 'border-gray-200 text-gray-300 cursor-not-allowed'
-                  : 'border-red-200 text-red-500 hover:bg-red-50'
-              }`}
-            >
-              <Trash2 size={14} />
-              CLEAR
-            </button>
-          )}
-        </div>
-      </div>
-
-      {showCalendar && (
-        <div className="bg-white rounded-2xl border border-gray-100 p-5 mb-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <button
-              onClick={prevMonth}
-              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <span className="font-bebas tracking-[2px] text-gray-900 text-lg">
-              {MONTH_NAMES[calendarMonth.month]} {calendarMonth.year}
-            </span>
-            <button
-              onClick={nextMonth}
-              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-          <div className="grid grid-cols-7 mb-1">
-            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
-              <div key={d} className="text-center font-mono text-[10px] text-gray-400 py-1">{d}</div>
-            ))}
-          </div>
-          <div className="grid grid-cols-7 gap-0.5">
-            {Array.from({ length: firstDayOfWeek }).map((_, i) => (
-              <div key={`empty-${i}`} />
-            ))}
-            {monthDays.map((day) => {
-              const dateStr = getLocalDateStr(day);
-              const isToday = dateStr === today;
-              const hasSavedHistory = datesWithHistory.has(dateStr);
-              const isSelected = dateStr === selectedDate;
-              const isPast = dateStr < today;
-              const isFuture = dateStr > today;
-
-              return (
-                <button
-                  key={dateStr}
-                  onClick={() => {
-                    if (isToday) {
-                      setSelectedDate(null);
-                      setShowCalendar(false);
-                    } else if (hasSavedHistory) {
-                      selectDate(dateStr);
-                    }
-                  }}
-                  disabled={isFuture || (!hasSavedHistory && !isToday)}
-                  className={`
-                    relative aspect-square flex flex-col items-center justify-center rounded-xl text-xs font-mono font-semibold transition-all
-                    ${isSelected ? 'bg-gray-900 text-white' : ''}
-                    ${isToday && !isSelected ? 'bg-pink-50 text-pink-600 border-2 border-pink-200' : ''}
-                    ${hasSavedHistory && !isSelected && !isToday ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 cursor-pointer' : ''}
-                    ${isPast && !hasSavedHistory && !isToday ? 'text-gray-300 cursor-not-allowed' : ''}
-                    ${isFuture ? 'text-gray-200 cursor-not-allowed' : ''}
-                  `}
-                >
-                  {day.getDate()}
-                  {hasSavedHistory && !isSelected && (
-                    <span className="absolute bottom-1 w-1 h-1 rounded-full bg-emerald-500" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-4 mt-4 pt-3 border-t border-gray-100">
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-pink-50 border-2 border-pink-200" />
-              <span className="font-mono text-[10px] text-gray-400">TODAY</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded bg-emerald-50" />
-              <span className="font-mono text-[10px] text-gray-400">HAS HISTORY</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Clock-in order — drag to reorder, tap time to edit (today only) */}
-      {!viewingPastDay && (
-        <ClockInOrderSection manicurists={state.manicurists} dispatch={dispatch} />
-      )}
-
-      {turnsPerManicurist.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
-          <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold mb-3">TURNS PER MANICURIST</h3>
-          <ResponsiveContainer width="100%" height={turnsPerManicurist.length * 36 + 20}>
-            <BarChart data={turnsPerManicurist} layout="vertical" margin={{ top: 4, right: 30, bottom: 4, left: 0 }}>
-              <YAxis
-                dataKey="name"
-                type="category"
-                interval={0}
-                tick={({ x, y, payload, index }: { x: string | number; y: string | number; payload: { value: string }; index: number }) => {
-                  const entry = turnsPerManicurist[index];
-                  return (
-                    <g transform={`translate(${Number(x)},${Number(y)})`}>
-                      <text x={-4} y={0} dy={4} textAnchor="end" fill="#111827" fontSize={11} fontFamily="IBM Plex Mono" fontWeight={700}>
-                        {payload.value}
-                      </text>
-                      {entry?.clockInTime && (
-                        <text x={-4} y={0} dy={14} textAnchor="end" fill="#9ca3af" fontSize={9} fontFamily="IBM Plex Mono">
-                          {entry.clockInTime}
-                        </text>
-                      )}
-                    </g>
-                  );
-                }}
-                axisLine={false}
-                tickLine={false}
-                width={90}
-              />
-              <XAxis
-                type="number"
-                tick={{ fontSize: 10, fontFamily: 'IBM Plex Mono', fill: '#9ca3af' }}
-                axisLine={false}
-                tickLine={false}
-                ticks={(() => {
-                  const maxTurns = Math.max(...turnsPerManicurist.map((m) => m.turns), 1);
-                  const maxTick = Math.ceil(maxTurns * 2) / 2;
-                  const ticks = [];
-                  for (let i = 0; i <= maxTick * 2; i++) ticks.push(i * 0.5);
-                  return ticks;
-                })()}
-                domain={[0, 'dataMax']}
-              />
-              <Tooltip
-                contentStyle={{ fontFamily: 'IBM Plex Mono', fontSize: 12, borderRadius: 12, border: '1px solid #e5e7eb' }}
-              />
-              <Bar
-                dataKey="turns"
-                radius={[0, 8, 8, 0]}
-                maxBarSize={24}
-                label={({ x, y, width, height, value }: { x: number; y: number; width: number; height: number; value: number }) => (
-                  <text
-                    x={x + width + 6}
-                    y={y + height / 2}
-                    dy={4}
-                    fill="#374151"
-                    fontSize={11}
-                    fontFamily="IBM Plex Mono"
-                    fontWeight={600}
-                  >
-                    {value.toFixed(1)}
-                  </text>
-                )}
-              >
-                {turnsPerManicurist.map((entry, index) => (
-                  <Cell key={index} fill={entry.color} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {displayedEntries.length === 0 ? (
-        <EmptyState
-          icon={<Clock size={48} />}
-          title={viewingPastDay ? 'No history for this day' : 'No services completed yet'}
-          description={viewingPastDay ? 'No records were saved for this date' : 'Completed services will appear here'}
-        />
-      ) : (
-        <HistoryTable
-          entries={displayedEntries}
-          manicurists={state.manicurists}
-        />
-      )}
-
-      {showClearConfirm && (
-        <ConfirmDialog
-          message={!todayAlreadySaved
-            ? "Today's data has NOT been saved. Clearing will permanently lose all services. Save first!"
-            : "Clear all history? This will reset today's completed services."
-          }
-          confirmLabel="Clear All"
-          danger
-          onConfirm={() => {
-            dispatch({ type: 'CLEAR_HISTORY' });
-            setShowClearConfirm(false);
-          }}
-          onCancel={() => setShowClearConfirm(false)}
-        />
-      )}
-    </div>
-  );
-}
             dispatch({ type: 'CLEAR_HISTORY' });
             setShowClearConfirm(false);
           }}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
-  Clock3, ChevronRight, Lock, Unlock, GripVertical, Check, KeyRound,
+  Clock3, ChevronRight, GripVertical, Check, KeyRound,
 } from 'lucide-react';
 import { PinVerifyModal } from '../shared/AdminPinGate';
 import {

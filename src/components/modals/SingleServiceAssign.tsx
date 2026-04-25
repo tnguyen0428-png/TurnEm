@@ -13,7 +13,7 @@ import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
 import type { QueueEntry, ServiceType } from '../../types';
 import { isWaxService, isAcrylicService, getSamPreferenceForServices, waxRotationCompare } from '../../utils/salonRules';
-import { getClientDurationMs, getAlmostDoneMs, formatServiceList, ServiceHistory } from './assignHelpers';
+import { getClientDurationMs, formatServiceList, ServiceHistory } from './assignHelpers';
 
 export function SingleServiceAssign({ client }: { client: QueueEntry }) {
   const { state, dispatch } = useApp();
