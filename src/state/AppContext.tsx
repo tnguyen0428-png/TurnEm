@@ -277,7 +277,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (document.visibilityState !== 'visible') return;
       const { data, error } = await supabase.from('appointments').select('*');
       if (error || !data) return;
-      const fresh = data.map((row) => mapDbAppointment(row as Record<string, unknown>));
+      // Filter out tombstoned IDs - their DELETE may still be in flight; we don't want
+      // to resurrect them by fetching the pre-delete server snapshot.
+      const fresh = data
+        .map((row) => mapDbAppointment(row as Record<string, unknown>))
+        .filter((a) => !isTombstoned(a.id));
       isApplyingRemoteRef.current = true;
       dispatch({ type: 'LOAD_STATE', state: { appointments: fresh } });
     }
@@ -1081,7 +1085,7 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
 
   // Per-row diff: only upsert appts whose data actually changed. Stops stale tabs from
   // re-uploading every appt (which would resurrect rows another tab just deleted) and
-  // cuts realtime echo traffic by orders of magnitude.
+  // cuts realtime echo traffic.
   const prevById = new Map(prev.map((a) => [a.id, a]));
   const changed: ReturnType<typeof appointmentToRow>[] = [];
   for (const a of appointments) {
@@ -1199,4 +1203,23 @@ async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[]
   const currentDates = new Set(calendarDays.map((d) => d.date));
   const removed = prev.filter((d) => !currentDates.has(d.date));
   if (removed.length > 0) {
-    const 
+    const { error } = await withRetry(() => supabase.from('calendar_days').delete().in('date', removed.map((d) => d.date)));
+    if (error) { console.error('[syncCalendarDays] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevByDate = new Map(prev.map((d) => [d.date, d]));
+  const changed: ReturnType<typeof calendarDayToRow>[] = [];
+  for (const d of calendarDays) {
+    const previous = prevByDate.get(d.date);
+    if (previous && calendarDayUnchanged(previous, d)) continue;
+    changed.push(calendarDayToRow(d));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('calendar_days').upsert(changed, { onConflict: 'date' }));
+  if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used within AppProvider');
+  return ctx;
+}
