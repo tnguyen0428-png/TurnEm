@@ -730,4 +730,26 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         </div>
       )}
 
-      {/* Pending drop c
+      {/* Pending drop confirmation for client-requested services */}
+      {pendingDrop && (() => {
+        const targetMani = pendingDrop.mId ? state.manicurists.find((m) => m.id === pendingDrop.mId) : null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPendingDrop(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
+              <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 mb-2">MOVE REQUESTED SERVICE?</h3>
+              <p className="font-mono text-sm text-gray-500 mb-1">
+                <span className="font-semibold text-gray-700">{pendingDrop.info.serviceName}</span> was requested for a specific manicurist.
+              </p>
+              {targetMani && <p className="font-mono text-sm text-gray-500 mb-4">Moving to <span className="font-semibold" style={{ color: targetMani.color }}>{targetMani.name}</span> at {formatTimeOfDay(slotToTime(pendingDrop.slot))}.</p>}
+              <p className="font-mono text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2 mb-4">&#x26A0; The client requested a specific technician for this service.</p>
+              <div className="flex gap-3">
+                <button onClick={() => setPendingDrop(null)} className="flex-1 py-2.5 rounded-xl border border-gray-200 font-mono text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">KEEP ORIGINAL</button>
+                <button onClick={() => { executeDrop(pendingDrop.info, pendingDrop.mId, pendingDrop.slot); setPendingDrop(null); }} className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white font-mono text-sm font-semibold hover:bg-amber-600 transition-colors">MOVE ANYWAY</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </>
+  );
+}

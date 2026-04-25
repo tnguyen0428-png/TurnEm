@@ -733,4 +733,24 @@ export default function HistoryScreen() {
           entries={displayedEntries}
           manicurists={state.manicurists}
         />
-      )}
+      )}
+
+      {showClearConfirm && (
+        <ConfirmDialog
+          message={!todayAlreadySaved
+            ? "Today's data has NOT been saved. Clearing will permanently lose all services. Save first!"
+            : "Clear all history? This will reset today's completed services."
+          }
+          confirmLabel="Clear All"
+          danger
+          onConfirm={() => {
+            dispatch({ type: 'CLEAR_HISTORY' });
+            setShowClearConfirm(false);
+          }}
+          onCancel={() => setShowClearConfirm(false)}
+        />
+      )}
+    </div>
+    </div>
+  );
+}

@@ -158,4 +158,51 @@ function StaffPortal() {
   if (!state.loaded || !checked) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
-   
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+          <p className="font-mono text-sm text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!loggedInManicurist) {
+    return (
+      <StaffLoginScreen
+        manicurists={state.manicurists}
+        onLogin={(m) => {
+          localStorage.setItem('turnem_staff_id', m.id);
+          setLoggedInManicurist(m);
+        }}
+      />
+    );
+  }
+
+  return (
+    <StaffPortalScreen
+      manicurist={loggedInManicurist}
+      onLogout={() => {
+        localStorage.removeItem('turnem_staff_id');
+        setLoggedInManicurist(null);
+      }}
+    />
+  );
+}
+
+export default function App() {
+  const isStaffMode = new URLSearchParams(window.location.search).get('mode') === 'staff' || (window as any).__TURNEM_STAFF_MODE__ === true;
+
+  if (isStaffMode) {
+    return (
+      <AppProvider>
+        <StaffPortal />
+      </AppProvider>
+    );
+  }
+
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  );
+}

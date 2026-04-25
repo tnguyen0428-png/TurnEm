@@ -386,4 +386,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Any special requests..."
             rows={2}
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outli
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all resize-none"
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={selectedServices.length === 0}
+          className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
+        >
+          {mode === 'edit' ? 'SAVE CHANGES' : 'BOOK APPOINTMENT'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
