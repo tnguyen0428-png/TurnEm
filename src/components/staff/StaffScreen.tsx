@@ -31,7 +31,8 @@ export default function StaffScreen() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-4 sm:p-6">
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-4xl mx-auto p-4 sm:p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="font-bebas text-2xl tracking-[3px] text-gray-900">STAFF MANAGEMENT</h2>
         <button
@@ -149,6 +150,7 @@ export default function StaffScreen() {
           onCancel={() => setDeleteId(null)}
         />
       )}
+      </div>
     </div>
   );
 }
