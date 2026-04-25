@@ -495,8 +495,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       prevStateRef.current = state;
       return;
     }
-    if (prev.manicurists !== state.manicurists) syncManicurists(state.manicurists, setSyncError);
-    if (prev.queue !== state.queue) syncQueue(state.queue, setSyncError);
+    if (prev.manicurists !== state.manicurists) syncManicurists(state.manicurists, prev.manicurists, setSyncError);
+    if (prev.queue !== state.queue) syncQueue(state.queue, prev.queue, setSyncError);
     if (prev.completed !== state.completed) syncCompleted(state.completed, prev.completed, setSyncError);
     if (prev.appointments !== state.appointments) syncAppointments(state.appointments, prev.appointments, setSyncError);
     if (prev.salonServices !== state.salonServices) syncSalonServices(state.salonServices, prev.salonServices, setSyncError);
@@ -651,8 +651,40 @@ async function withRetry<T>(
   return fn();
 }
 
-async function syncManicurists(manicurists: Manicurist[], onError: (msg: string) => void) {
-  const rows = manicurists.map((m, idx) => ({
+// Per-row equality for Manicurist. Reference equality short-circuits for the common
+// case (the reducer reused the same object). For changed references, compare the
+// fields we actually persist — including stable JSON encodings of the array/object
+// columns so structurally-equal blobs don't trigger writes.
+function manicuristUnchanged(a: Manicurist, b: Manicurist, aIdx: number, bIdx: number): boolean {
+  if (a === b && aIdx === bIdx) return true;
+  return (
+    aIdx === bIdx &&
+    a.name === b.name &&
+    a.color === b.color &&
+    a.phone === b.phone &&
+    a.clockedIn === b.clockedIn &&
+    a.clockInTime === b.clockInTime &&
+    a.totalTurns === b.totalTurns &&
+    a.currentClient === b.currentClient &&
+    a.status === b.status &&
+    a.hasFourthPositionSpecial === b.hasFourthPositionSpecial &&
+    a.hasCheck2 === b.hasCheck2 &&
+    a.hasCheck3 === b.hasCheck3 &&
+    a.hasWax === b.hasWax &&
+    a.hasWax2 === b.hasWax2 &&
+    a.hasWax3 === b.hasWax3 &&
+    a.pinCode === b.pinCode &&
+    a.breakStartTime === b.breakStartTime &&
+    a.smsOptIn === b.smsOptIn &&
+    a.showInBook === b.showInBook &&
+    a.isReceptionist === b.isReceptionist &&
+    JSON.stringify(a.skills) === JSON.stringify(b.skills) &&
+    JSON.stringify(a.timeAdjustments || {}) === JSON.stringify(b.timeAdjustments || {})
+  );
+}
+
+function manicuristToRow(m: Manicurist, idx: number) {
+  return {
     id: m.id,
     name: m.name,
     color: m.color,
@@ -676,40 +708,85 @@ async function syncManicurists(manicurists: Manicurist[], onError: (msg: string)
     sort_order: idx,
     show_in_book: m.showInBook !== false,
     is_receptionist: m.isReceptionist || false,
-  }));
-  const { error } = await withRetry(() => supabase.from('manicurists').upsert(rows, { onConflict: 'id' }));
+  };
+}
+
+async function syncManicurists(manicurists: Manicurist[], prev: Manicurist[], onError: (msg: string) => void) {
+  const prevById = new Map(prev.map((m, idx) => [m.id, { m, idx }]));
+  const changed: ReturnType<typeof manicuristToRow>[] = [];
+  manicurists.forEach((m, idx) => {
+    const previous = prevById.get(m.id);
+    if (previous && manicuristUnchanged(previous.m, m, previous.idx, idx)) return;
+    changed.push(manicuristToRow(m, idx));
+  });
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('manicurists').upsert(changed, { onConflict: 'id' }));
   if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 }
 
-async function syncQueue(queue: QueueEntry[], onError: (msg: string) => void) {
-  const { data: existing } = await withRetry(() => supabase.from('queue_entries').select('id'));
+function queueEntryUnchanged(a: QueueEntry, b: QueueEntry): boolean {
+  if (a === b) return true;
+  return (
+    a.clientName === b.clientName &&
+    a.turnValue === b.turnValue &&
+    a.requestedManicuristId === b.requestedManicuristId &&
+    a.isRequested === b.isRequested &&
+    a.isAppointment === b.isAppointment &&
+    a.assignedManicuristId === b.assignedManicuristId &&
+    a.status === b.status &&
+    a.arrivedAt === b.arrivedAt &&
+    a.startedAt === b.startedAt &&
+    a.completedAt === b.completedAt &&
+    a.extraTimeMs === b.extraTimeMs &&
+    JSON.stringify(a.services) === JSON.stringify(b.services) &&
+    JSON.stringify(a.serviceRequests) === JSON.stringify(b.serviceRequests)
+  );
+}
+
+function queueEntryToRow(c: QueueEntry) {
+  return {
+    id: c.id,
+    client_name: c.clientName,
+    service: c.services[0] || '',
+    services: c.services,
+    turn_value: c.turnValue,
+    service_requests: c.serviceRequests,
+    requested_manicurist_id: c.requestedManicuristId,
+    is_requested: c.isRequested,
+    is_appointment: c.isAppointment,
+    assigned_manicurist_id: c.assignedManicuristId,
+    status: c.status,
+    arrived_at: new Date(c.arrivedAt).toISOString(),
+    started_at: c.startedAt ? new Date(c.startedAt).toISOString() : null,
+    completed_at: c.completedAt ? new Date(c.completedAt).toISOString() : null,
+    extra_time_ms: c.extraTimeMs || 0,
+  };
+}
+
+async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg: string) => void) {
+  const prevById = new Map(prev.map((c) => [c.id, c]));
   const currentIds = new Set(queue.map((c) => c.id));
-  const toDelete = (existing || []).filter((r: { id: string }) => !currentIds.has(r.id));
-  for (const r of toDelete) {
-    const { error } = await withRetry(() => supabase.from('queue_entries').delete().eq('id', r.id));
+
+  // Deletes: rows in prev that are no longer in current state. Use .in() to batch.
+  const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
+  if (removedIds.length > 0) {
+    const { error } = await withRetry(() => supabase.from('queue_entries').delete().in('id', removedIds));
     if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }
+
+  // Upserts: only rows that are new or whose tracked fields changed. Batched into
+  // one request instead of one round-trip per row.
+  const changed: ReturnType<typeof queueEntryToRow>[] = [];
   for (const c of queue) {
-    const { error } = await withRetry(() => supabase.from('queue_entries').upsert({
-      id: c.id,
-      client_name: c.clientName,
-      service: c.services[0] || '',
-      services: c.services,
-      turn_value: c.turnValue,
-      service_requests: c.serviceRequests,
-      requested_manicurist_id: c.requestedManicuristId,
-      is_requested: c.isRequested,
-      is_appointment: c.isAppointment,
-      assigned_manicurist_id: c.assignedManicuristId,
-      status: c.status,
-      arrived_at: new Date(c.arrivedAt).toISOString(),
-      started_at: c.startedAt ? new Date(c.startedAt).toISOString() : null,
-      completed_at: c.completedAt ? new Date(c.completedAt).toISOString() : null,
-      extra_time_ms: c.extraTimeMs || 0,
-    }, { onConflict: 'id' }));
-    if (error) { console.error('[syncQueue] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+    const previous = prevById.get(c.id);
+    if (previous && queueEntryUnchanged(previous, c)) continue;
+    changed.push(queueEntryToRow(c));
   }
+  if (changed.length === 0) return;
+  const { error: upsertErr } = await withRetry(() => supabase.from('queue_entries').upsert(changed, { onConflict: 'id' }));
+  if (upsertErr) { console.error('[syncQueue] upsert error:', upsertErr); onError('Sync failed - data may not be saved. Check connection.'); }
 }
+//ZZZTRASH â
 
 async function syncCompleted(completed: AppState['completed'], prev: AppState['completed'], onError: (msg: string) => void) {
   const prevById = new Map(prev.map((c) => [c.id, c]));
