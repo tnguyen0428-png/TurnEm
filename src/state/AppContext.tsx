@@ -553,7 +553,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Snapshot-and-clear the remote flag up front so every early-return path clears it too.
     const wasRemote = isApplyingRemoteRef.current;
     isApplyingRemoteRef.current = false;
-    // Staff mode is read-onlyâ never sync back to DB
+    const prev = prevStateRef.current;
+
+    // CRITICAL: detect local appointment deletions BEFORE any early-return on wasRemote.
+    // Why: when React batches a local DELETE with a concurrent realtime UPSERT echo into one
+    // render, wasRemote ends up true and the rest of the sync gets skipped. Without this guard,
+    // the local delete is reflected in state but never persisted to DB, never tombstoned, and a
+    // subsequent UPSERT/refresh resurrects the row. Deletions are idempotent and don't cause
+    // echo loops, so we always run them regardless of wasRemote.
+    if (prev.loaded && !isStaffMode && prev.appointments !== state.appointments) {
+      const currentApptIds = new Set(state.appointments.map((a) => a.id));
+      const deletedAppts = prev.appointments.filter((a) => !currentApptIds.has(a.id));
+      if (deletedAppts.length > 0) {
+        for (const a of deletedAppts) tombstone(a.id);
+        trackSave(async () => {
+          for (const a of deletedAppts) {
+            const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
+            if (error) {
+              console.error('[sync deleteAppt] error:', error);
+              setSyncErrorTracked('Sync failed - data may not be saved. Check connection.');
+            }
+          }
+        });
+      }
+    }
+
+    // Staff mode is read-only - never sync back to DB
     if (isStaffMode) {
       prevStateRef.current = state;
       completedRef.current = state.completed;
@@ -562,13 +587,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     // This state change came from a realtime subscription. Skip the flush so we don't
     // echo the remote change back to the DB (which would re-broadcast and loop).
+    // (Deletion sync above runs unconditionally to survive batched local+remote renders.)
     if (wasRemote) {
       prevStateRef.current = state;
       completedRef.current = state.completed;
       dailyHistoryRef.current = state.dailyHistory;
       return;
     }
-    const prev = prevStateRef.current;
     // On the very first render after loadInitialData dispatches LOAD_STATE, prev still holds
     // INITIAL_STATE (all empty arrays). Syncing here would push empty state back to the DB
     // and race with the just-completed fetch. Skip this first run and just advance the ref.
@@ -580,11 +605,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked));
     if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked));
     if (prev.appointments !== state.appointments) {
-      // Detect local deletions and tombstone their IDs so a stale realtime UPSERT can't resurrect them
-      const currentApptIds = new Set(state.appointments.map((a) => a.id));
-      for (const a of prev.appointments) {
-        if (!currentApptIds.has(a.id)) tombstone(a.id);
-      }
+      // Deletions already handled above (with tombstoning). syncAppointments here upserts
+      // current rows; its internal delete pass is a redundant safety net.
       trackSave(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked));
     }
     if (prev.salonServices !== state.salonServices) trackSave(() => syncSalonServices(state.salonServices, prev.salonServices, setSyncErrorTracked));
