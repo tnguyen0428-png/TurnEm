@@ -19,7 +19,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
+    // Race getSession against an 8s timeout. supabase-js v2 holds a Web Lock
+    // for the entire getSession() promise; if the auth-server refresh hangs,
+    // the lock is held forever and the app is stuck on "Checking session..."
+    // until the user navigates to a different origin and back. Treat a timeout
+    // as no-session so the user lands on the login screen instead of hanging.
+    const timeout = new Promise<{ data: { session: Session | null } }>((resolve) =>
+      setTimeout(() => resolve({ data: { session: null } }), 8000)
+    );
+    Promise.race([supabase.auth.getSession(), timeout]).then(({ data: { session: s } }) => {
       setSession(s);
       setUser(s?.user ?? null);
       setLoading(false);
