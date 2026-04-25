@@ -261,6 +261,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return true;
   }
 
+  // Per-table write chain: every appointments-table write (upsert OR delete) is queued onto
+  // this promise so they execute strictly in dispatch order. Without this, two trackSave
+  // calls (e.g. an edit's UPSERT followed quickly by a delete) run in parallel — and if the
+  // DELETE lands first then the in-flight UPSERT lands second, the row is recreated in the
+  // DB. The tombstone protects this tab from the realtime echo, but other tabs (and this tab
+  // after the tombstone expires) see the resurrected row. Serializing writes eliminates the
+  // race entirely.
+  const appointmentWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const chainAppointmentWrite = useCallback((fn: () => Promise<void>): Promise<void> => {
+    const next = appointmentWriteChainRef.current.then(fn, fn).catch((err) => {
+      console.error('[appointmentWriteChain] error:', err);
+    });
+    appointmentWriteChainRef.current = next;
+    return next;
+  }, []);
+
   useEffect(() => {
     if (!_dataLoadStarted) {
       _dataLoadStarted = true;
@@ -591,7 +607,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const deletedAppts = prev.appointments.filter((a) => !currentApptIds.has(a.id));
       if (deletedAppts.length > 0) {
         for (const a of deletedAppts) tombstone(a.id);
-        trackSave(async () => {
+        trackSave(() => chainAppointmentWrite(async () => {
           for (const a of deletedAppts) {
             const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
             if (error) {
@@ -599,7 +615,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               setSyncErrorTracked('Sync failed - data may not be saved. Check connection.');
             }
           }
-        });
+        }));
       }
     }
 
@@ -631,8 +647,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked));
     if (prev.appointments !== state.appointments) {
       // Deletions already handled above (with tombstoning). syncAppointments here upserts
-      // current rows; its internal delete pass is a redundant safety net.
-      trackSave(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked));
+      // current rows; its internal delete pass is a redundant safety net. We funnel both
+      // writes through chainAppointmentWrite so this UPSERT cannot overtake the DELETE that
+      // just got queued above (or any earlier write) — eliminating the write-write race
+      // that resurrects appointments after a quick edit-then-delete.
+      trackSave(() => chainAppointmentWrite(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked)));
     }
     if (prev.salonServices !== state.salonServices) trackSave(() => syncSalonServices(state.salonServices, prev.salonServices, setSyncErrorTracked));
     if (prev.turnCriteria !== state.turnCriteria) trackSave(() => syncTurnCriteria(state.turnCriteria, prev.turnCriteria, setSyncErrorTracked));
