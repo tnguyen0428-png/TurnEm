@@ -41,6 +41,13 @@ export default function StaffModal({ mode }: StaffModalProps) {
       .map(c => ({ category: c, services: map.get(c)! }));
   }, [sortedServices]);
 
+  // Only seed the form when the modal opens for a specific staff (or switches to a
+  // different one). Depending on `editingStaff` directly would re-fire whenever that
+  // manicurist's row changes for any reason — a realtime echo from another tab, a
+  // clock-in, a status update, totalTurns increment, etc. — which would silently
+  // overwrite the user's in-progress skill toggles with the latest DB snapshot.
+  // They'd then click "SAVE CHANGES" and unwittingly save the pre-edit state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (editingStaff) {
       setName(editingStaff.name);
@@ -51,7 +58,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
       setPinCode(editingStaff.pinCode || '');
       setIsReceptionist(editingStaff.isReceptionist ?? false);
     }
-  }, [editingStaff]);
+  }, [editingStaff?.id]);
 
   function toggleSkill(serviceName: string) {
     setSkills((prev) =>
@@ -360,7 +367,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
                                   onClick={(e) => {
                                     e.preventDefault();
                                     setTimeAdjustments(prev => ({
-                                          ...prev,
+                                      ...prev,
                                       [svc.name]: (prev[svc.name] || 0) + 5,
                                     }));
                                   }}
