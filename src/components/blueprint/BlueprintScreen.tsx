@@ -311,11 +311,14 @@ function SecurityScreen() {
 
 // ─── Main Blueprint screen ─────────────────────────────────────────────────────
 export default function BlueprintScreen() {
+  const { dispatch } = useApp();
   const [unlocked, setUnlocked] = useState(false);
   const [active, setActive] = useState<BlueprintSection>('staff-management');
   const activeItem = NAV_GROUPS.flatMap((g) => g.items).find((i) => i.id === active);
 
-  // PIN gate — require admin PIN (Kayla) to access Blueprint
+  // PIN gate — require admin PIN (Kayla) to access Blueprint. Cancelling the PIN modal
+  // routes the user back to the Queue tab; previously onCancel just re-asserted unlocked=false,
+  // leaving the user stuck on the PIN prompt with no way out except entering the right PIN.
   if (!unlocked) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-gray-50/50">
@@ -328,7 +331,7 @@ export default function BlueprintScreen() {
           isOpen={true}
           title="Enter Admin PIN"
           onSuccess={() => setUnlocked(true)}
-          onCancel={() => setUnlocked(false)}
+          onCancel={() => dispatch({ type: 'SET_VIEW', view: 'queue' })}
         />
       </div>
     );
