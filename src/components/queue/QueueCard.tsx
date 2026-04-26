@@ -109,7 +109,9 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
                 {formatTimeOfDay(client.originalAppointment.time)}
               </span>
             )}
-            {client.isRequested && <Badge label="REQ" variant="pink" />}
+            {client.isRequested && (
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {groupServices(client.services, salonServices).map(([s, count]) => (

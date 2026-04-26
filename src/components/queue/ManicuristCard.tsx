@@ -295,9 +295,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                 {currentClient.serviceRequests?.some(
                   sr => Array.isArray(sr.manicuristIds) && sr.manicuristIds.includes(manicurist.id)
                 ) && (
-                  <span className="shrink-0 font-mono text-[9px] font-bold bg-purple-500 text-white rounded px-1 py-0.5 leading-none">
-                    R
-                  </span>
+                  <span className="shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
                 )}
               </div>
               <div className="flex items-center gap-1">
