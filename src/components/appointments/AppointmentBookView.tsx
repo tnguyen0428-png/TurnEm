@@ -189,40 +189,85 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const [colDragId, setColDragId]         = useState<string | null>(null);
   const [colDropTargetId, setColDropTargetId] = useState<string | null>(null);
 
-  // ── Right-click drag-to-pan state (hold right mouse button to swipe view) ──
-  const panRef = useRef<{ active: boolean; startX: number; startY: number; startScrollLeft: number; startScrollTop: number; moved: boolean }>({
-    active: false, startX: 0, startY: 0, startScrollLeft: 0, startScrollTop: 0, moved: false,
+  // ── Left-click drag-to-pan state (hold left mouse button on empty calendar
+  //    space and drag to swipe the view around) ─────────────────────────────
+  // Pan is initiated only when the mousedown target is NOT inside an
+  // appointment block — appointment blocks are draggable=true and reserved
+  // for HTML5 drag-and-drop (moving the appointment to a different slot or
+  // column). On empty slots we track movement; if the user moves more than
+  // a small threshold we enter pan mode and start scrolling. If they release
+  // without moving, the original click handler still runs (opens the Add
+  // modal). Once pan-moved is set, we swallow the upcoming click so empty
+  // slot clicks don't accidentally open the modal at the end of a pan.
+  const panRef = useRef<{ active: boolean; panning: boolean; startX: number; startY: number; startScrollLeft: number; startScrollTop: number; moved: boolean }>({
+    active: false, panning: false, startX: 0, startY: 0, startScrollLeft: 0, startScrollTop: 0, moved: false,
   });
   const [isPanning, setIsPanning] = useState(false);
 
-  const onBodyMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 2) return; // right click only
-    if (!bodyRef.current) return;
-    e.preventDefault();
-    panRef.current = {
-      active: true,
-      startX: e.clientX,
-      startY: e.clientY,
-      startScrollLeft: bodyRef.current.scrollLeft,
-      startScrollTop: bodyRef.current.scrollTop,
-      moved: false,
+  // Attach mousedown as a native CAPTURE-phase listener directly on the body
+  // so we see the left-click before any descendant can call stopPropagation
+  // in the bubble phase.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const handleDown = (e: MouseEvent) => {
+      if (e.button !== 0) return; // left click only
+      // Don't intercept clicks on appointment blocks — those are draggable
+      // (HTML5 dnd) and clickable for opening the edit modal.
+      const target = e.target as Element | null;
+      if (target && target.closest('[draggable="true"]')) return;
+      // Don't intercept clicks on the time-of-day column or other interactive
+      // controls inside the body (buttons, inputs, etc.) so they keep working.
+      if (target && target.closest('button, input, select, textarea, a')) return;
+      panRef.current = {
+        active: true,
+        panning: false,
+        startX: e.clientX,
+        startY: e.clientY,
+        startScrollLeft: body.scrollLeft,
+        startScrollTop: body.scrollTop,
+        moved: false,
+      };
     };
-    setIsPanning(true);
+    body.addEventListener('mousedown', handleDown, { capture: true });
+    return () => body.removeEventListener('mousedown', handleDown, { capture: true } as any);
   }, []);
 
+  // Window-level move/up listeners run for the lifetime of the component so
+  // we can detect drags that begin on the body but cross out of it.
   useEffect(() => {
-    if (!isPanning) return;
     const handleMove = (e: MouseEvent) => {
       if (!panRef.current.active || !bodyRef.current) return;
       const dx = e.clientX - panRef.current.startX;
       const dy = e.clientY - panRef.current.startY;
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panRef.current.moved = true;
-      bodyRef.current.scrollLeft = panRef.current.startScrollLeft - dx;
-      bodyRef.current.scrollTop = panRef.current.startScrollTop - dy;
+      // Cross movement threshold — promote tracked press into a real pan.
+      if (!panRef.current.panning && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        panRef.current.panning = true;
+        panRef.current.moved = true;
+        setIsPanning(true);
+      }
+      if (panRef.current.panning) {
+        e.preventDefault();
+        bodyRef.current.scrollLeft = panRef.current.startScrollLeft - dx;
+        bodyRef.current.scrollTop = panRef.current.startScrollTop - dy;
+      }
     };
     const handleUp = () => {
+      if (!panRef.current.active) return;
+      const wasPanning = panRef.current.panning;
       panRef.current.active = false;
-      setIsPanning(false);
+      panRef.current.panning = false;
+      if (wasPanning) {
+        setIsPanning(false);
+        // Suppress the click that would otherwise fire after this mouseup
+        // (e.g. opening the Add modal on the slot we ended on).
+        const swallow = (ev: MouseEvent) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          window.removeEventListener('click', swallow, true);
+        };
+        window.addEventListener('click', swallow, true);
+      }
     };
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
@@ -230,12 +275,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [isPanning]);
-
-  // Always suppress the browser context menu inside the book so right-click is reserved for panning
-  const onBodyContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    panRef.current.moved = false;
   }, []);
 
   function svcDuration(name: string): number {
@@ -726,9 +765,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         <div
           ref={bodyRef}
           onScroll={onBodyScroll}
-          onMouseDown={onBodyMouseDown}
-          onContextMenu={onBodyContextMenu}
-          className={`flex-1 min-h-0 overflow-auto ${isPanning ? 'cursor-grabbing select-none' : ''}`}>
+          className={`flex-1 min-h-0 overflow-auto ${isPanning ? 'cursor-grabbing select-none' : 'cursor-grab'}`}>
           <div className="flex relative" style={{ width: totalGridW, height: TOTAL_H }}>
             {/* Time column (sticky left so it stays put on horizontal scroll) */}
             <div className="flex-shrink-0 sticky left-0 z-20 bg-white border-r border-gray-300" style={{ width: TIME_COL_W }}>
