@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Plus, LogIn, UserPlus } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import ManicuristCard from './ManicuristCard';
+import { SharedAutoFitProvider } from '../shared/SharedAutoFitText';
 import { getSubscribedManicuristIds } from '../../utils/pushNotifications';
 
 export default function ManicuristPanel() {
@@ -193,25 +194,31 @@ export default function ManicuristPanel() {
             </p>
           </div>
         ) : (
-          <div className="p-3 grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {sortedClockedIn.map((m, idx) => {
-              const rank = rankMap.get(m.id) ?? null;
-              return (
-                <ManicuristCard
-                  key={m.id}
-                  manicurist={m}
-                  currentClient={getClientForManicurist(m.currentClient)}
-                  clientHasWax={clientHasWaxService(m.currentClient)}
-                  clientDurationMs={getClientDurationMs(m.currentClient, m)}
-                  isFirst={idx === 0}
-                  isLast={idx === sortedClockedIn.length - 1}
-                  turnRank={rank}
-                  totalRanked={turnOrder.length}
-                  hasPushSub={pushSubIds.has(m.id)}
-                />
-              );
-            })}
-          </div>
+          <SharedAutoFitProvider
+            measureClassName="font-bebas tracking-[1px]"
+            minSize={10}
+            maxSize={20}
+          >
+            <div className="p-3 grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {sortedClockedIn.map((m, idx) => {
+                const rank = rankMap.get(m.id) ?? null;
+                return (
+                  <ManicuristCard
+                    key={m.id}
+                    manicurist={m}
+                    currentClient={getClientForManicurist(m.currentClient)}
+                    clientHasWax={clientHasWaxService(m.currentClient)}
+                    clientDurationMs={getClientDurationMs(m.currentClient, m)}
+                    isFirst={idx === 0}
+                    isLast={idx === sortedClockedIn.length - 1}
+                    turnRank={rank}
+                    totalRanked={turnOrder.length}
+                    hasPushSub={pushSubIds.has(m.id)}
+                  />
+                );
+              })}
+            </div>
+          </SharedAutoFitProvider>
         )}
       </div>
     </div>

@@ -3,7 +3,7 @@ import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, Cr
 import type { Manicurist, QueueEntry } from '../../types';
 import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
-import AutoFitText from '../shared/AutoFitText';
+import { SharedAutoFitText } from '../shared/SharedAutoFitText';
 import { useApp } from '../../state/AppContext';
 import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
@@ -161,13 +161,9 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1">
-              <AutoFitText
-                className="flex-1 font-bebas tracking-[1px] text-gray-900 leading-none"
-                minSize={10}
-                maxSize={20}
-              >
+              <SharedAutoFitText className="flex-1 font-bebas tracking-[1px] text-gray-900 leading-none">
                 {manicurist.name}
-              </AutoFitText>
+              </SharedAutoFitText>
               <button
                 onClick={handleBellClick}
                 disabled={!hasPushSub || bellSending}
@@ -296,10 +292,9 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                 <p className="font-mono text-[10px] font-semibold text-red-700 truncate">
                   {currentClient.clientName}
                 </p>
-                {(currentClient.requestedManicuristId === manicurist.id ||
-                  currentClient.serviceRequests?.some(
-                    sr => sr.clientRequest === true && sr.manicuristIds.includes(manicurist.id)
-                  )) && (
+                {currentClient.serviceRequests?.some(
+                  sr => Array.isArray(sr.manicuristIds) && sr.manicuristIds.includes(manicurist.id)
+                ) && (
                   <span className="shrink-0 font-mono text-[9px] font-bold bg-purple-500 text-white rounded px-1 py-0.5 leading-none">
                     R
                   </span>
