@@ -105,8 +105,22 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const totalGridW  = TIME_COL_W + manicurists.length * colWidth;
   const TOTAL_H     = TOTAL_SLOTS * slotHeight;
 
+  // Safety net: if an appointment has already been promoted to a queue entry
+  // (i.e. some queue entry's originalAppointment snapshot has this appt's id),
+  // hide it from the book. This protects against any sync race where the appt
+  // row gets resurrected in state.appointments after Q'ing — the queue entry
+  // is the source of truth once the customer has been queued.
+  const queuedApptIds = new Set(
+    state.queue
+      .map((q) => q.originalAppointment?.id)
+      .filter((id): id is string => !!id)
+  );
   const dayAppts = state.appointments.filter(
-    (a) => a.date === selectedDate && a.status !== 'cancelled' && a.status !== 'no-show'
+    (a) =>
+      a.date === selectedDate &&
+      a.status !== 'cancelled' &&
+      a.status !== 'no-show' &&
+      !queuedApptIds.has(a.id)
   );
 
   // ── Auto-fit columns + slots to viewport ────────────────────────────────
