@@ -8,11 +8,13 @@ export default function EditClientModal() {
   const { state, dispatch } = useApp();
 
   const client = state.queue.find((c) => c.id === state.editingClientId);
-  if (!client) return null;
 
-  const clientId = client.id;
-
+  // Hooks must run in the same order every render. If the client gets removed
+  // from the queue while the modal is open (delete from another tab, complete
+  // service, etc.), `client` becomes undefined; we must still call useMemo
+  // before any early return. The memo body short-circuits when client is null.
   const initialSelectedServices = useMemo(() => {
+    if (!client) return [];
     // Track how many times each service name has been mapped so that when a client
     // has the same service multiple times (e.g. 3x Gel Pedicure) and only some of them
     // have a manicurist request, we assign the request to the correct instance rather
@@ -39,6 +41,10 @@ export default function EditClientModal() {
       };
     });
   }, [client, state.salonServices]);
+
+  if (!client) return null;
+
+  const clientId = client.id;
 
   function handleClose() {
     dispatch({ type: 'SET_EDITING_CLIENT', clientId: null });
