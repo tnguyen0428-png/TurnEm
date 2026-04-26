@@ -395,7 +395,12 @@ export default function BlueprintScreen() {
             </div>
           </div>
         )}
-        <div className="flex-1 min-h-0 overflow-hidden bg-gray-50/30">
+        {/* overflow-y-auto on this wrapper lets sub-screens that don't define their own
+            scroll (Services, Criteria, Calendar) scroll their content here. Screens that
+            do define their own scroll (Staff, StaffSchedule, StaffGroup, Security) still
+            work because their h-full fits within this wrapper's bounded height — their
+            inner overflow handles their own scroll without producing a nested scrollbar. */}
+        <div className="flex-1 min-h-0 overflow-y-auto bg-gray-50/30">
           {renderContent()}
         </div>
       </div>
