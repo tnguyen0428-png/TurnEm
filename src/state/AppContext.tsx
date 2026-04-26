@@ -55,11 +55,26 @@ function mapDbManicurist(row: Record<string, unknown>): Manicurist {
 }
 
 function mapDbServiceRequest(r: Record<string, unknown>): ServiceRequest {
+  // Preserve clientRequest and startTime fields when round-tripping through
+  // the DB. Dropping them would silently demote real customer requests to
+  // anonymous column placements once the row syncs back from Supabase.
+  const clientRequest = r.clientRequest === true ? true : undefined;
+  const startTime = typeof r.startTime === 'string' ? r.startTime : undefined;
   if (Array.isArray(r.manicuristIds)) {
-    return { service: r.service as ServiceType, manicuristIds: r.manicuristIds as string[] };
+    return {
+      service: r.service as ServiceType,
+      manicuristIds: r.manicuristIds as string[],
+      ...(clientRequest !== undefined ? { clientRequest } : {}),
+      ...(startTime !== undefined ? { startTime } : {}),
+    };
   }
   const legacy = r.manicuristId as string | null;
-  return { service: r.service as ServiceType, manicuristIds: legacy ? [legacy] : [] };
+  return {
+    service: r.service as ServiceType,
+    manicuristIds: legacy ? [legacy] : [],
+    ...(clientRequest !== undefined ? { clientRequest } : {}),
+    ...(startTime !== undefined ? { startTime } : {}),
+  };
 }
 
 function mapDbQueueEntry(row: Record<string, unknown>): QueueEntry {

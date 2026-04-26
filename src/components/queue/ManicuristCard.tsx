@@ -297,7 +297,9 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                   {currentClient.clientName}
                 </p>
                 {(currentClient.requestedManicuristId === manicurist.id ||
-                  currentClient.serviceRequests?.some(sr => sr.manicuristIds.includes(manicurist.id))) && (
+                  currentClient.serviceRequests?.some(
+                    sr => sr.clientRequest === true && sr.manicuristIds.includes(manicurist.id)
+                  )) && (
                   <span className="shrink-0 font-mono text-[9px] font-bold bg-purple-500 text-white rounded px-1 py-0.5 leading-none">
                     R
                   </span>

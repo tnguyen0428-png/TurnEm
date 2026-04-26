@@ -123,6 +123,10 @@ export default function ClientForm({
       ([service, ids]) => ({
         service: service as ServiceType,
         manicuristIds: ids,
+        // Walk-in form: anything the receptionist explicitly assigns here is
+        // a real customer request. Mark it so downstream UI (REQ badge in
+        // QueueCard, REQUESTED in assign modal) treats it as such.
+        clientRequest: true,
       })
     );
 

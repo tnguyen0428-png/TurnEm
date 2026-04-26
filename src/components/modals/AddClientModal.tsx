@@ -8,8 +8,10 @@ export default function AddClientModal() {
   const { state, dispatch } = useApp();
 
   function handleSubmit(data: ClientFormData) {
-    const hasAnyRequest = data.serviceRequests.some((r) => r.manicuristIds.length > 0);
-    const firstRequestedId = data.serviceRequests.find((r) => r.manicuristIds.length > 0)?.manicuristIds[0] ?? null;
+    // ClientForm stamps clientRequest === true on every entry it emits.
+    // Filter on that flag so only real customer requests count.
+    const hasAnyRequest = data.serviceRequests.some((r) => r.clientRequest === true && r.manicuristIds.length > 0);
+    const firstRequestedId = data.serviceRequests.find((r) => r.clientRequest === true && r.manicuristIds.length > 0)?.manicuristIds[0] ?? null;
 
     const newClient: QueueEntry = {
       id: crypto.randomUUID(),

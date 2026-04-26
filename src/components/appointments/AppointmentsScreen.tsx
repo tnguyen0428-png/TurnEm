@@ -71,15 +71,25 @@ export default function AppointmentsScreen() {
   function handleCheckIn(appt: Appointment) {
     dispatch({ type: 'DELETE_APPOINTMENT', id: appt.id });
     const services = appt.services?.length ? appt.services : [appt.service as ServiceType];
-    const serviceRequests = appt.serviceRequests?.length
+    // CRITICAL: only ServiceRequests with clientRequest === true represent an actual
+    // request from the customer. Anything else is just a salon-placed parking slot in
+    // the calendar column (e.g. dragged into Z-Test 2's column for visual scheduling)
+    // and must NOT be carried into the queue as a request — assignment for those is
+    // determined when the customer arrives. We strip manicuristIds from non-request
+    // entries so downstream queue/turn logic doesn't show them with a REQ badge or
+    // "WAITING FOR" chip. Mirrors addApptToQueue in AppointmentBookView.
+    const rawRequests = appt.serviceRequests?.length
       ? appt.serviceRequests
-      : appt.manicuristId ? [{ service: services[0], manicuristIds: [appt.manicuristId] }] : [];
-    const isRequested = serviceRequests.some((r) => r.manicuristIds.length > 0);
-    const firstRequestedId = serviceRequests[0]?.manicuristIds?.[0] ?? null;
+      : []; // top-level appt.manicuristId is a column placement, not a client request
+    const serviceRequests = rawRequests.map((r) =>
+      r.clientRequest === true ? r : { ...r, manicuristIds: [] }
+    );
+    const isRequested = serviceRequests.some((r) => r.clientRequest === true && r.manicuristIds.length > 0);
+    const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
     const turnValue = services.reduce((sum, svc) => {
       const s = state.salonServices.find((ss) => ss.name === svc);
       const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc] ?? 1;
-      const hasReq = serviceRequests.some((r) => r.service === svc && r.manicuristIds.length > 0);
+      const hasReq = serviceRequests.some((r) => r.service === svc && r.clientRequest === true && r.manicuristIds.length > 0);
       return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
     }, 0);
     const newClient: QueueEntry = {
@@ -90,6 +100,10 @@ export default function AppointmentsScreen() {
       isRequested, isAppointment: true,
       assignedManicuristId: null, status: 'waiting',
       arrivedAt: Date.now(), startedAt: null, completedAt: null, extraTimeMs: 0,
+      // Snapshot the original appointment so the queue card's Revert button can
+      // restore the appointment exactly as it was (including non-request salon
+      // assignments stripped above).
+      originalAppointment: appt,
     };
     dispatch({ type: 'ADD_CLIENT', client: newClient });
   }

@@ -29,8 +29,14 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
   } | null>(null);
   const [dismissedSamPrompt, setDismissedSamPrompt] = useState(false);
 
+  // Upstream paths (addApptToQueue, handleCheckIn) already clear manicuristIds
+  // on non-request entries, so any populated manicuristIds here represents a
+  // real customer request — no need to also gate on clientRequest === true,
+  // which can be missing on older data even when the request is genuine.
   const requestedIds = new Set(
-    (client.serviceRequests || []).flatMap((r) => r.manicuristIds || [])
+    (client.serviceRequests || [])
+      .filter((r) => Array.isArray(r.manicuristIds) && r.manicuristIds.length > 0)
+      .flatMap((r) => r.manicuristIds || [])
   );
 
   const is4thSpecial = isFourthPositionSpecialService(client.services, state.salonServices);
@@ -82,8 +88,10 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
           if (!existing.manicuristIds.includes(sam.id)) {
             existing.manicuristIds = [...existing.manicuristIds, sam.id];
           }
+          // User explicitly chose to wait for Sam — promote to a real request.
+          existing.clientRequest = true;
         } else {
-          updatedRequests.push({ service: svcName as ServiceType, manicuristIds: [sam.id] });
+          updatedRequests.push({ service: svcName as ServiceType, manicuristIds: [sam.id], clientRequest: true });
         }
       }
     }
@@ -97,10 +105,25 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
   }
 
   function handleWaitForManicurist(manicuristId: string) {
+    // User explicitly chose to wait for this manicurist — record an actual
+    // request entry (clientRequest: true) on every service so the R badge,
+    // QueueCard requested-services list, and edit modal all reflect it.
+    const updatedRequests = [...(client.serviceRequests || [])];
+    for (const svcName of client.services) {
+      const existing = updatedRequests.find(r => r.service === svcName);
+      if (existing) {
+        if (!existing.manicuristIds.includes(manicuristId)) {
+          existing.manicuristIds = [...existing.manicuristIds, manicuristId];
+        }
+        existing.clientRequest = true;
+      } else {
+        updatedRequests.push({ service: svcName as ServiceType, manicuristIds: [manicuristId], clientRequest: true });
+      }
+    }
     dispatch({
       type: 'UPDATE_CLIENT',
       id: client.id,
-      updates: { requestedManicuristId: manicuristId, isRequested: true },
+      updates: { serviceRequests: updatedRequests, requestedManicuristId: manicuristId, isRequested: true },
     });
     dispatch({ type: 'SET_SELECTED_CLIENT', clientId: null });
     dispatch({ type: 'SET_MODAL', modal: null });

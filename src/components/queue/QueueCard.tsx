@@ -27,7 +27,13 @@ function groupServices(services: string[], salonServices: SalonService[]): [stri
 
 
 export default function QueueCard({ client, rank, isNext = false, isDeferred = false, manicurists, salonServices, onAssign, onEdit, onRemove, onRevertToAppt }: QueueCardProps) {
-  const requestedServices = (client.serviceRequests || []).filter((r) => r.manicuristIds && r.manicuristIds.length > 0);
+  // Only count entries with clientRequest === true as actual customer requests.
+  // Entries with manicuristIds but clientRequest != true are stale salon-placed
+  // column assignments from the appointment book (e.g. "park this service in
+  // Z-Test 2's column") that should NOT be shown as requests.
+  const requestedServices = (client.serviceRequests || []).filter(
+    (r) => r.clientRequest === true && r.manicuristIds && r.manicuristIds.length > 0
+  );
 
   function getManicuristName(id: string) {
     const m = manicurists.find((x) => x.id === id);
@@ -36,9 +42,9 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
 
   const isAppt = client.isAppointment;
 
-  // Distinct requested manicurist IDs from serviceRequests
+  // Distinct requested manicurist IDs from serviceRequests — only true requests count.
   const requestedManicuristIds = [...new Set(
-    (client.serviceRequests || []).flatMap(r => r.manicuristIds || [])
+    requestedServices.flatMap((r) => r.manicuristIds || [])
   )];
   const hasRequested = requestedManicuristIds.length > 0;
 

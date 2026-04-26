@@ -82,7 +82,14 @@ export function getDistinctServices(
     const idx = serviceCountMap.get(s) ?? 0;
     serviceCountMap.set(s, idx + 1);
 
-    const req = (client.serviceRequests || []).find((r) => r.service === s);
+    // Upstream paths (addApptToQueue, handleCheckIn) clear manicuristIds on
+    // non-request entries, so any populated manicuristIds here is a real
+    // customer request. Don't gate on clientRequest === true — that flag may
+    // be missing on legacy data, but if manicuristIds survived the upstream
+    // strip we know it's a request.
+    const req = (client.serviceRequests || []).find(
+      (r) => r.service === s && Array.isArray(r.manicuristIds) && r.manicuristIds.length > 0
+    );
 
     if (req && req.manicuristIds && req.manicuristIds.length > 0) {
       // Counter must be scoped to the service name. Using

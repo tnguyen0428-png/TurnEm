@@ -23,7 +23,12 @@ export default function EditClientModal() {
 
     return client.services.map((serviceName) => {
       const svc = state.salonServices.find((s) => s.name === serviceName);
-      const req = (client.serviceRequests || []).find((r) => r.service === serviceName);
+      // Only pre-fill from real customer requests (clientRequest === true).
+      // Otherwise legacy column-placement entries from the appointment book
+      // would silently get promoted to client requests on save.
+      const req = (client.serviceRequests || []).find(
+        (r) => r.service === serviceName && r.clientRequest === true
+      );
 
       const currentIndex = requestIndexMap.get(serviceName) ?? 0;
       requestIndexMap.set(serviceName, currentIndex + 1);
@@ -52,8 +57,10 @@ export default function EditClientModal() {
   }
 
   function handleSubmit(data: ClientFormData) {
-    const hasAnyRequest = data.serviceRequests.some((r) => r.manicuristIds.length > 0);
-    const firstRequestedId = data.serviceRequests.find((r) => r.manicuristIds.length > 0)?.manicuristIds[0] ?? null;
+    // ClientForm now stamps clientRequest === true on every entry it emits,
+    // so any entry with manicuristIds is a genuine request.
+    const hasAnyRequest = data.serviceRequests.some((r) => r.clientRequest === true && r.manicuristIds.length > 0);
+    const firstRequestedId = data.serviceRequests.find((r) => r.clientRequest === true && r.manicuristIds.length > 0)?.manicuristIds[0] ?? null;
 
     dispatch({
       type: 'UPDATE_CLIENT',

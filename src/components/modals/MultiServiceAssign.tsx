@@ -196,13 +196,20 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     const smsTargets: { id: string; phone: string; smsOptIn: boolean; name: string; clientName: string; service: string }[] = [];
 
     for (const [mId, group] of manicuristGroups) {
-      // If this manicurist was requested for ANY service in the group,
-      // mark ALL services in the group as requested — the customer chose this person.
+      // Upstream paths (addApptToQueue, handleCheckIn, ClientForm) ensure
+      // that only real customer requests carry populated manicuristIds on
+      // queue entries — column placements get stripped to manicuristIds: [].
+      // So the presence of mId in any source serviceRequest entry is
+      // sufficient to mark this group as a customer request.
       const wasRequested = group.services.some((s) =>
-        (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.includes(mId))
+        (client.serviceRequests || []).some(
+          (r) => r.service === s && r.manicuristIds.includes(mId)
+        )
       );
+      // Stamp clientRequest: true so downstream consumers (R badge, edit modal,
+      // QueueCard) can distinguish real requests from non-request assignments.
       const serviceReqs = wasRequested
-        ? group.services.map((s) => ({ service: s as ServiceType, manicuristIds: [mId] }))
+        ? group.services.map((s) => ({ service: s as ServiceType, manicuristIds: [mId], clientRequest: true as const }))
         : [];
 
       // Deterministic id derived from the parent + manicurist slot — re-firing
@@ -214,8 +221,8 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         services: group.services,
         turnValue: group.turnValue,
         serviceRequests: serviceReqs,
-        requestedManicuristId: mId,
-        isRequested: true,
+        requestedManicuristId: wasRequested ? mId : null,
+        isRequested: wasRequested,
         isAppointment: client.isAppointment,
         assignedManicuristId: null,
         status: 'waiting',
@@ -249,7 +256,9 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         clientName: client.clientName,
         services: [service],
         turnValue: baseTurn > 0 ? (state.salonServices.find((s) => s.name === service)?.category === 'Combo' ? 1 : 0.5) : 0,
-        serviceRequests: [{ service: service as ServiceType, manicuristIds: [mId] }],
+        // Deferred row = user explicitly chose to wait for this (busy) manicurist,
+        // so this is a real customer request. Stamp clientRequest: true.
+        serviceRequests: [{ service: service as ServiceType, manicuristIds: [mId], clientRequest: true as const }],
         requestedManicuristId: mId,
         isRequested: true,
         isAppointment: client.isAppointment,
@@ -336,17 +345,19 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       const m = state.manicurists.find((x) => x.id === mId);
       if (!m) continue;
       const wasRequested = group.services.some((s) =>
-        (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.includes(mId))
+        (client.serviceRequests || []).some(
+          (r) => r.service === s && r.manicuristIds.includes(mId)
+        )
       );
       rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: group.turnValue, isRequested: wasRequested });
     }
     for (const [mId, group] of deferredGroups) {
       const m = state.manicurists.find((x) => x.id === mId);
       if (!m) continue;
-      const wasRequested = group.services.some((s) =>
-        (client.serviceRequests || []).some((r) => r.service === s && r.manicuristIds.includes(mId))
-      );
-      rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: 0, isDeferred: true, isRequested: wasRequested });
+      // Deferred = user is explicitly waiting for this person, so the confirm
+      // dialog should reflect that as a request even if the original client
+      // didn't carry a clientRequest entry.
+      rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: 0, isDeferred: true, isRequested: true });
     }
     return rows;
   }
