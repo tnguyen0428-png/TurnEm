@@ -34,6 +34,8 @@ export const INITIAL_STATE: AppState = {
   editingAppointmentId: null,
   editingServiceId: null,
   appointmentDraft: null,
+  categoryPriority: [],
+  servicePriority: {},
   loaded: false,
 };
 
@@ -592,6 +594,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // consulted on startup directly from the DB. There's no local state to update here;
       // we keep the case so the subscription handler can dispatch uniformly for every table.
       return state;
+
+    case 'SET_PRIORITY': {
+      const next: AppState = { ...state };
+      if (action.categoryPriority !== undefined) next.categoryPriority = action.categoryPriority;
+      if (action.servicePriority !== undefined) next.servicePriority = action.servicePriority;
+      return next;
+    }
 
     default:
       return state;

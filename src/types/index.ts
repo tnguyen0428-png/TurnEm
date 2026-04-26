@@ -154,5 +154,10 @@ export interface AppState {
   editingAppointmentId: string | null;
   editingServiceId: string | null;
   appointmentDraft: AppointmentDraft | null;
+  // Priority list — persisted to system_state and synced via Realtime so every
+  // device sees the same ordering. Mirrored into localStorage by AppContext for
+  // legacy reads in assignHelpers.getDistinctServices.
+  categoryPriority: string[];
+  servicePriority: Record<string, string[]>;
   loaded: boolean;
 }

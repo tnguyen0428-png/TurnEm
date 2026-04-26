@@ -65,4 +65,8 @@ export type AppAction =
   | { type: 'REMOTE_TURN_CRITERIA_DELETE'; id: string }
   | { type: 'REMOTE_CALENDAR_DAY_UPSERT'; day: CalendarDay }
   | { type: 'REMOTE_CALENDAR_DAY_DELETE'; date: string }
-  | { type: 'REMOTE_SYSTEM_STATE_UPDATE'; lastArchiveDate: string | null };
+  | { type: 'REMOTE_SYSTEM_STATE_UPDATE'; lastArchiveDate: string | null }
+  // Priority list updates. Local dispatch is wrapped by AppContext.setPriority,
+  // which also writes to localStorage and upserts to Supabase. Remote events
+  // dispatch the same action without re-writing to Supabase.
+  | { type: 'SET_PRIORITY'; categoryPriority?: string[]; servicePriority?: Record<string, string[]> };

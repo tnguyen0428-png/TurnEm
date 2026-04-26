@@ -22,6 +22,35 @@ interface AppContextType {
   syncError: string | null;
   clearSyncError: () => void;
   saveStatus: SaveStatus;
+  // Persist Blueprint priority lists. Writes to Supabase singleton system_state row,
+  // updates local state via SET_PRIORITY dispatch, and mirrors to localStorage so the
+  // legacy reads in assignHelpers.getDistinctServices keep working. Both args optional —
+  // pass only the dimension you changed (categoryPriority OR servicePriority).
+  setPriority: (next: { categoryPriority?: string[]; servicePriority?: Record<string, string[]> }) => Promise<void>;
+}
+
+// localStorage keys mirrored from utils/priorityStorage. Duplicated here so the
+// AppContext doesn't have to import from a UI module — the Realtime handler and
+// initial-load path both write these so legacy reads (assignHelpers) continue working.
+const CAT_PRIORITY_KEY = 'turnem_category_priority';
+const SVC_PRIORITY_KEY = 'turnem_service_priority';
+
+function readLocalCatPriority(): string[] | null {
+  try {
+    const raw = localStorage.getItem(CAT_PRIORITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+function readLocalSvcPriority(): Record<string, string[]> | null {
+  try {
+    const raw = localStorage.getItem(SVC_PRIORITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -470,7 +499,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    dispatch({ type: 'LOAD_STATE', state: { manicurists, queue, completed, appointments, salonServices, turnCriteria, calendarDays, dailyHistory: cleanedHistory } });
+    // Priority list: load from system_state singleton. If DB null but localStorage has values,
+    // perform a one-time migration so the existing settings on this device aren't blown away.
+    // We mirror the chosen values into localStorage so legacy reads in
+    // assignHelpers.getDistinctServices keep working.
+    const localCat = readLocalCatPriority();
+    const localSvc = readLocalSvcPriority();
+
+    let initialCatPriority: string[] = [];
+    let initialSvcPriority: Record<string, string[]> = {};
+
+    const { data: priorityRow } = await supabase
+      .from('system_state')
+      .select('category_priority, service_priority')
+      .eq('id', 'singleton')
+      .single();
+    const dbCatPriority = (priorityRow as Record<string, unknown> | null)?.category_priority as string[] | null;
+    const dbSvcPriority = (priorityRow as Record<string, unknown> | null)?.service_priority as Record<string, string[]> | null;
+
+    if (Array.isArray(dbCatPriority)) {
+      initialCatPriority = dbCatPriority;
+      try { localStorage.setItem(CAT_PRIORITY_KEY, JSON.stringify(dbCatPriority)); } catch {}
+    } else if (localCat && localCat.length > 0) {
+      initialCatPriority = localCat;
+      const { error: migErr } = await supabase
+        .from('system_state')
+        .upsert({ id: 'singleton', category_priority: localCat, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      if (migErr) console.error('[loadInitialData] category_priority migration error:', migErr);
+      else console.log('[loadInitialData] migrated localStorage category_priority to system_state');
+    }
+
+    if (dbSvcPriority && typeof dbSvcPriority === 'object') {
+      initialSvcPriority = dbSvcPriority;
+      try { localStorage.setItem(SVC_PRIORITY_KEY, JSON.stringify(dbSvcPriority)); } catch {}
+    } else if (localSvc && Object.keys(localSvc).length > 0) {
+      initialSvcPriority = localSvc;
+      const { error: migErr } = await supabase
+        .from('system_state')
+        .upsert({ id: 'singleton', service_priority: localSvc, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      if (migErr) console.error('[loadInitialData] service_priority migration error:', migErr);
+      else console.log('[loadInitialData] migrated localStorage service_priority to system_state');
+    }
+
+    dispatch({ type: 'LOAD_STATE', state: {
+      manicurists, queue, completed, appointments, salonServices,
+      turnCriteria, calendarDays, dailyHistory: cleanedHistory,
+      categoryPriority: initialCatPriority,
+      servicePriority: initialSvcPriority,
+    } });
 
     // Startup stale-data check: two conditions trigger an archive+reset on load:
     // 1. system_state.last_archive_date is behind today â the 11:59pm timer missed (app closed,
@@ -599,6 +675,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (ssError) console.error('[archiveTodayIfNeeded] failed to update system_state:', ssError);
     else console.log('[archiveTodayIfNeeded] reset complete, system_state updated to', archiveDate);
   }, [saveTodayHistory]);
+
+  // Setter for the Blueprint priority lists. Dispatches the local update immediately
+  // (so the UI doesn't snap-back during the round-trip), mirrors to localStorage so
+  // legacy reads in assignHelpers stay correct, and upserts to Supabase. The realtime
+  // subscription will broadcast the change to other devices, which dispatch SET_PRIORITY
+  // and update their own localStorage from the same channel handler.
+  const setPriority = useCallback(async (next: { categoryPriority?: string[]; servicePriority?: Record<string, string[]> }) => {
+    // Local state first — keeps the dragged item in its dropped position.
+    dispatch({ type: 'SET_PRIORITY', ...next });
+    // Mirror to localStorage so getPriorityRank() in priorityStorage sees the new order
+    // even before the round-trip completes.
+    if (next.categoryPriority !== undefined) {
+      try { localStorage.setItem(CAT_PRIORITY_KEY, JSON.stringify(next.categoryPriority)); } catch {}
+    }
+    if (next.servicePriority !== undefined) {
+      try { localStorage.setItem(SVC_PRIORITY_KEY, JSON.stringify(next.servicePriority)); } catch {}
+    }
+    // Persist to DB. Wrap in trackSave so save status indicators reflect the upsert.
+    await trackSave(async () => {
+      const row: Record<string, unknown> = { id: 'singleton', updated_at: new Date().toISOString() };
+      if (next.categoryPriority !== undefined) row.category_priority = next.categoryPriority;
+      if (next.servicePriority !== undefined) row.service_priority = next.servicePriority;
+      const { error } = await withRetry(() => supabase.from('system_state').upsert(row, { onConflict: 'id' }));
+      if (error) {
+        console.error('[setPriority] upsert error:', error);
+        setSyncErrorTracked('Sync failed — priority list may not be saved. Check connection.');
+      }
+    });
+  }, [trackSave, setSyncErrorTracked]);
 
   const isStaffMode = typeof window !== 'undefined' && (
     new URLSearchParams(window.location.search).get('mode') === 'staff' ||
@@ -801,6 +906,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const newRow = payload.new as Record<string, unknown> | null;
         const lastArchiveDate = (newRow?.last_archive_date as string) ?? null;
         dispatch({ type: 'REMOTE_SYSTEM_STATE_UPDATE', lastArchiveDate });
+        // Priority columns: dispatch SET_PRIORITY (no need to set isApplyingRemoteRef
+        // because SET_PRIORITY updates only state.categoryPriority/servicePriority,
+        // neither of which is touched by the local sync effect — there's no echo to skip).
+        // Mirror to localStorage so legacy reads in assignHelpers.getDistinctServices
+        // (and the priorityStorage helpers) see the same ordering on every device.
+        const remoteCat = newRow?.category_priority as string[] | null | undefined;
+        const remoteSvc = newRow?.service_priority as Record<string, string[]> | null | undefined;
+        const priorityUpdate: { categoryPriority?: string[]; servicePriority?: Record<string, string[]> } = {};
+        if (Array.isArray(remoteCat)) {
+          priorityUpdate.categoryPriority = remoteCat;
+          try { localStorage.setItem(CAT_PRIORITY_KEY, JSON.stringify(remoteCat)); } catch {}
+        }
+        if (remoteSvc && typeof remoteSvc === 'object' && !Array.isArray(remoteSvc)) {
+          priorityUpdate.servicePriority = remoteSvc;
+          try { localStorage.setItem(SVC_PRIORITY_KEY, JSON.stringify(remoteSvc)); } catch {}
+        }
+        if (priorityUpdate.categoryPriority || priorityUpdate.servicePriority) {
+          dispatch({ type: 'SET_PRIORITY', ...priorityUpdate });
+        }
       })
       .subscribe();
 
@@ -854,7 +978,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.loaded, archiveTodayIfNeeded]);
 
   return (
-    <AppContext.Provider value={{ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus }}>
+    <AppContext.Provider value={{ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority }}>
       {children}
     </AppContext.Provider>
   );

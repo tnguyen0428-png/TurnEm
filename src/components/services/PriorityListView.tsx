@@ -20,17 +20,23 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { SalonService } from '../../types';
 
-import { CAT_PRIORITY_KEY, SVC_PRIORITY_KEY, loadCatOrder, loadSvcOrders } from '../../utils/priorityStorage';
+// Merge a saved category order against the live service catalogue.
+// Drops categories that no longer exist; appends categories the user hasn't
+// reordered yet so a fresh service category is still visible immediately.
+function mergeCatOrder(saved: string[], allCats: string[]): string[] {
+  const known = new Set(saved);
+  const merged = saved.filter(c => allCats.includes(c));
+  allCats.forEach(c => { if (!known.has(c)) merged.push(c); });
+  return merged;
+}
 
-function getSvcOrder(category: string, defaultNames: string[]): string[] {
-  const saved = loadSvcOrders();
-  if (saved[category]) {
-    const known = new Set(saved[category]);
-    const merged = (saved[category] as string[]).filter(n => defaultNames.includes(n));
-    defaultNames.forEach(n => { if (!known.has(n)) merged.push(n); });
-    return merged;
-  }
-  return [...defaultNames];
+// Same idea for the per-category service order.
+function mergeSvcOrder(saved: string[] | undefined, defaultNames: string[]): string[] {
+  if (!saved) return [...defaultNames];
+  const known = new Set(saved);
+  const merged = saved.filter(n => defaultNames.includes(n));
+  defaultNames.forEach(n => { if (!known.has(n)) merged.push(n); });
+  return merged;
 }
 
 // ─── Sortable service row ─────────────────────────────────────────────────────
@@ -160,7 +166,7 @@ function SortableCategoryRow({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function PriorityListView() {
-  const { state } = useApp();
+  const { state, setPriority } = useApp();
 
   // Group active services by category, ordered by sortOrder as the default
   const servicesByCategory = useMemo(() => {
@@ -183,17 +189,21 @@ export default function PriorityListView() {
     return SERVICE_CATEGORIES.filter(c => present.has(c));
   }, [state.salonServices]);
 
-  const [categoryOrder, setCategoryOrder] = useState<string[]>(() =>
-    loadCatOrder(allCats)
+  // Derive the visible orderings from cross-device-synced state. Memoised against the
+  // saved priority and the live service catalogue, so an admin adding/removing a
+  // service or category re-merges the order without losing the user's drag-set sequence.
+  const categoryOrder = useMemo(
+    () => mergeCatOrder(state.categoryPriority || [], allCats),
+    [state.categoryPriority, allCats]
   );
 
-  const [serviceOrders, setServiceOrders] = useState<Record<string, string[]>>(() => {
+  const serviceOrders = useMemo(() => {
     const result: Record<string, string[]> = {};
     for (const [cat, svcs] of servicesByCategory) {
-      result[cat] = getSvcOrder(cat, svcs.map(s => s.name));
+      result[cat] = mergeSvcOrder(state.servicePriority?.[cat], svcs.map(s => s.name));
     }
     return result;
-  });
+  }, [state.servicePriority, servicesByCategory]);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -215,27 +225,22 @@ export default function PriorityListView() {
     const activeId = active.id as string;
     const overId = over.id as string;
 
-    // Category drag
+    // Category drag — push new category order through setPriority. The Provider
+    // dispatches SET_PRIORITY locally (immediate UI update) and upserts to Supabase;
+    // other devices receive the change via the system_state realtime channel.
     if (categoryOrder.includes(activeId)) {
-      setCategoryOrder(prev => {
-        const next = arrayMove(prev, prev.indexOf(activeId), prev.indexOf(overId));
-        localStorage.setItem(CAT_PRIORITY_KEY, JSON.stringify(next));
-        return next;
-      });
+      const next = arrayMove(categoryOrder, categoryOrder.indexOf(activeId), categoryOrder.indexOf(overId));
+      void setPriority({ categoryPriority: next });
       return;
     }
 
-    // Service drag — find which category owns both items
+    // Service drag — find which category owns both items, then push the merged map.
     for (const cat of categoryOrder) {
       const order = serviceOrders[cat] ?? [];
       if (order.includes(activeId) && order.includes(overId)) {
-        setServiceOrders(prev => {
-          const catOrder = prev[cat];
-          const next = arrayMove(catOrder, catOrder.indexOf(activeId), catOrder.indexOf(overId));
-          const updated = { ...prev, [cat]: next };
-          localStorage.setItem(SVC_PRIORITY_KEY, JSON.stringify(updated));
-          return updated;
-        });
+        const next = arrayMove(order, order.indexOf(activeId), order.indexOf(overId));
+        const updated = { ...(state.servicePriority || {}), ...serviceOrders, [cat]: next };
+        void setPriority({ servicePriority: updated });
         return;
       }
     }
