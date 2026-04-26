@@ -11,11 +11,14 @@ const SLOT_MINUTES = 15;
 const HEADER_H     = 48;
 const TIME_COL_W   = 56;
 
-// Min/max bounds when auto-fitting columns and rows to the viewport
-const MIN_COL_WIDTH  = 110;
-const MAX_COL_WIDTH  = 220;
-const MIN_SLOT_HEIGHT = 22;
-const MAX_SLOT_HEIGHT = 60;
+// Min/max bounds when auto-fitting columns and rows to the viewport.
+// Bumped up modestly per user request — the previous bounds left the cells
+// cramped on typical desktop monitors. Auto-fit still adapts to viewport size;
+// these only widen the floor/ceiling so each cell can render a touch larger.
+const MIN_COL_WIDTH  = 130;
+const MAX_COL_WIDTH  = 260;
+const MIN_SLOT_HEIGHT = 26;
+const MAX_SLOT_HEIGHT = 72;
 
 const TOTAL_SLOTS = ((END_HOUR - START_HOUR) * 60) / SLOT_MINUTES;
 
@@ -97,9 +100,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const [cannotParkMsg, setCannotParkMsg] = useState<string | null>(null);
   const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
 
-  // Auto-fit dimensions
-  const [colWidth, setColWidth]     = useState(96);
-  const [slotHeight, setSlotHeight] = useState(34);
+  // Auto-fit dimensions — initial values used for the very first render before
+  // the ResizeObserver in useLayoutEffect computes the real fit.
+  const [colWidth, setColWidth]     = useState(130);
+  const [slotHeight, setSlotHeight] = useState(40);
 
   const manicurists = state.manicurists.filter((m) => m.showInBook !== false);
   const totalGridW  = TIME_COL_W + manicurists.length * colWidth;
@@ -636,7 +640,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     {serviceName}
                   </p>
                   {hasRequest && (
-                    <span className="flex-shrink-0 px-1.5 py-0.5 rounded-md font-mono text-[8px] font-bold bg-pink-500 text-white leading-none tracking-wide">REQ</span>
+                    <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
                   )}
                 </div>
 
