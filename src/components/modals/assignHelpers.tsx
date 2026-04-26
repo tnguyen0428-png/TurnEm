@@ -85,7 +85,14 @@ export function getDistinctServices(
     const req = (client.serviceRequests || []).find((r) => r.service === s);
 
     if (req && req.manicuristIds && req.manicuristIds.length > 0) {
-      const usageKey = req.manicuristIds.join(',');
+      // Counter must be scoped to the service name. Using
+      // req.manicuristIds.join(',') as the key was wrong: two different
+      // services (e.g. Gel Fill and Gel Pedicure) that both happen to
+      // request the same single manicurist would share the same key, so the
+      // second service would find the counter already at 1 and fall through
+      // to requestedId: null. Each service has its own ServiceRequest entry,
+      // so the counter belongs per-service.
+      const usageKey = s;
       const usageCount = requestedManicuristUsage.get(usageKey) ?? 0;
 
       if (usageCount < req.manicuristIds.length) {
