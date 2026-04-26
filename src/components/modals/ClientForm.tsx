@@ -101,12 +101,19 @@ export default function ClientForm({
     const services = selectedServices.map((s) => s.serviceName as ServiceType);
     const turnValue = totalTurnValue;
 
+    // Build serviceRequests by flattening each instance's requested manicurists
+    // into a positional array. Do NOT dedupe: if a client picks the same
+    // manicurist (e.g. Christina) for multiple instances of the same service
+    // (e.g. 3 Gel Pedicures), each instance must contribute its own entry so
+    // getDistinctServices can map every instance back to its requested
+    // manicurist. Deduping here would only let the first instance get the
+    // request and silently drop the rest.
     const requestMap = new Map<string, string[]>();
     for (const s of selectedServices) {
       if (s.requestedManicuristIds.length > 0) {
         const existing = requestMap.get(s.serviceName) || [];
         for (const id of s.requestedManicuristIds) {
-          if (!existing.includes(id)) existing.push(id);
+          existing.push(id);
         }
         requestMap.set(s.serviceName, existing);
       }

@@ -3,6 +3,7 @@ import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, Cr
 import type { Manicurist, QueueEntry } from '../../types';
 import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import AutoFitText from '../shared/AutoFitText';
 import { useApp } from '../../state/AppContext';
 import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
@@ -160,7 +161,13 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1">
-              <h3 className="font-bebas text-lg tracking-[1px] text-gray-900 leading-none truncate">{manicurist.name}</h3>
+              <AutoFitText
+                className="flex-1 font-bebas tracking-[1px] text-gray-900 leading-none"
+                minSize={10}
+                maxSize={20}
+              >
+                {manicurist.name}
+              </AutoFitText>
               <button
                 onClick={handleBellClick}
                 disabled={!hasPushSub || bellSending}
