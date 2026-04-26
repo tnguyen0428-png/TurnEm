@@ -644,11 +644,9 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   )}
                 </div>
 
-                {height > 28 && (
-                  <p className="font-mono text-[11px] text-gray-500 truncate leading-tight" style={{ paddingLeft: pl }}>
-                    {formatTimeOfDay(blockTime)}
-                  </p>
-                )}
+                {/* Per-block time label removed — the appointment time already shows in the
+                    top-right corner of the first block. The repeated time under each service
+                    name was redundant and ate vertical space. */}
 
                 {height > 36 && !isCompleted && (
                   <div className="flex gap-1 mt-auto opacity-0 group-hover:opacity-100 transition-opacity"
