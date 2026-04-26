@@ -1,12 +1,11 @@
-import { useState, useMemo, useEffect } from 'react';
-import { Clock, Trash2, User, ChevronDown, ChevronLeft, ChevronRight, Save, CalendarDays, GripVertical, Pencil, Check, X } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { useState, useMemo } from 'react';
+import { Clock, Trash2, User, ChevronDown, ChevronLeft, ChevronRight, Save, CalendarDays, GripVertical } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
-import type { CompletedEntry, Manicurist } from '../../types';
+import type { CompletedEntry } from '../../types';
 import {
   DndContext,
   closestCenter,
@@ -22,234 +21,88 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type React from 'react';
 
-/** Convert a timestamp to "HH:MM" (24h) for <input type="time"> */
-function timestampToTimeInput(ts: number): string {
-  const d = new Date(ts);
-  const h = d.getHours().toString().padStart(2, '0');
-  const m = d.getMinutes().toString().padStart(2, '0');
-  return `${h}:${m}`;
+// ─── Sortable turns row ──────────────────────────────────────────────────────
+
+interface TurnsRowEntry {
+  id: string;
+  name: string;
+  turns: number;
+  color: string;
+  clockInTime: string;
 }
 
-/** Convert "HH:MM" from <input type="time"> to today's timestamp */
-function timeInputToTimestamp(val: string): number | null {
-  const parts = val.split(':').map(Number);
-  if (parts.length < 2 || parts.some(isNaN)) return null;
-  const [hours, minutes] = parts;
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0).getTime();
-}
-
-// âââ Sortable clock-in row ââââââââââââââââââââââââââââââââââââââââââââââââââââ
-
-interface SortableClockInRowProps {
-  manicurist: Pick<Manicurist, 'id' | 'name' | 'color' | 'clockInTime'>;
-  editingId: string | null;
-  editValue: string;
-  onStartEdit: (id: string) => void;
-  onChangeEdit: (val: string) => void;
-  onSaveEdit: () => void;
-  onCancelEdit: () => void;
-}
-
-function SortableClockInRow({
-  manicurist,
-  editingId,
-  editValue,
-  onStartEdit,
-  onChangeEdit,
-  onSaveEdit,
-  onCancelEdit,
-}: SortableClockInRowProps) {
+function SortableTurnsRow({
+  entry,
+  maxTurns,
+  draggable,
+}: {
+  entry: TurnsRowEntry;
+  maxTurns: number;
+  draggable: boolean;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: manicurist.id,
+    id: entry.id,
+    disabled: !draggable,
   });
 
-  const isEditing = editingId === manicurist.id;
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') onSaveEdit();
-    if (e.key === 'Escape') onCancelEdit();
-  }
+  const widthPct = maxTurns > 0 ? Math.max((entry.turns / maxTurns) * 100, entry.turns > 0 ? 4 : 0) : 0;
 
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-3 px-3 py-2.5 bg-white rounded-xl border transition-all duration-150 ${
+      className={`flex items-center gap-3 px-3 py-2 bg-white rounded-xl border transition-all duration-150 ${
         isDragging
           ? 'opacity-40 shadow-lg border-pink-300'
           : 'border-gray-100 hover:border-gray-200'
       }`}
     >
-      {/* drag handle */}
-      <button
-        {...attributes}
-        {...listeners}
-        className="touch-none flex-shrink-0 text-gray-300 hover:text-pink-400 cursor-grab active:cursor-grabbing"
-        tabIndex={-1}
-        aria-label="Drag to reorder"
-      >
-        <GripVertical size={14} />
-      </button>
+      {draggable ? (
+        <button
+          {...attributes}
+          {...listeners}
+          className="touch-none flex-shrink-0 text-gray-300 hover:text-pink-400 cursor-grab active:cursor-grabbing"
+          tabIndex={-1}
+          aria-label="Drag to reorder"
+        >
+          <GripVertical size={14} />
+        </button>
+      ) : (
+        <span className="w-[14px] flex-shrink-0" />
+      )}
 
-      {/* color dot + name */}
       <span
         className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-        style={{ backgroundColor: manicurist.color }}
+        style={{ backgroundColor: entry.color }}
       />
-      <span className="font-mono text-xs font-bold text-gray-900 flex-1 min-w-0 truncate">
-        {manicurist.name}
-      </span>
 
-      {/* clock-in time â editable */}
-      {isEditing ? (
-        <div className="flex items-center gap-1.5">
-          <input
-            type="time"
-            value={editValue}
-            onChange={(e) => onChangeEdit(e.target.value)}
-            onKeyDown={handleKeyDown}
-            autoFocus
-            className="font-mono text-xs border border-pink-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-pink-200"
-          />
-          <button
-            onClick={onSaveEdit}
-            className="w-6 h-6 flex items-center justify-center rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 transition-colors"
-          >
-            <Check size={11} />
-          </button>
-          <button
-            onClick={onCancelEdit}
-            className="w-6 h-6 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors"
-          >
-            <X size={11} />
-          </button>
-        </div>
-      ) : (
-        <button
-          onClick={() => onStartEdit(manicurist.id)}
-          title="Edit clock-in time"
-          className="flex items-center gap-1.5 font-mono text-[11px] text-gray-500 hover:text-pink-500 border border-gray-200 hover:border-pink-200 rounded-lg px-2 py-1 transition-colors"
-        >
-          <Clock size={10} />
-          {manicurist.clockInTime ? formatTime(manicurist.clockInTime) : 'â'}
-          <Pencil size={9} className="ml-0.5 opacity-50" />
-        </button>
-      )}
-    </div>
-  );
-}
-
-// âââ Clock-in order section ââââââââââââââââââââââââââââââââââââââââââââââââââââ
-
-interface ClockInOrderSectionProps {
-  manicurists: Manicurist[];
-  dispatch: React.Dispatch<import('../../state/actions').AppAction>;
-}
-
-function ClockInOrderSection({ manicurists, dispatch }: ClockInOrderSectionProps) {
-  const clockedIn = useMemo(
-    () =>
-      manicurists
-        .filter((m) => m.clockedIn)
-        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity)),
-    [manicurists]
-  );
-
-  const [items, setItems] = useState<string[]>(() => clockedIn.map((m) => m.id));
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState('');
-
-  // Keep local order in sync when manicurists change externally (new clock-in, etc.)
-  useEffect(() => {
-    setItems((prev) => {
-      const prevSet = new Set(prev);
-      const newIds = clockedIn.map((m) => m.id);
-      const newSet = new Set(newIds);
-      // If same set of IDs, keep existing order; otherwise reset
-      const same = newIds.every((id) => prevSet.has(id)) && prev.every((id) => newSet.has(id));
-      return same ? prev : newIds;
-    });
-  }, [clockedIn]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
-  );
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = items.indexOf(active.id as string);
-    const newIndex = items.indexOf(over.id as string);
-    const newOrder = arrayMove(items, oldIndex, newIndex);
-    setItems(newOrder);
-
-    // Collect original clock-in times in the old sorted order, then reassign
-    const originalTimes = clockedIn.map((m) => m.clockInTime);
-    newOrder.forEach((id, i) => {
-      dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
-    });
-  }
-
-  function handleStartEdit(id: string) {
-    const mani = manicurists.find((m) => m.id === id);
-    setEditValue(mani?.clockInTime ? timestampToTimeInput(mani.clockInTime) : '');
-    setEditingId(id);
-  }
-
-  function handleSaveEdit() {
-    if (!editingId) return;
-    const ts = timeInputToTimestamp(editValue);
-    if (ts !== null) {
-      dispatch({ type: 'UPDATE_MANICURIST', id: editingId, updates: { clockInTime: ts } });
-    }
-    setEditingId(null);
-  }
-
-  function handleCancelEdit() {
-    setEditingId(null);
-  }
-
-  if (clockedIn.length === 0) return null;
-
-  const displayItems = items
-    .map((id) => clockedIn.find((m) => m.id === id))
-    .filter((m): m is Manicurist => !!m);
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold">CLOCK IN ORDER</h3>
-        <span className="font-mono text-[9px] text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 tracking-wider">
-          DRAG TO REORDER Â· TAP TIME TO EDIT
-        </span>
+      <div className="w-24 flex-shrink-0 min-w-0">
+        <p className="font-mono text-xs font-bold text-gray-900 truncate leading-tight">
+          {entry.name}
+        </p>
+        {entry.clockInTime && (
+          <p className="font-mono text-[9px] text-gray-400 truncate leading-tight">
+            {entry.clockInTime}
+          </p>
+        )}
       </div>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={items} strategy={verticalListSortingStrategy}>
-          <div className="flex flex-col gap-2">
-            {displayItems.map((mani) => (
-              <SortableClockInRow
-                key={mani.id}
-                manicurist={mani}
-                editingId={editingId}
-                editValue={editValue}
-                onStartEdit={handleStartEdit}
-                onChangeEdit={setEditValue}
-                onSaveEdit={handleSaveEdit}
-                onCancelEdit={handleCancelEdit}
-              />
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
+
+      <div className="flex-1 h-5 rounded-md overflow-hidden bg-gray-50 min-w-0">
+        <div
+          className="h-full rounded-md transition-all duration-200"
+          style={{ width: `${widthPct}%`, backgroundColor: entry.color }}
+        />
+      </div>
+
+      <span className="font-mono text-xs font-semibold text-gray-700 w-10 text-right flex-shrink-0">
+        {entry.turns.toFixed(1)}
+      </span>
     </div>
   );
 }
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─────────────────────────────────────────────────────────────────────────────
 
 function groupServices(services: string[]): [string, number][] {
   const map = new Map<string, number>();
@@ -449,14 +302,17 @@ export default function HistoryScreen() {
       ? state.completed
       : (todayArchivedEntries ?? []);
 
-  // Bar chart data â shown whenever manicurists are clocked in, even before any services complete
-  const turnsPerManicurist = useMemo(() => {
+  // Per-manicurist turn totals — shown whenever manicurists are clocked in,
+  // even before any services complete. For today, ordered by clock-in time
+  // (which doubles as the priority order — drag to reorder swaps clockInTimes).
+  const turnsPerManicurist = useMemo<TurnsRowEntry[]>(() => {
     if (!viewingPastDay) {
       const clockedIn = state.manicurists
         .filter((m) => m.clockedIn)
         .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity));
       if (clockedIn.length > 0) {
         return clockedIn.map((m) => ({
+          id: m.id,
           name: m.name,
           turns: m.totalTurns,
           color: m.color,
@@ -465,15 +321,56 @@ export default function HistoryScreen() {
       }
     }
     // Past day view or everyone clocked out: build from displayed entries
-    const map = new Map<string, { name: string; turns: number; color: string; clockInTime: string }>();
+    const map = new Map<string, TurnsRowEntry>();
     for (const e of displayedEntries) {
       if (!map.has(e.manicuristId)) {
-        map.set(e.manicuristId, { name: e.manicuristName, turns: 0, color: e.manicuristColor, clockInTime: '' });
+        map.set(e.manicuristId, {
+          id: e.manicuristId,
+          name: e.manicuristName,
+          turns: 0,
+          color: e.manicuristColor,
+          clockInTime: '',
+        });
       }
       map.get(e.manicuristId)!.turns += e.turnValue;
     }
     return Array.from(map.values());
   }, [viewingPastDay, state.manicurists, displayedEntries]);
+
+  const maxTurns = useMemo(
+    () => Math.max(1, ...turnsPerManicurist.map((e) => e.turns)),
+    [turnsPerManicurist]
+  );
+
+  // Drag is only meaningful for clocked-in manicurists today (since reordering
+  // works by swapping clockInTime values, which only exist for clocked-in staff).
+  const turnsDraggable = !viewingPastDay && state.manicurists.some((m) => m.clockedIn);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  function handleTurnsDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    if (!turnsDraggable) return;
+
+    const ids = turnsPerManicurist.map((e) => e.id);
+    const oldIndex = ids.indexOf(active.id as string);
+    const newIndex = ids.indexOf(over.id as string);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const newOrder = arrayMove(ids, oldIndex, newIndex);
+
+    // Collect original clock-in times in the current sorted order, then reassign
+    // them to the new order — same swap pattern the old ClockInOrderSection used.
+    const originalTimes = turnsPerManicurist.map(
+      (e) => state.manicurists.find((m) => m.id === e.id)?.clockInTime ?? null
+    );
+    newOrder.forEach((id, i) => {
+      dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
+    });
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -535,7 +432,7 @@ export default function HistoryScreen() {
               }`}
             >
               <Save size={14} />
-              {saving ? 'SAVING...' : saveError ? 'SAVE FAILED â RETRY' : 'SAVE TODAY'}
+              {saving ? 'SAVING...' : saveError ? 'SAVE FAILED — RETRY' : 'SAVE TODAY'}
             </button>
           )}
           <button
@@ -645,80 +542,37 @@ export default function HistoryScreen() {
         </div>
       )}
 
-      {/* Clock-in order â drag to reorder, tap time to edit (today only) */}
-      {!viewingPastDay && (
-        <ClockInOrderSection manicurists={state.manicurists} dispatch={dispatch} />
-      )}
-
       {turnsPerManicurist.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
-          <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold mb-3">TURNS PER MANICURIST</h3>
-          <ResponsiveContainer width="100%" height={turnsPerManicurist.length * 36 + 20}>
-            <BarChart data={turnsPerManicurist} layout="vertical" margin={{ top: 4, right: 30, bottom: 4, left: 0 }}>
-              <YAxis
-                dataKey="name"
-                type="category"
-                interval={0}
-                tick={({ x, y, payload, index }: { x: string | number; y: string | number; payload: { value: string }; index: number }) => {
-                  const entry = turnsPerManicurist[index];
-                  return (
-                    <g transform={`translate(${Number(x)},${Number(y)})`}>
-                      <text x={-4} y={0} dy={4} textAnchor="end" fill="#111827" fontSize={11} fontFamily="IBM Plex Mono" fontWeight={700}>
-                        {payload.value}
-                      </text>
-                      {entry?.clockInTime && (
-                        <text x={-4} y={0} dy={14} textAnchor="end" fill="#9ca3af" fontSize={9} fontFamily="IBM Plex Mono">
-                          {entry.clockInTime}
-                        </text>
-                      )}
-                    </g>
-                  );
-                }}
-                axisLine={false}
-                tickLine={false}
-                width={90}
-              />
-              <XAxis
-                type="number"
-                tick={{ fontSize: 10, fontFamily: 'IBM Plex Mono', fill: '#9ca3af' }}
-                axisLine={false}
-                tickLine={false}
-                ticks={(() => {
-                  const maxTurns = Math.max(...turnsPerManicurist.map((m) => m.turns), 1);
-                  const maxTick = Math.ceil(maxTurns * 2) / 2;
-                  const ticks = [];
-                  for (let i = 0; i <= maxTick * 2; i++) ticks.push(i * 0.5);
-                  return ticks;
-                })()}
-                domain={[0, 'dataMax']}
-              />
-              <Tooltip
-                contentStyle={{ fontFamily: 'IBM Plex Mono', fontSize: 12, borderRadius: 12, border: '1px solid #e5e7eb' }}
-              />
-              <Bar
-                dataKey="turns"
-                radius={[0, 8, 8, 0]}
-                maxBarSize={24}
-                label={({ x, y, width, height, value }) => (
-                  <text
-                    x={Number(x) + Number(width) + 6}
-                    y={Number(y) + Number(height) / 2}
-                    dy={4}
-                    fill="#374151"
-                    fontSize={11}
-                    fontFamily="IBM Plex Mono"
-                    fontWeight={600}
-                  >
-                    {Number(value).toFixed(1)}
-                  </text>
-                )}
-              >
-                {turnsPerManicurist.map((entry, index) => (
-                  <Cell key={index} fill={entry.color} />
+          <div className="flex items-center gap-2 mb-3">
+            <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold">TURNS PER MANICURIST</h3>
+            {turnsDraggable && (
+              <span className="font-mono text-[9px] text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 tracking-wider">
+                DRAG TO REORDER
+              </span>
+            )}
+          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleTurnsDragEnd}
+          >
+            <SortableContext
+              items={turnsPerManicurist.map((e) => e.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="flex flex-col gap-1.5">
+                {turnsPerManicurist.map((entry) => (
+                  <SortableTurnsRow
+                    key={entry.id}
+                    entry={entry}
+                    maxTurns={maxTurns}
+                    draggable={turnsDraggable}
+                  />
                 ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+              </div>
+            </SortableContext>
+          </DndContext>
         </div>
       )}
 
