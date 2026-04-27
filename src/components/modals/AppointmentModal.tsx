@@ -36,6 +36,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const [date, setDate] = useState(draft?.date ?? today);
   const [time, setTime] = useState(draft?.time ?? '10:00');
   const [notes, setNotes] = useState('');
+  const [sameTime, setSameTime] = useState(false);
+  const [partyGroup, setPartyGroup] = useState(false);
 
   const sortedServices = useMemo(
     () => [...state.salonServices].filter((s) => s.isActive).sort((a, b) => a.sortOrder - b.sortOrder),
@@ -64,6 +66,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       setDate(editing.date);
       setTime(editing.time);
       setNotes(editing.notes);
+      setSameTime(editing.sameTime || false);
+      setPartyGroup(!!editing.partyId);
 
       const svcs = editing.services?.length ? editing.services : [editing.service];
       // Use occurrence tracking for duplicate service names
@@ -159,6 +163,26 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       ?? null;
     const name = clientName.trim() || 'Walk-in';
 
+    // Auto-link party group: when "Party group" is checked, look for another appointment
+    // at the same date+time that already has a partyId and reuse it. Otherwise mint a new
+    // partyId so the next booking at this slot will pick it up.
+    let partyId: string | null = null;
+    if (partyGroup) {
+      // If we are editing and the appointment already has a partyId, keep it stable.
+      if (mode === 'edit' && editing?.partyId) {
+        partyId = editing.partyId;
+      } else {
+        const sibling = state.appointments.find(
+          (a) =>
+            a.id !== editing?.id &&
+            a.date === date &&
+            a.time === time &&
+            a.partyId,
+        );
+        partyId = sibling?.partyId ?? crypto.randomUUID();
+      }
+    }
+
     if (mode === 'edit' && editing) {
       dispatch({
         type: 'UPDATE_APPOINTMENT',
@@ -173,6 +197,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           date,
           time,
           notes: notes.trim(),
+          sameTime,
+          partyId,
         },
       });
     } else {
@@ -189,6 +215,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         notes: notes.trim(),
         status: 'scheduled',
         createdAt: Date.now(),
+        sameTime,
+        partyId,
       };
       dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
     }
@@ -376,6 +404,30 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>
+        </div>
+
+        {/* Same-time / Party-group flags */}
+        <div className="flex flex-wrap gap-3">
+          <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-white cursor-pointer hover:bg-gray-50 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={sameTime}
+              onChange={(e) => setSameTime(e.target.checked)}
+              className="w-4 h-4 accent-green-500"
+            />
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white font-bold text-[9px]">S</span>
+            <span className="font-mono text-xs text-gray-700">Same time</span>
+          </label>
+          <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-white cursor-pointer hover:bg-gray-50 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={partyGroup}
+              onChange={(e) => setPartyGroup(e.target.checked)}
+              className="w-4 h-4 accent-purple-500"
+            />
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-500 text-white font-bold text-[9px]">P</span>
+            <span className="font-mono text-xs text-gray-700">Party group</span>
+          </label>
         </div>
 
         {/* Notes */}

@@ -640,7 +640,16 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     {serviceName}
                   </p>
                   {hasRequest && (
-                    <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
+                    <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]" title="Manicurist requested">R</span>
+                  )}
+                  {appt.sameTime && (
+                    <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white font-bold text-[9px]" title="Same time">S</span>
+                  )}
+                  {appt.partyId && (
+                    <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-500 text-white font-bold text-[9px]" title="Party group">P</span>
+                  )}
+                  {appt.notes && appt.notes.trim() && (
+                    <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-sky-400 text-white font-bold text-[9px]" title={appt.notes}>N</span>
                   )}
                 </div>
 

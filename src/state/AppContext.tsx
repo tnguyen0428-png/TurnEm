@@ -177,6 +177,8 @@ function mapDbAppointment(row: Record<string, unknown>): Appointment {
     notes: (row.notes as string) || '',
     status: (row.status as Appointment['status']) || 'scheduled',
     createdAt: row.created_at ? new Date(row.created_at as string).getTime() : Date.now(),
+    sameTime: (row.same_time as boolean) || false,
+    partyId: (row.party_id as string) || null,
   };
 }
 
@@ -1213,7 +1215,9 @@ function appointmentUnchanged(a: Appointment, b: Appointment): boolean {
     a.date === b.date &&
     a.time === b.time &&
     (a.notes || null) === (b.notes || null) &&
-    a.status === b.status
+    a.status === b.status &&
+    (a.sameTime || false) === (b.sameTime || false) &&
+    (a.partyId || null) === (b.partyId || null)
   );
 }
 
@@ -1230,6 +1234,8 @@ function appointmentToRow(a: Appointment) {
     time: a.time,
     notes: a.notes || null,
     status: a.status,
+    same_time: a.sameTime || false,
+    party_id: a.partyId || null,
     created_at: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
   };
 }

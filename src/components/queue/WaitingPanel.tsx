@@ -33,6 +33,10 @@ export default function WaitingPanel() {
       dispatch({
         type: 'ADD_APPOINTMENT',
         appointment: {
+          // Default fields first so legacy snapshots without sameTime/partyId
+          // still satisfy the Appointment type at runtime.
+          sameTime: false,
+          partyId: null,
           ...entry.originalAppointment,
           // Use a fresh id since the original was deleted on promotion.
           id: crypto.randomUUID(),
@@ -66,6 +70,8 @@ export default function WaitingPanel() {
         notes: '',
         status: 'scheduled',
         createdAt: Date.now(),
+        sameTime: false,
+        partyId: null,
       },
     });
     dispatch({ type: 'REMOVE_CLIENT', id: clientId });

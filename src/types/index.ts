@@ -95,6 +95,8 @@ export interface Appointment {
   notes: string;
   status: 'scheduled' | 'checked-in' | 'completed' | 'cancelled' | 'no-show';
   createdAt: number;
+  sameTime: boolean;          // visual flag: client wants same time as another booking
+  partyId: string | null;     // group id linking party-group bookings
 }
 
 export interface SalonService {
