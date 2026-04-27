@@ -9,10 +9,10 @@ import ManicuristPanel from './ManicuristPanel';
 export default function QueueScreen() {
   return (
     <div className="flex flex-col lg:flex-row h-full overflow-hidden">
-      <div className="flex-1 min-h-0 lg:flex-none lg:w-[40%] lg:h-full border-b lg:border-b-0 lg:border-r border-gray-200 bg-gray-50/50">
+      <div className="flex-1 min-h-0 lg:flex-none lg:w-1/3 lg:h-full border-b lg:border-b-0 lg:border-r border-gray-200 bg-gray-50/50">
         <WaitingPanel />
       </div>
-      <div className="flex-1 min-h-0 lg:flex-none lg:w-[60%] lg:h-full">
+      <div className="flex-[2] min-h-0 lg:flex-none lg:w-2/3 lg:h-full">
         <ManicuristPanel />
       </div>
     </div>

@@ -102,7 +102,7 @@ export default function ManicuristPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+      <div className="px-4 py-1.5 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h2 className="font-bebas text-lg tracking-[2px] text-gray-900">MANICURISTS</h2>
           <span className="font-mono text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
@@ -199,7 +199,7 @@ export default function ManicuristPanel() {
             minSize={10}
             maxSize={20}
           >
-            <div className="p-3 grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="p-2 grid grid-cols-2 sm:grid-cols-5 gap-2">
               {sortedClockedIn.map((m, idx) => {
                 const rank = rankMap.get(m.id) ?? null;
                 return (
