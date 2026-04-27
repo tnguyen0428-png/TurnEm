@@ -80,6 +80,7 @@ function mapDbManicurist(row: Record<string, unknown>): Manicurist {
     smsOptIn: (row.sms_opt_in as boolean) || false,
     showInBook: row.show_in_book === false ? false : true,
     isReceptionist: (row.is_receptionist as boolean) || false,
+    notificationTitle: (row.notification_title as string) || '',
   };
 }
 
@@ -1095,6 +1096,7 @@ function manicuristUnchanged(a: Manicurist, b: Manicurist, aIdx: number, bIdx: n
     a.smsOptIn === b.smsOptIn &&
     a.showInBook === b.showInBook &&
     a.isReceptionist === b.isReceptionist &&
+    (a.notificationTitle || '') === (b.notificationTitle || '') &&
     JSON.stringify(a.skills) === JSON.stringify(b.skills) &&
     JSON.stringify(a.timeAdjustments || {}) === JSON.stringify(b.timeAdjustments || {})
   );
@@ -1125,6 +1127,7 @@ function manicuristToRow(m: Manicurist, idx: number) {
     sort_order: idx,
     show_in_book: m.showInBook !== false,
     is_receptionist: m.isReceptionist || false,
+    notification_title: m.notificationTitle || null,
   };
 }
 

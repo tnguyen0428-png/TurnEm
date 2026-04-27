@@ -157,9 +157,11 @@ export async function sendPushNotification(
   manicuristId: string,
   manicuristName: string,
   clientName: string,
-  service: string
+  service: string,
+  customTitle?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const title = customTitle && customTitle.trim() ? customTitle.trim() : 'TurnEM - Aqua Team';
     const response = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
       method: 'POST',
       headers: {
@@ -168,7 +170,7 @@ export async function sendPushNotification(
       },
       body: JSON.stringify({
         manicuristId,
-        title: 'TurnEM - Aqua Team',
+        title,
         body: `Hi ${manicuristName}, it's your turn! Client: ${clientName} | Service: ${service}. Please head to your station.`,
       }),
     });
