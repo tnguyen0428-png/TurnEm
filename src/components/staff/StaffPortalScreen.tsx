@@ -423,7 +423,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           <img
             src="/Turn_Em_Logo.jpg"
             alt="TurnEM Logo"
-            className="h-8 w-auto object-contain"
+            className="h-24 w-auto object-contain"
           />
         </div>
         <div className="max-w-lg mx-auto px-4 pb-3 flex items-center justify-between">
