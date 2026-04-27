@@ -1,13 +1,18 @@
 import WaitingPanel from './WaitingPanel';
 import ManicuristPanel from './ManicuristPanel';
 
+// Each panel must scroll independently. The wrapper divs need a constrained
+// height (via `flex-1 min-h-0`) so the inner `flex-1 overflow-y-auto` inside
+// each panel actually has a finite container to scroll within. Without
+// `min-h-0` flex items refuse to shrink below their content size and the
+// whole page scrolls instead of each panel.
 export default function QueueScreen() {
   return (
-    <div className="flex flex-col lg:flex-row h-full">
-      <div className="w-full lg:w-[40%] border-b lg:border-b-0 lg:border-r border-gray-200 bg-gray-50/50">
+    <div className="flex flex-col lg:flex-row h-full overflow-hidden">
+      <div className="flex-1 min-h-0 lg:flex-none lg:w-[40%] lg:h-full border-b lg:border-b-0 lg:border-r border-gray-200 bg-gray-50/50">
         <WaitingPanel />
       </div>
-      <div className="w-full lg:w-[60%]">
+      <div className="flex-1 min-h-0 lg:flex-none lg:w-[60%] lg:h-full">
         <ManicuristPanel />
       </div>
     </div>

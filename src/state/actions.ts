@@ -21,6 +21,8 @@ export type AppAction =
   | { type: 'SET_SELECTED_CLIENT'; clientId: string | null }
   | { type: 'SET_EDITING_STAFF'; staffId: string | null }
   | { type: 'CLEAR_HISTORY' }
+  | { type: 'UPDATE_COMPLETED'; id: string; updates: Partial<CompletedEntry> }
+  | { type: 'DELETE_COMPLETED'; id: string }
   | { type: 'REQUEST_ASSIGN'; client: QueueEntry; manicuristId: string }
   | { type: 'SPLIT_AND_ASSIGN'; originalId: string; entries: { client: QueueEntry; manicuristId: string | null }[] }
   | { type: 'ADD_APPOINTMENT'; appointment: Appointment }

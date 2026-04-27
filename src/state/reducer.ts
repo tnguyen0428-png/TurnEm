@@ -328,6 +328,80 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'CLEAR_HISTORY':
       return { ...state, completed: [] };
 
+    case 'UPDATE_COMPLETED': {
+      // Edit a completed-services row in today's in-memory list. If the
+      // edited entry has already been archived into dailyHistory (e.g. the
+      // day was saved before the edit), update that copy too so re-opens of
+      // the saved-day view reflect the change.
+      const updatedCompleted = state.completed.map((c) =>
+        c.id === action.id ? { ...c, ...action.updates } : c
+      );
+      const updatedDailyHistory = state.dailyHistory.map((d) => ({
+        ...d,
+        entries: d.entries.map((e) =>
+          e.id === action.id ? { ...e, ...action.updates } : e
+        ),
+      }));
+
+      // If the manicurist changed, recompute totalTurns on both the source
+      // and destination manicurist so the "TURNS PER MANICURIST" bar chart
+      // stays in sync with the entry's new owner.
+      const original = state.completed.find((c) => c.id === action.id);
+      let updatedManicurists = state.manicurists;
+      if (
+        original &&
+        action.updates.manicuristId &&
+        action.updates.manicuristId !== original.manicuristId
+      ) {
+        const turnDelta = original.turnValue;
+        updatedManicurists = state.manicurists.map((m) => {
+          if (m.id === original.manicuristId) {
+            return { ...m, totalTurns: Math.max(0, m.totalTurns - turnDelta) };
+          }
+          if (m.id === action.updates.manicuristId) {
+            return { ...m, totalTurns: m.totalTurns + (action.updates.turnValue ?? turnDelta) };
+          }
+          return m;
+        });
+      } else if (
+        original &&
+        action.updates.turnValue !== undefined &&
+        action.updates.turnValue !== original.turnValue
+      ) {
+        const delta = action.updates.turnValue - original.turnValue;
+        updatedManicurists = state.manicurists.map((m) =>
+          m.id === original.manicuristId ? { ...m, totalTurns: m.totalTurns + delta } : m
+        );
+      }
+
+      return {
+        ...state,
+        completed: updatedCompleted,
+        dailyHistory: updatedDailyHistory,
+        manicurists: updatedManicurists,
+      };
+    }
+
+    case 'DELETE_COMPLETED': {
+      const original = state.completed.find((c) => c.id === action.id);
+      const updatedManicurists = original
+        ? state.manicurists.map((m) =>
+            m.id === original.manicuristId
+              ? { ...m, totalTurns: Math.max(0, m.totalTurns - original.turnValue) }
+              : m
+          )
+        : state.manicurists;
+      return {
+        ...state,
+        completed: state.completed.filter((c) => c.id !== action.id),
+        dailyHistory: state.dailyHistory.map((d) => ({
+          ...d,
+          entries: d.entries.filter((e) => e.id !== action.id),
+        })),
+        manicurists: updatedManicurists,
+      };
+    }
+
     case 'ADD_APPOINTMENT':
       return { ...state, appointments: [...state.appointments, action.appointment] };
 

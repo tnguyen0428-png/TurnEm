@@ -1,9 +1,21 @@
 import { useState, useMemo } from 'react';
-import { Clock, Trash2, User, ChevronDown, ChevronLeft, ChevronRight, Save, CalendarDays, GripVertical } from 'lucide-react';
+import {
+  Clock,
+  Trash2,
+  User,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Save,
+  CalendarDays,
+  GripVertical,
+  Pencil,
+} from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import EditCompletedModal from '../modals/EditCompletedModal';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { CompletedEntry } from '../../types';
 import {
@@ -12,6 +24,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import {
@@ -21,6 +34,17 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
+// DnD id namespacing — turns rows and service rows live in the same DndContext
+// so a service row can be dragged onto a manicurist row to reassign it. The
+// prefix tells handleDragEnd which kind of row was dragged.
+const TURNS_ID = (id: string) => `t:${id}`;
+const SERVICE_ID = (id: string) => `s:${id}`;
+const parseDndId = (raw: string): { kind: 't' | 's'; id: string } | null => {
+  if (raw.startsWith('t:')) return { kind: 't', id: raw.slice(2) };
+  if (raw.startsWith('s:')) return { kind: 's', id: raw.slice(2) };
+  return null;
+};
 
 // ─── Sortable turns row ──────────────────────────────────────────────────────
 
@@ -42,7 +66,7 @@ function SortableTurnsRow({
   draggable: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: entry.id,
+    id: TURNS_ID(entry.id),
     disabled: !draggable,
   });
 
@@ -133,19 +157,101 @@ function formatDateDisplay(dateStr: string): string {
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-interface HistoryTableProps {
-  entries: CompletedEntry[];
-  manicurists: { id: string; name: string; color: string; totalTurns: number; clockedIn: boolean; clockInTime: number | null }[];
+// Drop target for a single completed-service entry. The "sticky hand" lives on
+// the TURNS PER MANICURIST rows — dragging a manicurist row and dropping it on
+// a service row reassigns that service to the dragged manicurist. The pencil
+// button opens the edit modal.
+function DroppableServiceRow({
+  entry,
+  droppable,
+  onEdit,
+}: {
+  entry: CompletedEntry;
+  droppable: boolean;
+  onEdit?: (entry: CompletedEntry) => void;
+}) {
+  const { setNodeRef, isOver, active } = useDroppable({
+    id: SERVICE_ID(entry.id),
+    disabled: !droppable,
+  });
+
+  // Highlight only when a manicurist row (kind 't') is being dragged over us.
+  const incomingKind = active ? parseDndId(String(active.id))?.kind : null;
+  const showDropHighlight = isOver && incomingKind === 't';
+
+  return (
+    <tr
+      ref={setNodeRef}
+      className={`border-b border-gray-50 transition-colors ${
+        showDropHighlight ? 'bg-pink-50/60' : 'hover:bg-gray-50/50'
+      }`}
+    >
+      <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-900">
+        {entry.clientName}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {groupServices(entry.services).map(([s, count]) => {
+            const wasRequested =
+              Array.isArray(entry.requestedServices) &&
+              entry.requestedServices.length > 0 &&
+              entry.requestedServices.includes(s as typeof entry.requestedServices[number]);
+            return (
+              <span key={s} className="inline-flex items-center gap-1">
+                {wasRequested && (
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">
+                    R
+                  </span>
+                )}
+                <Badge
+                  label={count > 1 ? `${s} x${count}` : s}
+                  variant={getTurnBadgeVariant(entry.turnValue)}
+                />
+              </span>
+            );
+          })}
+        </div>
+      </td>
+      <td className="px-4 py-3 font-mono text-xs font-bold text-gray-900">{entry.turnValue}</td>
+      <td className="px-4 py-3">
+        <span className="flex items-center gap-2">
+          <span
+            className="w-2.5 h-2.5 rounded-full"
+            style={{ backgroundColor: entry.manicuristColor }}
+          />
+          <span className="font-mono text-xs font-bold text-gray-900">{entry.manicuristName}</span>
+        </span>
+      </td>
+      <td className="pr-3 pl-1 py-3 w-10 text-right">
+        {onEdit && (
+          <button
+            onClick={() => onEdit(entry)}
+            type="button"
+            aria-label="Edit service"
+            className="p-1.5 rounded-lg text-gray-300 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+          >
+            <Pencil size={14} />
+          </button>
+        )}
+      </td>
+    </tr>
+  );
 }
 
-function HistoryTable({ entries, manicurists }: HistoryTableProps) {
+interface HistoryTableProps {
+  entries: CompletedEntry[];
+  droppable: boolean;
+  onEdit?: (entry: CompletedEntry) => void;
+}
+
+function HistoryTable({ entries, droppable, onEdit }: HistoryTableProps) {
   const [sortMode, setSortMode] = useState<SortMode>('time');
   const [manicuristFilter, setManicuristFilter] = useState<string>('all');
 
   const manicuristNames = useMemo(() => {
     const fromEntries = entries.map((c) => c.manicuristName);
     return Array.from(new Set(fromEntries)).sort();
-  }, [entries, manicurists]);
+  }, [entries]);
 
   const sortedEntries = useMemo(() => {
     let list = [...entries];
@@ -215,47 +321,17 @@ function HistoryTable({ entries, manicurists }: HistoryTableProps) {
                 <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">SERVICE</th>
                 <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">TURNS</th>
                 <th className="text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold">MANICURIST</th>
+                <th className="w-10" aria-hidden="true" />
               </tr>
             </thead>
             <tbody>
               {sortedEntries.map((entry) => (
-                <tr key={entry.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                  <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-900">
-                    {entry.clientName}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {groupServices(entry.services).map(([s, count]) => {
-                        const wasRequested = Array.isArray(entry.requestedServices)
-                          && entry.requestedServices.length > 0
-                          && entry.requestedServices.includes(s as typeof entry.requestedServices[number]);
-                        return (
-                          <span key={s} className="inline-flex items-center gap-1">
-                            {wasRequested && (
-                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
-                            )}
-                            <Badge
-                              label={count > 1 ? `${s} x${count}` : s}
-                              variant={getTurnBadgeVariant(entry.turnValue)}
-                            />
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs font-bold text-gray-900">
-                    {entry.turnValue}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="flex items-center gap-2">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full"
-                        style={{ backgroundColor: entry.manicuristColor }}
-                      />
-                      <span className="font-mono text-xs font-bold text-gray-900">{entry.manicuristName}</span>
-                    </span>
-                  </td>
-                </tr>
+                <DroppableServiceRow
+                  key={entry.id}
+                  entry={entry}
+                  droppable={droppable}
+                  onEdit={onEdit}
+                />
               ))}
             </tbody>
           </table>
@@ -272,6 +348,7 @@ export default function HistoryScreen() {
   const [saveError, setSaveError] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [editingEntry, setEditingEntry] = useState<CompletedEntry | null>(null);
   const today = getTodayDateStr();
   const todayAlreadySaved = state.dailyHistory.some((h) => h.date === today);
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -346,30 +423,60 @@ export default function HistoryScreen() {
   // works by swapping clockInTime values, which only exist for clocked-in staff).
   const turnsDraggable = !viewingPastDay && state.manicurists.some((m) => m.clockedIn);
 
+  // Service rows are drop targets on today's view — the user drags a manicurist
+  // row from TURNS PER MANICURIST onto a service row to reassign that entry to
+  // them. Disabled on past-day views since the day has already been archived.
+  const serviceRowsDroppable = !viewingPastDay;
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
-  function handleTurnsDragEnd(event: DragEndEvent) {
+  function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    if (!turnsDraggable) return;
 
-    const ids = turnsPerManicurist.map((e) => e.id);
-    const oldIndex = ids.indexOf(active.id as string);
-    const newIndex = ids.indexOf(over.id as string);
-    if (oldIndex < 0 || newIndex < 0) return;
+    const activeKind = parseDndId(String(active.id));
+    const overKind = parseDndId(String(over.id));
+    if (!activeKind || !overKind) return;
 
-    const newOrder = arrayMove(ids, oldIndex, newIndex);
+    // ── Reorder turns rows (manicurist priority order) ──────────────────────
+    if (activeKind.kind === 't' && overKind.kind === 't') {
+      if (!turnsDraggable) return;
+      const ids = turnsPerManicurist.map((e) => e.id);
+      const oldIndex = ids.indexOf(activeKind.id);
+      const newIndex = ids.indexOf(overKind.id);
+      if (oldIndex < 0 || newIndex < 0) return;
 
-    // Collect original clock-in times in the current sorted order, then reassign
-    // them to the new order — same swap pattern the old ClockInOrderSection used.
-    const originalTimes = turnsPerManicurist.map(
-      (e) => state.manicurists.find((m) => m.id === e.id)?.clockInTime ?? null
-    );
-    newOrder.forEach((id, i) => {
-      dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
-    });
+      const newOrder = arrayMove(ids, oldIndex, newIndex);
+      const originalTimes = turnsPerManicurist.map(
+        (e) => state.manicurists.find((m) => m.id === e.id)?.clockInTime ?? null
+      );
+      newOrder.forEach((id, i) => {
+        dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
+      });
+      return;
+    }
+
+    // ── Reassign a service entry by dropping a manicurist row onto it ──────
+    // The "sticky hand" lives on the TURNS PER MANICURIST rows — dragging one
+    // onto a service row credits that service's turns to the dragged manicurist.
+    if (activeKind.kind === 't' && overKind.kind === 's') {
+      if (!serviceRowsDroppable) return;
+      const entry = displayedEntries.find((e) => e.id === overKind.id);
+      const newManicurist = state.manicurists.find((m) => m.id === activeKind.id);
+      if (!entry || !newManicurist) return;
+      if (entry.manicuristId === newManicurist.id) return;
+      dispatch({
+        type: 'UPDATE_COMPLETED',
+        id: entry.id,
+        updates: {
+          manicuristId: newManicurist.id,
+          manicuristName: newManicurist.name,
+          manicuristColor: newManicurist.color,
+        },
+      });
+    }
   }
 
   async function handleSave() {
@@ -542,23 +649,28 @@ export default function HistoryScreen() {
         </div>
       )}
 
-      {turnsPerManicurist.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold">TURNS PER MANICURIST</h3>
-            {turnsDraggable && (
-              <span className="font-mono text-[9px] text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 tracking-wider">
-                DRAG TO REORDER
-              </span>
-            )}
-          </div>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleTurnsDragEnd}
-          >
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        {turnsPerManicurist.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold">TURNS PER MANICURIST</h3>
+              {turnsDraggable && (
+                <span className="font-mono text-[9px] text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 tracking-wider">
+                  DRAG TO REORDER
+                </span>
+              )}
+              {serviceRowsDroppable && (
+                <span className="font-mono text-[9px] text-pink-500 border border-pink-200 bg-pink-50 rounded-full px-2 py-0.5 tracking-wider">
+                  OR DROP ON A SERVICE TO REASSIGN
+                </span>
+              )}
+            </div>
             <SortableContext
-              items={turnsPerManicurist.map((e) => e.id)}
+              items={turnsPerManicurist.map((e) => TURNS_ID(e.id))}
               strategy={verticalListSortingStrategy}
             >
               <div className="flex flex-col gap-1.5">
@@ -572,21 +684,26 @@ export default function HistoryScreen() {
                 ))}
               </div>
             </SortableContext>
-          </DndContext>
-        </div>
-      )}
+          </div>
+        )}
 
-      {displayedEntries.length === 0 ? (
-        <EmptyState
-          icon={<Clock size={48} />}
-          title={viewingPastDay ? 'No history for this day' : 'No services completed yet'}
-          description={viewingPastDay ? 'No records were saved for this date' : 'Completed services will appear here'}
-        />
-      ) : (
-        <HistoryTable
-          entries={displayedEntries}
-          manicurists={state.manicurists}
-        />
+        {displayedEntries.length === 0 ? (
+          <EmptyState
+            icon={<Clock size={48} />}
+            title={viewingPastDay ? 'No history for this day' : 'No services completed yet'}
+            description={viewingPastDay ? 'No records were saved for this date' : 'Completed services will appear here'}
+          />
+        ) : (
+          <HistoryTable
+            entries={displayedEntries}
+            droppable={serviceRowsDroppable}
+            onEdit={!viewingPastDay ? setEditingEntry : undefined}
+          />
+        )}
+      </DndContext>
+
+      {editingEntry && (
+        <EditCompletedModal entry={editingEntry} onClose={() => setEditingEntry(null)} />
       )}
 
       {showClearConfirm && (
