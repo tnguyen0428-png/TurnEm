@@ -487,6 +487,27 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'SET_SALON_SERVICE_ORDER': {
+      // Bulk reorder used by drag-and-drop. The action carries the new ID
+      // ordering for a single category; we preserve the existing sortOrder
+      // numeric values (keeping spacing relative to other categories) and
+      // permute which service holds which value.
+      const ids = action.ids;
+      const services = ids
+        .map((id) => state.salonServices.find((s) => s.id === id))
+        .filter(Boolean) as typeof state.salonServices;
+      if (services.length !== ids.length || services.length === 0) return state;
+      const sortValues = services.map((s) => s.sortOrder).slice().sort((a, b) => a - b);
+      const newOrderById = new Map<string, number>();
+      ids.forEach((id, i) => newOrderById.set(id, sortValues[i]));
+      return {
+        ...state,
+        salonServices: state.salonServices.map((s) =>
+          newOrderById.has(s.id) ? { ...s, sortOrder: newOrderById.get(s.id)! } : s,
+        ),
+      };
+    }
+
     case 'DAILY_RESET':
       return {
         ...state,

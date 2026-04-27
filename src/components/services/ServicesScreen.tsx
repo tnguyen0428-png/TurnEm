@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
+import { useState, useMemo, type CSSProperties } from 'react';
+import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
@@ -7,9 +7,10 @@ import ConfirmDialog from '../shared/ConfirmDialog';
 import ServiceModal from '../modals/ServiceModal';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, horizontalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import PriorityListView from './PriorityListView';
+import type { SalonService } from '../../types';
 
 const CATEGORY_ICONS: Record<string, string> = {
   'All': '',
@@ -91,6 +92,135 @@ function SortableTab({ cat, isActive, colors, count, onClick }: SortableTabProps
   );
 }
 
+interface SortableServiceRowProps {
+  svc: SalonService;
+  idx: number;
+  total: number;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onToggleFourth: () => void;
+}
+
+function SortableServiceRow({
+  svc,
+  idx,
+  total,
+  onMoveUp,
+  onMoveDown,
+  onEdit,
+  onDelete,
+  onToggleFourth,
+}: SortableServiceRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: svc.id });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : 'auto',
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="bg-white rounded-xl border border-gray-100 p-4 transition-all duration-200 hover:shadow-md hover:border-gray-200"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="flex flex-col gap-0.5 flex-shrink-0">
+            <button
+              onClick={onMoveUp}
+              disabled={idx === 0}
+              className={`p-0.5 rounded transition-colors ${
+                idx === 0
+                  ? 'text-gray-200 cursor-not-allowed'
+                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <ChevronUp size={14} />
+            </button>
+            <button
+              {...attributes}
+              {...listeners}
+              title="Drag to reorder"
+              className="cursor-grab active:cursor-grabbing p-0.5 rounded text-gray-300 hover:text-gray-500 hover:bg-gray-100 touch-none"
+            >
+              <GripVertical size={12} className="mx-auto" />
+            </button>
+            <button
+              onClick={onMoveDown}
+              disabled={idx === total - 1}
+              className={`p-0.5 rounded transition-colors ${
+                idx === total - 1
+                  ? 'text-gray-200 cursor-not-allowed'
+                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <ChevronDown size={14} />
+            </button>
+          </div>
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+            CATEGORY_ICONS[svc.category] || 'bg-gray-50 text-gray-500'
+          }`}>
+            <Sparkles size={14} />
+          </div>
+          <div className="min-w-0">
+            <h4 className="font-mono text-sm font-semibold text-gray-900 truncate mb-0.5">
+              {svc.name}
+            </h4>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge label={`${svc.turnValue} turn`} variant={getTurnBadgeVariant(svc.turnValue)} />
+              <span className="font-mono text-[11px] text-gray-400">{svc.duration} min</span>
+              <span className="font-mono text-[11px] font-semibold text-gray-600">
+                ${svc.price.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+          <button
+            onClick={onToggleFourth}
+            title="Mark as 4th position special"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border font-mono text-[10px] font-semibold transition-all duration-200 ${
+              svc.isFourthPositionSpecial
+                ? 'bg-purple-100 border-purple-300 text-purple-700'
+                : 'bg-white border-gray-200 text-gray-400 hover:border-purple-300 hover:text-purple-500'
+            }`}
+          >
+            <span
+              className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                svc.isFourthPositionSpecial
+                  ? 'bg-purple-500 border-purple-500'
+                  : 'border-gray-300'
+              }`}
+            >
+              {svc.isFourthPositionSpecial && (
+                <svg width="8" height="6" viewBox="0 0 8 6" fill="none">
+                  <path d="M1 3L3 5L7 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </span>
+            #4
+          </button>
+          <button
+            onClick={onEdit}
+            className="p-2 rounded-lg hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors"
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            onClick={onDelete}
+            className="p-2 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ServicesScreen() {
   const { state, dispatch } = useApp();
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -105,6 +235,7 @@ export default function ServicesScreen() {
   );
 
   const [sortableCategories, setSortableCategories] = useState<string[]>(getSavedOrder);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -121,6 +252,27 @@ export default function ServicesScreen() {
         return next;
       });
     }
+  }
+
+  function handleServiceDragEnd(event: DragEndEvent, group: { category: string; services: SalonService[] }) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = group.services.findIndex((s) => s.id === active.id);
+    const newIndex = group.services.findIndex((s) => s.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const reordered = arrayMove(group.services, oldIndex, newIndex);
+    dispatch({
+      type: 'SET_SALON_SERVICE_ORDER',
+      ids: reordered.map((s) => s.id),
+    });
+  }
+
+  function toggleCollapse(cat: string) {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
   }
 
   const categoryCounts = useMemo(() => {
@@ -283,125 +435,72 @@ export default function ServicesScreen() {
         />
       ) : (
         <div className="space-y-8">
-          {grouped.map(group => (
-            <div key={group.category}>
-              {activeCategory === 'All' && (
-                <div className="flex items-center gap-3 mb-3">
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${CATEGORY_ICONS[group.category] || 'bg-gray-50 text-gray-500'}`}>
-                    <Sparkles size={13} />
-                  </div>
-                  <h3 className="font-mono text-[11px] text-gray-500 font-semibold tracking-wider uppercase">
-                    {group.category}
-                  </h3>
-                  <div className="flex-1 h-px bg-gray-100" />
-                  <span className="font-mono text-[10px] text-gray-300">{group.services.length}</span>
-                </div>
-              )}
-
-              <div className="grid gap-2">
-                {group.services.map((svc, idx) => (
-                  <div
-                    key={svc.id}
-                    className="bg-white rounded-xl border border-gray-100 p-4 transition-all duration-200 hover:shadow-md hover:border-gray-200"
+          {grouped.map(group => {
+            const isCollapsed = collapsedCategories.has(group.category);
+            const canCollapse = activeCategory === 'All';
+            return (
+              <div key={group.category}>
+                {activeCategory === 'All' && (
+                  <button
+                    type="button"
+                    onClick={() => toggleCollapse(group.category)}
+                    className="flex items-center gap-3 mb-3 w-full text-left group"
+                    title={isCollapsed ? 'Expand' : 'Minimize'}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="flex flex-col gap-0.5 flex-shrink-0">
-                          <button
-                            onClick={() => handleMoveUp(svc.id)}
-                            disabled={idx === 0}
-                            className={`p-0.5 rounded transition-colors ${
-                              idx === 0
-                                ? 'text-gray-200 cursor-not-allowed'
-                                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                            }`}
-                          >
-                            <ChevronUp size={14} />
-                          </button>
-                          <GripVertical size={12} className="text-gray-200 mx-auto" />
-                          <button
-                            onClick={() => handleMoveDown(svc.id)}
-                            disabled={idx === group.services.length - 1}
-                            className={`p-0.5 rounded transition-colors ${
-                              idx === group.services.length - 1
-                                ? 'text-gray-200 cursor-not-allowed'
-                                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                            }`}
-                          >
-                            <ChevronDown size={14} />
-                          </button>
-                        </div>
-                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                          CATEGORY_ICONS[svc.category] || 'bg-gray-50 text-gray-500'
-                        }`}>
-                          <Sparkles size={14} />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="font-mono text-sm font-semibold text-gray-900 truncate mb-0.5">
-                            {svc.name}
-                          </h4>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Badge label={`${svc.turnValue} turn`} variant={getTurnBadgeVariant(svc.turnValue)} />
-                            <span className="font-mono text-[11px] text-gray-400">{svc.duration} min</span>
-                            <span className="font-mono text-[11px] font-semibold text-gray-600">
-                              ${svc.price.toFixed(2)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                        <button
-                          onClick={() =>
-                            dispatch({
-                              type: 'UPDATE_SALON_SERVICE',
-                              id: svc.id,
-                              updates: { isFourthPositionSpecial: !svc.isFourthPositionSpecial },
-                            })
-                          }
-                          title="Mark as 4th position special"
-                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border font-mono text-[10px] font-semibold transition-all duration-200 ${
-                            svc.isFourthPositionSpecial
-                              ? 'bg-purple-100 border-purple-300 text-purple-700'
-                              : 'bg-white border-gray-200 text-gray-400 hover:border-purple-300 hover:text-purple-500'
-                          }`}
-                        >
-                          <span
-                            className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                              svc.isFourthPositionSpecial
-                                ? 'bg-purple-500 border-purple-500'
-                                : 'border-gray-300'
-                            }`}
-                          >
-                            {svc.isFourthPositionSpecial && (
-                              <svg width="8" height="6" viewBox="0 0 8 6" fill="none">
-                                <path d="M1 3L3 5L7 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            )}
-                          </span>
-                          #4
-                        </button>
-                        <button
-                          onClick={() => {
-                            dispatch({ type: 'SET_EDITING_SERVICE', serviceId: svc.id });
-                            setShowModal('edit');
-                          }}
-                          className="p-2 rounded-lg hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          onClick={() => setDeleteId(svc.id)}
-                          className="p-2 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                    <span className="text-gray-300 group-hover:text-gray-500 transition-colors flex-shrink-0">
+                      {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </span>
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${CATEGORY_ICONS[group.category] || 'bg-gray-50 text-gray-500'}`}>
+                      <Sparkles size={13} />
                     </div>
-                  </div>
-                ))}
+                    <h3 className="font-mono text-[11px] text-gray-500 font-semibold tracking-wider uppercase">
+                      {group.category}
+                    </h3>
+                    <div className="flex-1 h-px bg-gray-100" />
+                    <span className="font-mono text-[10px] text-gray-300">{group.services.length}</span>
+                  </button>
+                )}
+
+                {(!canCollapse || !isCollapsed) && (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={(e) => handleServiceDragEnd(e, group)}
+                  >
+                    <SortableContext
+                      items={group.services.map((s) => s.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="grid gap-2">
+                        {group.services.map((svc, idx) => (
+                          <SortableServiceRow
+                            key={svc.id}
+                            svc={svc}
+                            idx={idx}
+                            total={group.services.length}
+                            onMoveUp={() => handleMoveUp(svc.id)}
+                            onMoveDown={() => handleMoveDown(svc.id)}
+                            onEdit={() => {
+                              dispatch({ type: 'SET_EDITING_SERVICE', serviceId: svc.id });
+                              setShowModal('edit');
+                            }}
+                            onDelete={() => setDeleteId(svc.id)}
+                            onToggleFourth={() =>
+                              dispatch({
+                                type: 'UPDATE_SALON_SERVICE',
+                                id: svc.id,
+                                updates: { isFourthPositionSpecial: !svc.isFourthPositionSpecial },
+                              })
+                            }
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       </>

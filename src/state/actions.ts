@@ -39,6 +39,7 @@ export type AppAction =
   | { type: 'REORDER_MANICURIST'; id: string; direction: 'up' | 'down' }
   | { type: 'SET_MANICURIST_ORDER'; ids: string[] }
   | { type: 'REORDER_SALON_SERVICE'; id: string; direction: 'up' | 'down' }
+  | { type: 'SET_SALON_SERVICE_ORDER'; ids: string[] }
   | { type: 'TOGGLE_FOURTH_POSITION_SPECIAL'; id: string }
   | { type: 'TOGGLE_CHECK2'; id: string }
   | { type: 'TOGGLE_CHECK3'; id: string }
