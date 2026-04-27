@@ -17,12 +17,12 @@ export default function TabBar() {
   return (
     <nav className="bg-white border-b border-gray-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
-        <div className="flex items-center justify-between h-48">
+        <div className="flex items-center justify-between h-20 sm:h-48">
           <div className="flex items-center flex-shrink-0">
             <img
-              src="/Turn_Em_Logo.jpg"
+              src="/Turn_Em_Logo.png"
               alt="Turn Em"
-              className="h-44 w-auto mix-blend-multiply contrast-[1.2] brightness-[1.05]"
+              className="h-16 w-auto sm:h-44"
             />
           </div>
           <div className="flex items-center gap-0.5 overflow-x-auto hide-scrollbar">
