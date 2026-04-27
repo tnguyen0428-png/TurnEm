@@ -661,18 +661,3 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     </div>
   );
 }
-                          <Clock size={9} />
-                          {formatTime(entry.completedAt)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
-        </div>
-      </div>
-    </div>
-  );
-}
