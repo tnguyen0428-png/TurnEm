@@ -591,7 +591,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         })}
 
         {blocks.map((blk, idx) => {
-          const { appt, serviceName, occurrence, blockTime, top, height, isFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;
+          const { appt, serviceName, occurrence, top, height, isFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;
           const palette     = apptPalette(appt);
           const isDragging  = dragInfo?.apptId === appt.id && dragInfo?.serviceName === serviceName;
           const isCompleted = appt.status === 'completed';
