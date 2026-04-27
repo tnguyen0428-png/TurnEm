@@ -600,13 +600,17 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           const border = isCompleted ? '#9ca3af' : isCheckedIn ? '#10b981' : palette.border;
           const pl = isFirst ? '14px' : '4px';
 
+          // Locked = no drag/move allowed. Requested appts must be modified via the edit
+          // modal so accidental hand-drags can't shift a client-requested time/staff.
+          const isLocked = isCompleted || hasRequest;
+
           return (
             <div key={`${appt.id}-${serviceName}-${idx}`}
-              draggable={!isCompleted}
-              onDragStart={(e) => !isCompleted && onDragStart(e, appt, serviceName, occurrence)}
+              draggable={!isLocked}
+              onDragStart={(e) => !isLocked && onDragStart(e, appt, serviceName, occurrence)}
               onDragEnd={onDragEnd}
               className={`absolute left-1 right-1 rounded-lg overflow-hidden border-l-[3px] select-none group z-10 transition-all ${
-                isDragging ? 'opacity-30 cursor-grabbing' : !isCompleted ? 'cursor-grab hover:shadow-md hover:-translate-y-px shadow-sm' : 'shadow-sm'
+                isDragging ? 'opacity-30 cursor-grabbing' : isLocked ? (isCompleted ? 'shadow-sm' : 'cursor-pointer shadow-sm hover:shadow-md') : 'cursor-grab hover:shadow-md hover:-translate-y-px shadow-sm'
               } ${
                 hasRequest && !isCompleted && colManicuristId !== requestedManicuristId
                   ? 'ring-2 ring-pink-500 ring-offset-1 animate-pulse' : ''
@@ -621,7 +625,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
               <div className="px-1.5 py-1 h-full flex flex-col overflow-hidden gap-0.5">
                 <div className="flex items-center gap-1 min-w-0">
-                  {!isCompleted && <GripVertical size={10} className="text-gray-400 flex-shrink-0 cursor-grab" />}
+                  {!isLocked && <GripVertical size={10} className="text-gray-400 flex-shrink-0 cursor-grab" />}
                   <p className="font-mono text-[13px] font-bold truncate leading-tight flex-1"
                     style={{ color: isCompleted ? '#9ca3af' : '#111827' }}>
                     {appt.clientName || 'Walk-in'}
