@@ -94,7 +94,7 @@ function AppContent() {
       )}
       <style>{`@keyframes turnem-spin { to { transform: rotate(360deg); } }`}</style>
       <TabBar />
-      <main className="flex-1 min-h-0 overflow-hidden">
+      <main className="flex-1 min-h-0 overflow-hidden relative">
         {state.view === 'queue' && <QueueScreen />}
         {state.view === 'history' && <HistoryScreen />}
         {state.view === 'appointments' && <AppointmentsScreen />}
