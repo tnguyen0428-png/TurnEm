@@ -193,7 +193,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     }
 
     const entries: { client: QueueEntry; manicuristId: string | null }[] = [];
-    const smsTargets: { id: string; phone: string; smsOptIn: boolean; name: string; clientName: string; service: string; notificationTitle?: string }[] = [];
+    const smsTargets: { id: string; phone: string; smsOptIn: boolean; name: string; clientName: string; service: string; notificationBody?: string }[] = [];
 
     for (const [mId, group] of manicuristGroups) {
       // Upstream paths (addApptToQueue, handleCheckIn, ClientForm) ensure
@@ -243,7 +243,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
           name: m.name,
           clientName: client.clientName,
           service: formatServiceList(group.services),
-          notificationTitle: m.notificationTitle,
+          notificationBody: m.notificationBody,
         });
       }
     }
@@ -300,7 +300,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
     for (const target of smsTargets) {
       showSmsToast('sending');
-      sendPushNotification(target.id, target.name, target.clientName, target.service, target.notificationTitle).then((pushResult) => {
+      sendPushNotification(target.id, target.name, target.clientName, target.service, target.notificationBody).then((pushResult) => {
         if (pushResult.success) {
           showSmsToast('sent');
         } else if (target.phone && target.smsOptIn) {

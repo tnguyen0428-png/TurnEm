@@ -161,7 +161,7 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
         manicurist.name,
         confirmAssignment.clientName,
         confirmAssignment.service,
-        manicurist.notificationTitle
+        manicurist.notificationBody
       ).then((pushResult) => {
         if (pushResult.success) {
           showSmsToast('sent');

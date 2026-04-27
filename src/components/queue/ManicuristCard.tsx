@@ -85,7 +85,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
       manicurist.name,
       currentClient?.clientName || 'Test',
       currentClient?.services?.join(', ') || 'Notification',
-      manicurist.notificationTitle
+      manicurist.notificationBody
     );
     if (result.success) {
       showSmsToast('sent', `Push OK: ${result.error || 'no details'}`);

@@ -36,7 +36,7 @@ export interface Manicurist {
   smsOptIn: boolean;
   showInBook?: boolean;      // if false, hidden from appointment book columns
   isReceptionist?: boolean;  // if true, shown in security as having booking access
-  notificationTitle?: string; // custom push notification title (per staff); falls back to default if empty
+  notificationBody?: string; // custom push notification body (per staff); falls back to default if empty
 }
 
 export interface ServiceRequest {

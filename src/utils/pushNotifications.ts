@@ -158,10 +158,12 @@ export async function sendPushNotification(
   manicuristName: string,
   clientName: string,
   service: string,
-  customTitle?: string
+  customBody?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const title = customTitle && customTitle.trim() ? customTitle.trim() : 'TurnEM - Aqua Team';
+    const title = 'TurnEM - Aqua Team';
+    const defaultBody = `Hi ${manicuristName}, it's your turn! Client: ${clientName} | Service: ${service}. Please head to your station.`;
+    const body = customBody && customBody.trim() ? customBody.trim() : defaultBody;
     const response = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
       method: 'POST',
       headers: {
@@ -171,7 +173,7 @@ export async function sendPushNotification(
       body: JSON.stringify({
         manicuristId,
         title,
-        body: `Hi ${manicuristName}, it's your turn! Client: ${clientName} | Service: ${service}. Please head to your station.`,
+        body,
       }),
     });
 

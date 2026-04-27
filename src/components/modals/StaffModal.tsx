@@ -23,7 +23,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
   const [timeAdjustments, setTimeAdjustments] = useState<Record<string, number>>({});
   const [pinCode, setPinCode] = useState('');
   const [isReceptionist, setIsReceptionist] = useState(false);
-  const [notificationTitle, setNotificationTitle] = useState('');
+  const [notificationBody, setNotificationBody] = useState('');
 
   const sortedServices = useMemo(
     () => [...state.salonServices].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -58,7 +58,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
       setTimeAdjustments({ ...(editingStaff.timeAdjustments || {}) });
       setPinCode(editingStaff.pinCode || '');
       setIsReceptionist(editingStaff.isReceptionist ?? false);
-      setNotificationTitle(editingStaff.notificationTitle || '');
+      setNotificationBody(editingStaff.notificationBody || '');
     }
   }, [editingStaff?.id]);
 
@@ -114,7 +114,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
           skills: isReceptionist ? [] : skills,
           timeAdjustments, pinCode: pinCode.trim(),
           isReceptionist, showInBook: !isReceptionist,
-          notificationTitle: notificationTitle.trim(),
+          notificationBody: notificationBody.trim(),
         },
       });
     } else {
@@ -141,7 +141,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
         smsOptIn: false,
         isReceptionist,
         showInBook: !isReceptionist,
-        notificationTitle: notificationTitle.trim(),
+        notificationBody: notificationBody.trim(),
       };
       dispatch({ type: 'ADD_MANICURIST', manicurist: newManicurist });
     }
@@ -213,18 +213,18 @@ export default function StaffModal({ mode }: StaffModalProps) {
 
         <div>
           <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-            NOTIFICATION TITLE
+            NOTIFICATION MESSAGE
           </label>
-          <input
-            type="text"
-            value={notificationTitle}
-            onChange={(e) => setNotificationTitle(e.target.value)}
-            placeholder="Default: TurnEM - Aqua Team"
-            maxLength={60}
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+          <textarea
+            value={notificationBody}
+            onChange={(e) => setNotificationBody(e.target.value)}
+            placeholder="Default: Hi {name}, it's your turn! Client: {client} | Service: {service}. Please head to your station."
+            maxLength={200}
+            rows={3}
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all resize-none"
           />
           <p className="font-mono text-[10px] text-gray-400 mt-1">
-            Shows as the title of their push notification when assigned a turn. Leave blank to use the default.
+            Shows as the body of their push notification when assigned a turn. Leave blank to use the default English message. Use any language you want.
           </p>
         </div>
 
