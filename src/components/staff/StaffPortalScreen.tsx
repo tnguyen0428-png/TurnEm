@@ -370,7 +370,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     manicurist.status === 'busy' ? 'text-red-500' : 'text-amber-500';
 
   return (
-    <div className="min-h-screen bg-gray-50" onClick={handleScreenTap}>
+    <div className="h-screen overflow-y-auto overscroll-contain bg-gray-50" onClick={handleScreenTap}>
       {/* Full-screen alert overlay */}
       {alert && (
         <div
@@ -419,7 +419,14 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
 
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-40">
-        <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-lg mx-auto px-4 pt-3 pb-1 flex justify-center">
+          <img
+            src="/Turn_Em_Logo.jpg"
+            alt="TurnEM Logo"
+            className="h-8 w-auto object-contain"
+          />
+        </div>
+        <div className="max-w-lg mx-auto px-4 pb-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div
               className="w-4 h-4 rounded-full ring-2 ring-white shadow"
@@ -479,7 +486,10 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
         </div>
       </div>
 
-      <div className="max-w-lg mx-auto px-4 py-5 space-y-4">
+      <div
+        className="max-w-lg mx-auto px-4 py-5 space-y-4"
+        style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
+      >
         {/* Audio activation banner — shows until user taps to activate */}
         {!audioReady && soundEnabled && (
           <button
@@ -507,12 +517,12 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 await supabase.from('manicurists').update({ sms_opt_in: newVal }).eq('id', manicurist.id);
                 dispatch({ type: 'UPDATE_MANICURIST', id: manicurist.id, updates: { smsOptIn: newVal } });
               }}
-              className={`ml-3 shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none ${
+              className={`ml-3 shrink-0 relative inline-flex h-4 w-7 items-center rounded-full transition-colors duration-200 focus:outline-none ${
                 manicurist.smsOptIn ? 'bg-emerald-500' : 'bg-gray-300'
               }`}
             >
-              <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-200 ${
-                manicurist.smsOptIn ? 'translate-x-5' : 'translate-x-0.5'
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                manicurist.smsOptIn ? 'translate-x-3.5' : 'translate-x-0.5'
               }`} />
             </button>
           </div>
@@ -610,7 +620,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               );
             }
             return (
-              <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
+              <div className="divide-y divide-gray-50">
                 {entries.map((entry) => (
                   <div key={entry.id} className="px-4 py-3 flex items-center justify-between">
                     <div className="flex-1 min-w-0">
@@ -636,6 +646,21 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                           {entry.turnValue} turns
                         </span>
                         <span className="flex items-center gap-1 font-mono text-[10px] text-gray-300">
+                          <Clock size={9} />
+                          {formatTime(entry.completedAt)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+    </div>
+  );
+}
                           <Clock size={9} />
                           {formatTime(entry.completedAt)}
                         </span>
