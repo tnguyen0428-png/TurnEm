@@ -4,6 +4,7 @@ import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import { formatTimeOfDay } from '../../utils/time';
 import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType } from '../../types';
+import WeeklyEditorModal from '../staff/WeeklyEditorModal';
 
 const START_HOUR   = 8;
 const END_HOUR     = 20;
@@ -117,6 +118,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
   const [cannotParkMsg, setCannotParkMsg] = useState<string | null>(null);
   const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
+
+  // Click-to-edit on off-hours overlay: opens WeeklyEditorModal scoped to the
+  // technician whose grayed band was clicked, with that day highlighted.
+  const [editingSchedule, setEditingSchedule] = useState<{ manicuristId: string; weekday: number } | null>(null);
 
   // Auto-fit dimensions — initial values used for the very first render before
   // the ResizeObserver in useLayoutEffect computes the real fit.
@@ -680,11 +685,15 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           );
         })}
 
-        {/* Off-hours overlay — visual only, does not block clicks/drops */}
+        {/* Off-hours overlay — clickable to quick-edit the schedule for this
+            technician/day. Pointer events are skipped while a drag is in
+            progress so drops still pass through to the slot grid underneath. */}
         {mId && offBandsByManicurist.get(mId)?.map((band, idx) => (
           <div
             key={`offband-${idx}`}
-            className="absolute left-0 right-0 pointer-events-none"
+            className={`absolute left-0 right-0 group/off transition-colors ${
+              dragInfo ? 'pointer-events-none' : 'cursor-pointer hover:bg-pink-100/40'
+            }`}
             style={{
               top: band.top,
               height: band.height,
@@ -692,10 +701,21 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(75, 85, 99, 0.08) 6px, rgba(75, 85, 99, 0.08) 12px)',
               zIndex: 1,
             }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditingSchedule({ manicuristId: mId, weekday: weekdayFromYmd(selectedDate) });
+            }}
+            title="Click to edit this technician's schedule"
           >
             {band.label && band.height > 24 && (
-              <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] font-bold tracking-wider text-gray-400">
-                {band.label}
+              <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-[10px] font-bold tracking-wider text-gray-400 gap-0.5">
+                <span>{band.label}</span>
+                <span className="opacity-0 group-hover/off:opacity-100 transition-opacity text-pink-500 text-[9px] font-semibold">CLICK TO EDIT</span>
+              </div>
+            )}
+            {!band.label && band.height > 16 && (
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/off:opacity-100 transition-opacity">
+                <span className="font-mono text-[9px] font-semibold text-pink-500 tracking-wider">EDIT SCHEDULE</span>
               </div>
             )}
           </div>
@@ -945,6 +965,47 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               </div>
             </div>
           </div>
+        );
+      })()}
+
+      {/* Quick schedule editor — opened by clicking a grayed off-hours band. */}
+      {editingSchedule && (() => {
+        const mani = state.manicurists.find((m) => m.id === editingSchedule.manicuristId);
+        if (!mani) return null;
+        const existing = state.staffSchedules.filter((s) => s.manicuristId === editingSchedule.manicuristId);
+        return (
+          <WeeklyEditorModal
+            manicurist={mani}
+            existing={existing}
+            highlightDay={editingSchedule.weekday}
+            onClose={() => setEditingSchedule(null)}
+            onSave={(drafts) => {
+              const mid = editingSchedule.manicuristId;
+              for (let wd = 0; wd < 7; wd++) {
+                const d = drafts[wd];
+                const prior = existing.find((s) => s.weekday === wd);
+                if (!d.working) {
+                  if (prior) {
+                    dispatch({ type: 'CLEAR_STAFF_SCHEDULE_DAY', manicuristId: mid, weekday: wd });
+                  }
+                  continue;
+                }
+                dispatch({
+                  type: 'SET_STAFF_SCHEDULE_DAY',
+                  entry: {
+                    id: prior?.id ?? crypto.randomUUID(),
+                    manicuristId: mid,
+                    weekday: wd,
+                    startTime: d.startTime,
+                    endTime: d.endTime,
+                    lunchStart: d.hasLunch ? d.lunchStart : null,
+                    lunchEnd: d.hasLunch ? d.lunchEnd : null,
+                  },
+                });
+              }
+              setEditingSchedule(null);
+            }}
+          />
         );
       })()}
     </>
