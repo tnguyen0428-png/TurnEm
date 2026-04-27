@@ -224,7 +224,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
             className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all resize-none"
           />
           <p className="font-mono text-[10px] text-gray-400 mt-1">
-            Shows as the body of their push notification when assigned a turn. Leave blank to use the default English message. Use any language you want.
+            Shows as the body of their push notification when assigned a turn. Use any language. Available placeholders: <span className="text-pink-500">{'{name}'}</span> <span className="text-pink-500">{'{client}'}</span> <span className="text-pink-500">{'{service}'}</span>. Leave blank to use the default English message.
           </p>
         </div>
 

@@ -163,7 +163,16 @@ export async function sendPushNotification(
   try {
     const title = 'TurnEM - Aqua Team';
     const defaultBody = `Hi ${manicuristName}, it's your turn! Client: ${clientName} | Service: ${service}. Please head to your station.`;
-    const body = customBody && customBody.trim() ? customBody.trim() : defaultBody;
+    // Substitute {name}, {client}, {service} placeholders in the custom body so
+    // staff can write templates in any language. Case-insensitive match.
+    const fillPlaceholders = (tpl: string): string =>
+      tpl
+        .replace(/\{name\}/gi, manicuristName)
+        .replace(/\{client\}/gi, clientName)
+        .replace(/\{service\}/gi, service);
+    const body = customBody && customBody.trim()
+      ? fillPlaceholders(customBody.trim())
+      : defaultBody;
     const response = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
       method: 'POST',
       headers: {
