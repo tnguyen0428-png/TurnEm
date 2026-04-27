@@ -1,4 +1,4 @@
-// Service Worker for TurnEM Push Notifications v3
+// Service Worker for TurnEM Push Notifications v4-minimal
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -9,27 +9,20 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  const promise = (async () => {
-    let title = 'TurnEM';
-    let body = "It's your turn!";
+  let title = 'TurnEM';
+  let body = "It's your turn!";
+  if (event.data) {
     try {
-      if (event.data) {
-        const json = event.data.json();
-        title = json.title || title;
-        body = json.body || body;
-      }
+      const json = event.data.json();
+      title = json.title || title;
+      body = json.body || body;
     } catch (e) {
-      // fallback to defaults
+      try {
+        body = event.data.text() || body;
+      } catch (_) {}
     }
-    await self.registration.showNotification(title, {
-      body,
-      icon: '/Turn_Em_Icon.png',
-      badge: '/Turn_Em_Icon.png',
-      tag: 'turnem-' + Date.now(),
-      requireInteraction: false,
-    });
-  })();
-  event.waitUntil(promise);
+  }
+  event.waitUntil(self.registration.showNotification(title, { body }));
 });
 
 self.addEventListener('notificationclick', (event) => {
