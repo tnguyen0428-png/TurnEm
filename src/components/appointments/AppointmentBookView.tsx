@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
+import { useRef, useEffect, useState, useCallback, useLayoutEffect, useMemo } from 'react';
 import { Plus, Trash2, GripVertical, XCircle } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
@@ -71,6 +71,24 @@ function slotType(i: number): 'hour' | 'half' | 'quarter' {
   return 'quarter';
 }
 
+// Local-time weekday from a YYYY-MM-DD string. Avoids the UTC drift you'd get
+// from `new Date('2026-04-26').getDay()`.
+function weekdayFromYmd(s: string): number {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d).getDay();
+}
+
+function timeToMins(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+interface OffBand {
+  top: number;        // px from top of column
+  height: number;     // px
+  label: string | null;
+}
+
 interface ServiceBlock {
   appt: Appointment;
   serviceName: string;
@@ -106,6 +124,78 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const [slotHeight, setSlotHeight] = useState(40);
 
   const manicurists = state.manicurists.filter((m) => m.showInBook !== false);
+
+  // ── Off-hours / vacation visual overlay ───────────────────────────────────
+  // For each manicurist column we compute the grey bands to draw based on the
+  // staff schedule for the selected weekday, plus any time-off range that
+  // covers the date. Visual only — does NOT prevent clicking, dragging, or
+  // dropping appointments into greyed cells (per product requirement).
+  const offBandsByManicurist = useMemo(() => {
+    const map = new Map<string, OffBand[]>();
+    const dayStartMin = START_HOUR * 60;
+    const dayEndMin = END_HOUR * 60;
+    const totalDayMins = dayEndMin - dayStartMin;
+    const weekday = weekdayFromYmd(selectedDate);
+
+    for (const m of manicurists) {
+      // Time off range trumps weekly schedule
+      const inTimeOff = state.staffTimeOff.some(
+        (t) => t.manicuristId === m.id && selectedDate >= t.startDate && selectedDate <= t.endDate
+      );
+      if (inTimeOff) {
+        map.set(m.id, [{ top: 0, height: (totalDayMins / SLOT_MINUTES) * slotHeight, label: 'TIME OFF' }]);
+        continue;
+      }
+      const sched = state.staffSchedules.find((s) => s.manicuristId === m.id && s.weekday === weekday);
+      if (!sched) {
+        map.set(m.id, [{ top: 0, height: (totalDayMins / SLOT_MINUTES) * slotHeight, label: 'OFF' }]);
+        continue;
+      }
+      const bands: OffBand[] = [];
+      const startMin = timeToMins(sched.startTime);
+      const endMin = timeToMins(sched.endTime);
+      // Before working hours
+      if (startMin > dayStartMin) {
+        const fromMin = dayStartMin;
+        const toMin = Math.min(startMin, dayEndMin);
+        if (toMin > fromMin) {
+          bands.push({
+            top: ((fromMin - dayStartMin) / SLOT_MINUTES) * slotHeight,
+            height: ((toMin - fromMin) / SLOT_MINUTES) * slotHeight,
+            label: null,
+          });
+        }
+      }
+      // After working hours
+      if (endMin < dayEndMin) {
+        const fromMin = Math.max(endMin, dayStartMin);
+        const toMin = dayEndMin;
+        if (toMin > fromMin) {
+          bands.push({
+            top: ((fromMin - dayStartMin) / SLOT_MINUTES) * slotHeight,
+            height: ((toMin - fromMin) / SLOT_MINUTES) * slotHeight,
+            label: null,
+          });
+        }
+      }
+      // Lunch
+      if (sched.lunchStart && sched.lunchEnd) {
+        const lunchStartMin = timeToMins(sched.lunchStart);
+        const lunchEndMin = timeToMins(sched.lunchEnd);
+        const fromMin = Math.max(lunchStartMin, dayStartMin);
+        const toMin = Math.min(lunchEndMin, dayEndMin);
+        if (toMin > fromMin) {
+          bands.push({
+            top: ((fromMin - dayStartMin) / SLOT_MINUTES) * slotHeight,
+            height: ((toMin - fromMin) / SLOT_MINUTES) * slotHeight,
+            label: 'LUNCH',
+          });
+        }
+      }
+      map.set(m.id, bands);
+    }
+    return map;
+  }, [manicurists, state.staffSchedules, state.staffTimeOff, selectedDate, slotHeight]);
   const totalGridW  = TIME_COL_W + manicurists.length * colWidth;
   const TOTAL_H     = TOTAL_SLOTS * slotHeight;
 
@@ -589,6 +679,27 @@ export default function AppointmentBookView({ selectedDate }: Props) {
             </div>
           );
         })}
+
+        {/* Off-hours overlay — visual only, does not block clicks/drops */}
+        {mId && offBandsByManicurist.get(mId)?.map((band, idx) => (
+          <div
+            key={`offband-${idx}`}
+            className="absolute left-0 right-0 pointer-events-none"
+            style={{
+              top: band.top,
+              height: band.height,
+              backgroundColor: 'rgba(75, 85, 99, 0.15)',
+              backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(75, 85, 99, 0.08) 6px, rgba(75, 85, 99, 0.08) 12px)',
+              zIndex: 1,
+            }}
+          >
+            {band.label && band.height > 24 && (
+              <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] font-bold tracking-wider text-gray-400">
+                {band.label}
+              </div>
+            )}
+          </div>
+        ))}
 
         {blocks.map((blk, idx) => {
           const { appt, serviceName, occurrence, top, height, isFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;

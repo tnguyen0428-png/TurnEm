@@ -1,4 +1,4 @@
-import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft, CompletedEntry } from '../types';
+import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
 
 export type AppAction =
   | { type: 'SET_VIEW'; view: ViewType }
@@ -70,4 +70,14 @@ export type AppAction =
   // Priority list updates. Local dispatch is wrapped by AppContext.setPriority,
   // which also writes to localStorage and upserts to Supabase. Remote events
   // dispatch the same action without re-writing to Supabase.
-  | { type: 'SET_PRIORITY'; categoryPriority?: string[]; servicePriority?: Record<string, string[]> };
+  | { type: 'SET_PRIORITY'; categoryPriority?: string[]; servicePriority?: Record<string, string[]> }
+  // --- Staff schedules / time off ---
+  | { type: 'SET_STAFF_SCHEDULE_DAY'; entry: StaffScheduleEntry }
+  | { type: 'CLEAR_STAFF_SCHEDULE_DAY'; manicuristId: string; weekday: number }
+  | { type: 'ADD_STAFF_TIME_OFF'; entry: StaffTimeOff }
+  | { type: 'UPDATE_STAFF_TIME_OFF'; id: string; updates: Partial<StaffTimeOff> }
+  | { type: 'DELETE_STAFF_TIME_OFF'; id: string }
+  | { type: 'REMOTE_STAFF_SCHEDULE_UPSERT'; entry: StaffScheduleEntry }
+  | { type: 'REMOTE_STAFF_SCHEDULE_DELETE'; id: string }
+  | { type: 'REMOTE_STAFF_TIME_OFF_UPSERT'; entry: StaffTimeOff }
+  | { type: 'REMOTE_STAFF_TIME_OFF_DELETE'; id: string };

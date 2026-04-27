@@ -139,6 +139,30 @@ export interface AppointmentDraft {
   manicuristId?: string | null;
 }
 
+// One row per (manicurist, weekday). Absence of a row for a (manicurist,
+// weekday) pair means the technician is off that recurring day. Times are
+// HH:MM 24-hour strings. Lunch is a single optional window per day.
+export interface StaffScheduleEntry {
+  id: string;
+  manicuristId: string;
+  weekday: number;          // 0=Sun .. 6=Sat
+  startTime: string;        // HH:MM
+  endTime: string;          // HH:MM
+  lunchStart: string | null;
+  lunchEnd: string | null;
+}
+
+// Vacation / PTO range that overrides the recurring weekly schedule for the
+// given technician on every date between startDate and endDate inclusive.
+export interface StaffTimeOff {
+  id: string;
+  manicuristId: string;
+  startDate: string;        // YYYY-MM-DD
+  endDate: string;          // YYYY-MM-DD
+  reason: string;
+  createdAt: number;
+}
+
 export interface AppState {
   manicurists: Manicurist[];
   queue: QueueEntry[];
@@ -148,6 +172,8 @@ export interface AppState {
   turnCriteria: TurnCriteria[];
   calendarDays: CalendarDay[];
   dailyHistory: DailyHistory[];
+  staffSchedules: StaffScheduleEntry[];
+  staffTimeOff: StaffTimeOff[];
   view: ViewType;
   modal: ModalType;
   selectedClient: string | null;

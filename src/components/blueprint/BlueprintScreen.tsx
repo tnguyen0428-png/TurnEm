@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
-  Clock3, ChevronRight, GripVertical, Check, KeyRound,
+  Clock3, ChevronRight, GripVertical, KeyRound,
 } from 'lucide-react';
 import { PinVerifyModal } from '../shared/AdminPinGate';
 import {
@@ -14,6 +14,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import StaffScreen from '../staff/StaffScreen';
+import StaffScheduleScreen from '../staff/StaffScheduleScreen';
 import ServicesScreen from '../services/ServicesScreen';
 import CriteriaScreen from '../criteria/CriteriaScreen';
 import CalendarScreen from '../calendar/CalendarScreen';
@@ -60,56 +61,6 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     ],
   },
 ];
-
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-// ─── Staff Schedule ────────────────────────────────────────────────────────────
-function StaffScheduleScreen() {
-  const { state } = useApp();
-  const [schedules, setSchedules] = useState<Record<string, Set<number>>>(() => {
-    const init: Record<string, Set<number>> = {};
-    state.manicurists.forEach((m) => { init[m.id] = new Set([1, 2, 3, 4, 5]); });
-    return init;
-  });
-
-  function toggle(mId: string, day: number) {
-    setSchedules((prev) => {
-      const next = new Set(prev[mId]);
-      if (next.has(day)) next.delete(day); else next.add(day);
-      return { ...prev, [mId]: next };
-    });
-  }
-
-  return (
-    <div className="p-6 overflow-y-auto h-full">
-      <p className="font-mono text-xs text-gray-400 mb-6">Click a day to toggle working days per technician.</p>
-      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-        <div className="grid border-b border-gray-100 bg-gray-50" style={{ gridTemplateColumns: '200px repeat(7, 1fr)' }}>
-          <div className="px-4 py-3 font-mono text-[10px] font-bold text-gray-400 tracking-wider">TECHNICIAN</div>
-          {DAYS.map((d) => <div key={d} className="py-3 text-center font-mono text-[10px] font-bold text-gray-400 tracking-wider">{d.toUpperCase()}</div>)}
-        </div>
-        {state.manicurists.map((m, idx) => (
-          <div key={m.id} className={`grid items-center ${idx < state.manicurists.length - 1 ? 'border-b border-gray-50' : ''}`} style={{ gridTemplateColumns: '200px repeat(7, 1fr)' }}>
-            <div className="px-4 py-3 flex items-center gap-2.5">
-              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: m.color }} />
-              <span className="font-mono text-sm font-semibold text-gray-700 truncate">{m.name}</span>
-            </div>
-            {DAYS.map((_, dayIdx) => {
-              const active = schedules[m.id]?.has(dayIdx) ?? false;
-              return (
-                <div key={dayIdx} className="flex justify-center py-3">
-                  <button onClick={() => toggle(m.id, dayIdx)} className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${active ? 'bg-pink-100 text-pink-600 hover:bg-pink-200' : 'bg-gray-100 text-gray-300 hover:bg-gray-200'}`}>
-                    {active ? <Check size={13} /> : <span className="font-mono text-xs">—</span>}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ─── Staff Group — sortable role table ────────────────────────────────────────
 function SortableStaffRow({

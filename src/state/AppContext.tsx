@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry } from '../types';
+import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
 import { supabase } from '../lib/supabase';
@@ -216,6 +216,36 @@ function mapDbCalendarDay(row: Record<string, unknown>): CalendarDay {
   };
 }
 
+// Postgres `time` columns may serialize as 'HH:MM:SS' or 'HH:MM'. The UI works
+// in 'HH:MM', so strip seconds if present and pass through nulls untouched.
+function timeToHHMM(v: unknown): string {
+  if (typeof v !== 'string') return '00:00';
+  return v.length >= 5 ? v.slice(0, 5) : v;
+}
+
+function mapDbStaffSchedule(row: Record<string, unknown>): StaffScheduleEntry {
+  return {
+    id: row.id as string,
+    manicuristId: row.manicurist_id as string,
+    weekday: Number(row.weekday),
+    startTime: timeToHHMM(row.start_time),
+    endTime: timeToHHMM(row.end_time),
+    lunchStart: row.lunch_start ? timeToHHMM(row.lunch_start) : null,
+    lunchEnd: row.lunch_end ? timeToHHMM(row.lunch_end) : null,
+  };
+}
+
+function mapDbStaffTimeOff(row: Record<string, unknown>): StaffTimeOff {
+  return {
+    id: row.id as string,
+    manicuristId: row.manicurist_id as string,
+    startDate: row.start_date as string,
+    endDate: row.end_date as string,
+    reason: (row.reason as string) || '',
+    createdAt: row.created_at ? new Date(row.created_at as string).getTime() : Date.now(),
+  };
+}
+
 
 // Module-level guard: prevents loadInitialData from running more than once per page load,
 // even if Vite Fast Refresh re-mounts the component during development.
@@ -366,6 +396,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       { data: criteriaRows },
       { data: calendarRows },
       { data: dailyHistoryRows },
+      { data: scheduleRows },
+      { data: timeOffRows },
     ] = await Promise.all([
       supabase.from('manicurists').select('*').order('sort_order', { ascending: true }),
       supabase.from('queue_entries').select('*'),
@@ -375,6 +407,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.from('turn_criteria').select('*'),
       supabase.from('calendar_days').select('*'),
       supabase.from('daily_history').select('*').order('date', { ascending: false }),
+      supabase.from('staff_schedules').select('*'),
+      supabase.from('staff_time_off').select('*'),
     ]);
 
     const appointments = (appointmentRows || []).map(mapDbAppointment);
@@ -401,6 +435,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       : defaultSalonServices;
     const turnCriteria = (criteriaRows || []).map(mapDbTurnCriteria);
     const calendarDays = (calendarRows || []).map(mapDbCalendarDay);
+    const staffSchedules = (scheduleRows || []).map(mapDbStaffSchedule);
+    const staffTimeOff = (timeOffRows || []).map(mapDbStaffTimeOff);
     const dailyHistory: DailyHistory[] = (dailyHistoryRows || []).map((row: Record<string, unknown>) => ({
       id: row.id as string,
       date: row.date as string,
@@ -546,6 +582,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'LOAD_STATE', state: {
       manicurists, queue, completed, appointments, salonServices,
       turnCriteria, calendarDays, dailyHistory: cleanedHistory,
+      staffSchedules, staffTimeOff,
       categoryPriority: initialCatPriority,
       servicePriority: initialSvcPriority,
     } });
@@ -780,6 +817,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prev.turnCriteria !== state.turnCriteria) trackSave(() => syncTurnCriteria(state.turnCriteria, prev.turnCriteria, setSyncErrorTracked));
     if (prev.calendarDays !== state.calendarDays) trackSave(() => syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncErrorTracked));
     if (prev.dailyHistory !== state.dailyHistory) trackSave(() => syncDailyHistory(state.dailyHistory, prev.dailyHistory, setSyncErrorTracked));
+    if (prev.staffSchedules !== state.staffSchedules) trackSave(() => syncStaffSchedules(state.staffSchedules, prev.staffSchedules, setSyncErrorTracked));
+    if (prev.staffTimeOff !== state.staffTimeOff) trackSave(() => syncStaffTimeOff(state.staffTimeOff, prev.staffTimeOff, setSyncErrorTracked));
     prevStateRef.current = state;
     completedRef.current = state.completed;
     dailyHistoryRef.current = state.dailyHistory;
@@ -897,6 +936,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .subscribe();
 
+    const staffSchedulesChan = supabase
+      .channel('realtime:staff_schedules')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_schedules' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_STAFF_SCHEDULE_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_STAFF_SCHEDULE_UPSERT', entry: mapDbStaffSchedule(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const staffTimeOffChan = supabase
+      .channel('realtime:staff_time_off')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_time_off' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_STAFF_TIME_OFF_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_STAFF_TIME_OFF_UPSERT', entry: mapDbStaffTimeOff(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
     // system_state is a singleton and the reducer's REMOTE_SYSTEM_STATE_UPDATE case
     // returns state unchanged (no local field tracks it — the startup check reads from DB
     // directly). We therefore DO NOT set isApplyingRemoteRef here: if we did, the reducer
@@ -938,6 +1005,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(salonServicesChan);
       supabase.removeChannel(turnCriteriaChan);
       supabase.removeChannel(calendarDaysChan);
+      supabase.removeChannel(staffSchedulesChan);
+      supabase.removeChannel(staffTimeOffChan);
       supabase.removeChannel(systemStateChan);
     };
   }, [state.loaded]);
@@ -1383,6 +1452,91 @@ async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[]
   if (changed.length === 0) return;
   const { error } = await withRetry(() => supabase.from('calendar_days').upsert(changed, { onConflict: 'date' }));
   if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+
+// ─── Staff schedules / time off sync helpers ─────────────────────────────────
+
+function staffScheduleToRow(s: StaffScheduleEntry) {
+  return {
+    id: s.id,
+    manicurist_id: s.manicuristId,
+    weekday: s.weekday,
+    start_time: s.startTime,
+    end_time: s.endTime,
+    lunch_start: s.lunchStart,
+    lunch_end: s.lunchEnd,
+  };
+}
+
+function staffScheduleUnchanged(a: StaffScheduleEntry, b: StaffScheduleEntry): boolean {
+  if (a === b) return true;
+  return (
+    a.manicuristId === b.manicuristId &&
+    a.weekday === b.weekday &&
+    a.startTime === b.startTime &&
+    a.endTime === b.endTime &&
+    a.lunchStart === b.lunchStart &&
+    a.lunchEnd === b.lunchEnd
+  );
+}
+
+async function syncStaffSchedules(current: StaffScheduleEntry[], prev: StaffScheduleEntry[], onError: (msg: string) => void) {
+  const currentIds = new Set(current.map((s) => s.id));
+  const removed = prev.filter((s) => !currentIds.has(s.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('staff_schedules').delete().in('id', removed.map((s) => s.id)));
+    if (error) { console.error('[syncStaffSchedules] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((s) => [s.id, s]));
+  const changed: ReturnType<typeof staffScheduleToRow>[] = [];
+  for (const s of current) {
+    const previous = prevById.get(s.id);
+    if (previous && staffScheduleUnchanged(previous, s)) continue;
+    changed.push(staffScheduleToRow(s));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('staff_schedules').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncStaffSchedules] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function staffTimeOffToRow(t: StaffTimeOff) {
+  return {
+    id: t.id,
+    manicurist_id: t.manicuristId,
+    start_date: t.startDate,
+    end_date: t.endDate,
+    reason: t.reason,
+  };
+}
+
+function staffTimeOffUnchanged(a: StaffTimeOff, b: StaffTimeOff): boolean {
+  if (a === b) return true;
+  return (
+    a.manicuristId === b.manicuristId &&
+    a.startDate === b.startDate &&
+    a.endDate === b.endDate &&
+    a.reason === b.reason
+  );
+}
+
+async function syncStaffTimeOff(current: StaffTimeOff[], prev: StaffTimeOff[], onError: (msg: string) => void) {
+  const currentIds = new Set(current.map((t) => t.id));
+  const removed = prev.filter((t) => !currentIds.has(t.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('staff_time_off').delete().in('id', removed.map((t) => t.id)));
+    if (error) { console.error('[syncStaffTimeOff] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((t) => [t.id, t]));
+  const changed: ReturnType<typeof staffTimeOffToRow>[] = [];
+  for (const t of current) {
+    const previous = prevById.get(t.id);
+    if (previous && staffTimeOffUnchanged(previous, t)) continue;
+    changed.push(staffTimeOffToRow(t));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('staff_time_off').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncStaffTimeOff] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 }
 
 export function useApp() {

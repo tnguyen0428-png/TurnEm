@@ -26,6 +26,8 @@ export const INITIAL_STATE: AppState = {
   turnCriteria: [],
   calendarDays: [],
   dailyHistory: [],
+  staffSchedules: [],
+  staffTimeOff: [],
   view: 'queue',
   modal: null,
   selectedClient: null,
@@ -622,6 +624,88 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (action.servicePriority !== undefined) next.servicePriority = action.servicePriority;
       return next;
     }
+
+    // ─── Staff schedules / time off ───────────────────────────────────────
+    case 'SET_STAFF_SCHEDULE_DAY': {
+      const e = action.entry;
+      const idx = state.staffSchedules.findIndex(
+        (s) => s.manicuristId === e.manicuristId && s.weekday === e.weekday
+      );
+      if (idx >= 0) {
+        const next = state.staffSchedules.slice();
+        next[idx] = e;
+        return { ...state, staffSchedules: next };
+      }
+      return { ...state, staffSchedules: [...state.staffSchedules, e] };
+    }
+
+    case 'CLEAR_STAFF_SCHEDULE_DAY':
+      return {
+        ...state,
+        staffSchedules: state.staffSchedules.filter(
+          (s) => !(s.manicuristId === action.manicuristId && s.weekday === action.weekday)
+        ),
+      };
+
+    case 'ADD_STAFF_TIME_OFF':
+      return { ...state, staffTimeOff: [...state.staffTimeOff, action.entry] };
+
+    case 'UPDATE_STAFF_TIME_OFF':
+      return {
+        ...state,
+        staffTimeOff: state.staffTimeOff.map((t) =>
+          t.id === action.id ? { ...t, ...action.updates } : t
+        ),
+      };
+
+    case 'DELETE_STAFF_TIME_OFF':
+      return {
+        ...state,
+        staffTimeOff: state.staffTimeOff.filter((t) => t.id !== action.id),
+      };
+
+    case 'REMOTE_STAFF_SCHEDULE_UPSERT': {
+      const e = action.entry;
+      const idx = state.staffSchedules.findIndex((s) => s.id === e.id);
+      if (idx >= 0) {
+        const next = state.staffSchedules.slice();
+        next[idx] = e;
+        return { ...state, staffSchedules: next };
+      }
+      // Also dedupe on (manicuristId, weekday) since UNIQUE constraint may have rebuilt id
+      const dupIdx = state.staffSchedules.findIndex(
+        (s) => s.manicuristId === e.manicuristId && s.weekday === e.weekday
+      );
+      if (dupIdx >= 0) {
+        const next = state.staffSchedules.slice();
+        next[dupIdx] = e;
+        return { ...state, staffSchedules: next };
+      }
+      return { ...state, staffSchedules: [...state.staffSchedules, e] };
+    }
+
+    case 'REMOTE_STAFF_SCHEDULE_DELETE':
+      return {
+        ...state,
+        staffSchedules: state.staffSchedules.filter((s) => s.id !== action.id),
+      };
+
+    case 'REMOTE_STAFF_TIME_OFF_UPSERT': {
+      const e = action.entry;
+      const idx = state.staffTimeOff.findIndex((t) => t.id === e.id);
+      if (idx >= 0) {
+        const next = state.staffTimeOff.slice();
+        next[idx] = e;
+        return { ...state, staffTimeOff: next };
+      }
+      return { ...state, staffTimeOff: [...state.staffTimeOff, e] };
+    }
+
+    case 'REMOTE_STAFF_TIME_OFF_DELETE':
+      return {
+        ...state,
+        staffTimeOff: state.staffTimeOff.filter((t) => t.id !== action.id),
+      };
 
     default:
       return state;

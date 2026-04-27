@@ -33,11 +33,12 @@ export default function WaitingPanel() {
       dispatch({
         type: 'ADD_APPOINTMENT',
         appointment: {
-          // Default fields first so legacy snapshots without sameTime/partyId
-          // still satisfy the Appointment type at runtime.
-          sameTime: false,
-          partyId: null,
           ...entry.originalAppointment,
+          // Default fields after spread so legacy snapshots without sameTime/partyId
+          // still satisfy the Appointment type at runtime, but real values are
+          // kept when present on the original snapshot.
+          sameTime: entry.originalAppointment.sameTime ?? false,
+          partyId: entry.originalAppointment.partyId ?? null,
           // Use a fresh id since the original was deleted on promotion.
           id: crypto.randomUUID(),
           status: 'scheduled',
