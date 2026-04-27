@@ -1,8 +1,14 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Bell, CheckCircle, Clock, Volume2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
-import { getPermissionState } from '../../utils/pushNotifications';
+import {
+  getPermissionState,
+  isPushSupported,
+  isDeviceSubscribed,
+  subscribeForPush,
+  unsubscribeFromPush,
+} from '../../utils/pushNotifications';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { Manicurist, CompletedEntry } from '../../types';
 
@@ -16,6 +22,16 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   const [selectedDate, setSelectedDate] = useState<string>(getTodayLA());
   const [historyEntries, setHistoryEntries] = useState<CompletedEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Push notification state for this device. `pushSubscribed` reflects whether
+  // the browser currently has a PushSubscription; we mirror it on mount and
+  // after toggle. `pushBusy` disables the button during the async dance.
+  const [pushSubscribed, setPushSubscribed] = useState<boolean>(false);
+  const [pushBusy, setPushBusy] = useState<boolean>(false);
+
+  useEffect(() => {
+    isDeviceSubscribed().then(setPushSubscribed);
+  }, []);
 
   const todayStr = getTodayLA();
   const isToday = selectedDate === todayStr;
@@ -119,6 +135,40 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
 
   // Get live data for this manicurist from state
   const manicurist = state.manicurists.find((m) => m.id === initialManicurist.id) || initialManicurist;
+
+  // Toggle push subscription for this device, bound to this manicurist.
+  // Subscribe asks for permission + stores endpoint in push_subscriptions;
+  // unsubscribe revokes and deletes the row.
+  const handleTogglePush = useCallback(async () => {
+    if (pushBusy) return;
+    setPushBusy(true);
+    try {
+      if (pushSubscribed) {
+        const res = await unsubscribeFromPush();
+        if (!res.ok) {
+          // Local `alert` state in this component shadows the global, so call window.alert.
+          window.alert(`Could not disable notifications: ${res.error}`);
+        } else {
+          setPushSubscribed(false);
+        }
+      } else {
+        if (!isPushSupported()) {
+          window.alert(
+            'Push notifications are not supported on this browser. On iPhone, install the app to your home screen first (Share → Add to Home Screen) and open it from there.'
+          );
+          return;
+        }
+        const res = await subscribeForPush(manicurist.id);
+        if (!res.ok) {
+          window.alert(`Could not enable notifications: ${res.error}`);
+        } else {
+          setPushSubscribed(true);
+        }
+      }
+    } finally {
+      setPushBusy(false);
+    }
+  }, [pushBusy, pushSubscribed, manicurist.id]);
 
   // Services completed today by this manicurist
   const completedToday = useMemo(() => {
@@ -378,9 +428,25 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             <div>
               <div className="flex items-center gap-1.5">
                 <h1 className="font-bebas text-xl tracking-[1px] text-gray-900 leading-none">{manicurist.name}</h1>
-                {getPermissionState() === 'granted' && (
-                  <Bell size={14} className="text-emerald-500" />
-                )}
+                <button
+                  type="button"
+                  onClick={handleTogglePush}
+                  disabled={pushBusy}
+                  title={
+                    pushSubscribed
+                      ? 'Notifications enabled — tap to disable'
+                      : getPermissionState() === 'denied'
+                      ? 'Notifications blocked in browser settings'
+                      : 'Enable push notifications on this device'
+                  }
+                  className={`p-0.5 rounded transition-opacity ${pushBusy ? 'opacity-50' : 'opacity-100'}`}
+                >
+                  {pushSubscribed ? (
+                    <Bell size={14} className="text-emerald-500" />
+                  ) : (
+                    <BellOff size={14} className="text-gray-400" />
+                  )}
+                </button>
               </div>
               <span className={`font-mono text-[10px] font-semibold tracking-wider uppercase ${statusColor}`}>
                 {statusLabel}

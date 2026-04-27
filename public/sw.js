@@ -21,7 +21,13 @@ self.addEventListener('push', (event) => {
     } catch (e) {
       // fallback to defaults
     }
-    await self.registration.showNotification(title, { body });
+    await self.registration.showNotification(title, {
+      body,
+      icon: '/Turn_Em_Icon.png',
+      badge: '/Turn_Em_Icon.png',
+      tag: 'turnem-' + Date.now(),
+      requireInteraction: false,
+    });
   })();
   event.waitUntil(promise);
 });
