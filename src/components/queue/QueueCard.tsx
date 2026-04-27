@@ -50,7 +50,7 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
 
   return (
     <div
-      className={`group rounded-xl border p-4 hover:shadow-md transition-all duration-200 ${
+      className={`group rounded-xl border p-2.5 hover:shadow-md transition-all duration-200 ${
         isDeferred
           ? 'bg-amber-50 border-amber-400 hover:border-amber-500 shadow-sm'
           : isAppt
@@ -63,16 +63,16 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
       }`}
       style={isAppt && !isDeferred ? { background: '#e6f1fb', border: '0.5px solid #85b7eb' } : undefined}
     >
-      <div className="flex items-start gap-3">
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+      <div className="flex items-start gap-2">
+        <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${
           isNext ? 'bg-emerald-100' : 'bg-gray-50'
         }`}>
-          <span className={`font-bebas text-lg ${isNext ? 'text-emerald-600' : 'text-gray-400'}`}>#{rank}</span>
+          <span className={`font-bebas text-sm ${isNext ? 'text-emerald-600' : 'text-gray-400'}`}>#{rank}</span>
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-1.5 mb-0.5">
             <h3
-              className={`font-mono text-sm font-semibold truncate ${isAppt ? '' : 'text-gray-900'}`}
+              className={`font-mono text-xs font-semibold truncate ${isAppt ? '' : 'text-gray-900'}`}
               style={isAppt ? { color: '#0c447c' } : undefined}
             >
               {client.clientName}
@@ -152,36 +152,36 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           {isAppt && onRevertToAppt && (
             <button
               onClick={onRevertToAppt}
-              className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors"
+              className="p-1 rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors"
               title="Revert back to appointment"
             >
-              <Undo2 size={14} />
+              <Undo2 size={12} />
             </button>
           )}
           <button
             onClick={onEdit}
-            className="p-1.5 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"
+            className="p-1 rounded-md bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"
             title="Edit"
           >
-            <Pencil size={14} />
+            <Pencil size={12} />
           </button>
           <button
             onClick={onAssign}
-            className="p-1.5 rounded-lg bg-pink-50 text-pink-500 hover:bg-pink-100 transition-colors"
+            className="p-1 rounded-md bg-pink-50 text-pink-500 hover:bg-pink-100 transition-colors"
             title="Assign"
           >
-            <UserPlus size={14} />
+            <UserPlus size={12} />
           </button>
           <button
             onClick={onRemove}
-            className="p-1.5 rounded-lg bg-red-50 text-red-400 hover:bg-red-100 transition-colors"
+            className="p-1 rounded-md bg-red-50 text-red-400 hover:bg-red-100 transition-colors"
             title="Remove"
           >
-            <X size={14} />
+            <X size={12} />
           </button>
         </div>
       </div>
