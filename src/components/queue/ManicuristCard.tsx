@@ -175,7 +175,7 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
                 } ${bellSending ? 'animate-pulse' : ''}`}
                 title={hasPushSub ? 'Tap to resend push notification' : 'Push not enabled'}
               >
-                {hasPushSub ? <Bell size={12} /> : <BellOff size={12} />}
+                {hasPushSub ? <Bell size={12} fill="currentColor" /> : <BellOff size={12} />}
               </button>
             </div>
             <span className={`font-mono text-[10px] font-semibold tracking-wider ${

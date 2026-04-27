@@ -442,7 +442,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                   className={`p-0.5 rounded transition-opacity ${pushBusy ? 'opacity-50' : 'opacity-100'}`}
                 >
                   {pushSubscribed ? (
-                    <Bell size={14} className="text-emerald-500" />
+                    <Bell size={14} className="text-emerald-500" fill="currentColor" />
                   ) : (
                     <BellOff size={14} className="text-gray-400" />
                   )}
