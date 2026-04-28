@@ -333,45 +333,53 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // edited entry has already been archived into dailyHistory (e.g. the
       // day was saved before the edit), update that copy too so re-opens of
       // the saved-day view reflect the change.
+      // Auto-stamp `edited: true` so the row gets the EDIT badge — unless
+      // the caller explicitly asked us to skip it (skipEditFlag) for
+      // mechanical updates that aren't user-initiated content edits.
+      const stampedUpdates = action.skipEditFlag
+        ? action.updates
+        : { ...action.updates, edited: true };
       const updatedCompleted = state.completed.map((c) =>
-        c.id === action.id ? { ...c, ...action.updates } : c
+        c.id === action.id ? { ...c, ...stampedUpdates } : c
       );
       const updatedDailyHistory = state.dailyHistory.map((d) => ({
         ...d,
         entries: d.entries.map((e) =>
-          e.id === action.id ? { ...e, ...action.updates } : e
+          e.id === action.id ? { ...e, ...stampedUpdates } : e
         ),
       }));
 
-      // If the manicurist changed, recompute totalTurns on both the source
-      // and destination manicurist so the "TURNS PER MANICURIST" bar chart
-      // stays in sync with the entry's new owner.
+      // Recompute totalTurns on the affected manicurist(s). Voided entries
+      // don't contribute, so reassignment, turn-value changes, and void
+      // toggles all flow through the same delta math.
       const original = state.completed.find((c) => c.id === action.id);
       let updatedManicurists = state.manicurists;
-      if (
-        original &&
-        action.updates.manicuristId &&
-        action.updates.manicuristId !== original.manicuristId
-      ) {
-        const turnDelta = original.turnValue;
-        updatedManicurists = state.manicurists.map((m) => {
-          if (m.id === original.manicuristId) {
-            return { ...m, totalTurns: Math.max(0, m.totalTurns - turnDelta) };
-          }
-          if (m.id === action.updates.manicuristId) {
-            return { ...m, totalTurns: m.totalTurns + (action.updates.turnValue ?? turnDelta) };
-          }
-          return m;
-        });
-      } else if (
-        original &&
-        action.updates.turnValue !== undefined &&
-        action.updates.turnValue !== original.turnValue
-      ) {
-        const delta = action.updates.turnValue - original.turnValue;
-        updatedManicurists = state.manicurists.map((m) =>
-          m.id === original.manicuristId ? { ...m, totalTurns: m.totalTurns + delta } : m
-        );
+      if (original) {
+        const wasVoided = !!original.voided;
+        const willBeVoided = action.updates.voided !== undefined ? !!action.updates.voided : wasVoided;
+        const oldTurnContribution = wasVoided ? 0 : original.turnValue;
+        const newTurnValue = action.updates.turnValue ?? original.turnValue;
+        const newTurnContribution = willBeVoided ? 0 : newTurnValue;
+        const newManicuristId = action.updates.manicuristId ?? original.manicuristId;
+
+        if (newManicuristId !== original.manicuristId) {
+          updatedManicurists = state.manicurists.map((m) => {
+            if (m.id === original.manicuristId) {
+              return { ...m, totalTurns: Math.max(0, m.totalTurns - oldTurnContribution) };
+            }
+            if (m.id === newManicuristId) {
+              return { ...m, totalTurns: m.totalTurns + newTurnContribution };
+            }
+            return m;
+          });
+        } else if (newTurnContribution !== oldTurnContribution) {
+          const delta = newTurnContribution - oldTurnContribution;
+          updatedManicurists = state.manicurists.map((m) =>
+            m.id === original.manicuristId
+              ? { ...m, totalTurns: Math.max(0, m.totalTurns + delta) }
+              : m
+          );
+        }
       }
 
       return {
@@ -382,9 +390,38 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'TOGGLE_VOID_COMPLETED': {
+      // Soft-delete: flip voided flag, keep the row visible, and adjust
+      // totalTurns since voided rows don't count toward a manicurist's total.
+      const original = state.completed.find((c) => c.id === action.id)
+        ?? state.dailyHistory.flatMap((d) => d.entries).find((e) => e.id === action.id);
+      if (!original) return state;
+      const willBeVoided = !original.voided;
+      const delta = willBeVoided ? -original.turnValue : original.turnValue;
+      const updatedManicurists = state.manicurists.map((m) =>
+        m.id === original.manicuristId
+          ? { ...m, totalTurns: Math.max(0, m.totalTurns + delta) }
+          : m
+      );
+      return {
+        ...state,
+        completed: state.completed.map((c) =>
+          c.id === action.id ? { ...c, voided: willBeVoided } : c
+        ),
+        dailyHistory: state.dailyHistory.map((d) => ({
+          ...d,
+          entries: d.entries.map((e) =>
+            e.id === action.id ? { ...e, voided: willBeVoided } : e
+          ),
+        })),
+        manicurists: updatedManicurists,
+      };
+    }
+
     case 'DELETE_COMPLETED': {
       const original = state.completed.find((c) => c.id === action.id);
-      const updatedManicurists = original
+      // Voided entries already had their turns subtracted, so don't double-subtract.
+      const updatedManicurists = original && !original.voided
         ? state.manicurists.map((m) =>
             m.id === original.manicuristId
               ? { ...m, totalTurns: Math.max(0, m.totalTurns - original.turnValue) }

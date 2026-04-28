@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Clock,
   Trash2,
@@ -10,8 +10,6 @@ import {
   CalendarDays,
   GripVertical,
   Pencil,
-  Check,
-  X,
 } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
@@ -19,14 +17,13 @@ import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import EditCompletedModal from '../modals/EditCompletedModal';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
-import type { CompletedEntry, Manicurist } from '../../types';
+import type { CompletedEntry } from '../../types';
 import {
   DndContext,
   closestCenter,
   PointerSensor,
   useSensor,
   useSensors,
-  useDroppable,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import {
@@ -36,243 +33,6 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type React from 'react';
-
-/** Convert a timestamp to "HH:MM" (24h) for <input type="time"> */
-function timestampToTimeInput(ts: number): string {
-  const d = new Date(ts);
-  const h = d.getHours().toString().padStart(2, '0');
-  const m = d.getMinutes().toString().padStart(2, '0');
-  return `${h}:${m}`;
-}
-
-/** Convert "HH:MM" from <input type="time"> to today's timestamp */
-function timeInputToTimestamp(val: string): number | null {
-  const parts = val.split(':').map(Number);
-  if (parts.length < 2 || parts.some(isNaN)) return null;
-  const [hours, minutes] = parts;
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0).getTime();
-}
-
-// ─── Sortable clock-in row ───────────────────────────────────────────────────
-
-interface SortableClockInRowProps {
-  manicurist: Pick<Manicurist, 'id' | 'name' | 'color' | 'clockInTime'>;
-  editingId: string | null;
-  editValue: string;
-  onStartEdit: (id: string) => void;
-  onChangeEdit: (val: string) => void;
-  onSaveEdit: () => void;
-  onCancelEdit: () => void;
-}
-
-function SortableClockInRow({
-  manicurist,
-  editingId,
-  editValue,
-  onStartEdit,
-  onChangeEdit,
-  onSaveEdit,
-  onCancelEdit,
-}: SortableClockInRowProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: manicurist.id,
-  });
-
-  const isEditing = editingId === manicurist.id;
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') onSaveEdit();
-    if (e.key === 'Escape') onCancelEdit();
-  }
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-3 px-3 py-2.5 bg-white rounded-xl border transition-all duration-150 ${
-        isDragging
-          ? 'opacity-40 shadow-lg border-pink-300'
-          : 'border-gray-100 hover:border-gray-200'
-      }`}
-    >
-      {/* drag handle */}
-      <button
-        {...attributes}
-        {...listeners}
-        className="touch-none flex-shrink-0 text-gray-300 hover:text-pink-400 cursor-grab active:cursor-grabbing"
-        tabIndex={-1}
-        aria-label="Drag to reorder"
-      >
-        <GripVertical size={14} />
-      </button>
-
-      {/* color dot + name */}
-      <span
-        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-        style={{ backgroundColor: manicurist.color }}
-      />
-      <span className="font-mono text-xs font-bold text-gray-900 flex-1 min-w-0 truncate">
-        {manicurist.name}
-      </span>
-
-      {/* clock-in time — editable */}
-      {isEditing ? (
-        <div className="flex items-center gap-1.5">
-          <input
-            type="time"
-            value={editValue}
-            onChange={(e) => onChangeEdit(e.target.value)}
-            onKeyDown={handleKeyDown}
-            autoFocus
-            className="font-mono text-xs border border-pink-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-pink-200"
-          />
-          <button
-            onClick={onSaveEdit}
-            className="w-6 h-6 flex items-center justify-center rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 transition-colors"
-          >
-            <Check size={11} />
-          </button>
-          <button
-            onClick={onCancelEdit}
-            className="w-6 h-6 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors"
-          >
-            <X size={11} />
-          </button>
-        </div>
-      ) : (
-        <button
-          onClick={() => onStartEdit(manicurist.id)}
-          title="Edit clock-in time"
-          className="flex items-center gap-1.5 font-mono text-[11px] text-gray-500 hover:text-pink-500 border border-gray-200 hover:border-pink-200 rounded-lg px-2 py-1 transition-colors"
-        >
-          <Clock size={10} />
-          {manicurist.clockInTime ? formatTime(manicurist.clockInTime) : '—'}
-          <Pencil size={9} className="ml-0.5 opacity-50" />
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ─── Clock-in order section ──────────────────────────────────────────────────
-
-interface ClockInOrderSectionProps {
-  manicurists: Manicurist[];
-  dispatch: React.Dispatch<import('../../state/actions').AppAction>;
-}
-
-function ClockInOrderSection({ manicurists, dispatch }: ClockInOrderSectionProps) {
-  const clockedIn = useMemo(
-    () =>
-      manicurists
-        .filter((m) => m.clockedIn)
-        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity)),
-    [manicurists]
-  );
-
-  const [items, setItems] = useState<string[]>(() => clockedIn.map((m) => m.id));
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState('');
-
-  // Keep local order in sync when manicurists change externally (new clock-in, etc.)
-  useEffect(() => {
-    setItems((prev) => {
-      const prevSet = new Set(prev);
-      const newIds = clockedIn.map((m) => m.id);
-      const newSet = new Set(newIds);
-      // If same set of IDs, keep existing order; otherwise reset
-      const same = newIds.every((id) => prevSet.has(id)) && prev.every((id) => newSet.has(id));
-      return same ? prev : newIds;
-    });
-  }, [clockedIn]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
-  );
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = items.indexOf(active.id as string);
-    const newIndex = items.indexOf(over.id as string);
-    const newOrder = arrayMove(items, oldIndex, newIndex);
-    setItems(newOrder);
-
-    // Collect original clock-in times in the old sorted order, then reassign
-    const originalTimes = clockedIn.map((m) => m.clockInTime);
-    newOrder.forEach((id, i) => {
-      dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
-    });
-  }
-
-  function handleStartEdit(id: string) {
-    const mani = manicurists.find((m) => m.id === id);
-    setEditValue(mani?.clockInTime ? timestampToTimeInput(mani.clockInTime) : '');
-    setEditingId(id);
-  }
-
-  function handleSaveEdit() {
-    if (!editingId) return;
-    const ts = timeInputToTimestamp(editValue);
-    if (ts !== null) {
-      dispatch({ type: 'UPDATE_MANICURIST', id: editingId, updates: { clockInTime: ts } });
-    }
-    setEditingId(null);
-  }
-
-  function handleCancelEdit() {
-    setEditingId(null);
-  }
-
-  if (clockedIn.length === 0) return null;
-
-  const displayItems = items
-    .map((id) => clockedIn.find((m) => m.id === id))
-    .filter((m): m is Manicurist => !!m);
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold">CLOCK IN ORDER</h3>
-        <span className="font-mono text-[9px] text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 tracking-wider">
-          DRAG TO REORDER · TAP TIME TO EDIT
-        </span>
-      </div>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={items} strategy={verticalListSortingStrategy}>
-          <div className="flex flex-col gap-2">
-            {displayItems.map((mani) => (
-              <SortableClockInRow
-                key={mani.id}
-                manicurist={mani}
-                editingId={editingId}
-                editValue={editValue}
-                onStartEdit={handleStartEdit}
-                onChangeEdit={setEditValue}
-                onSaveEdit={handleSaveEdit}
-                onCancelEdit={handleCancelEdit}
-              />
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
-    </div>
-  );
-}
-
-// DnD id namespacing — turns rows and service rows live in the same DndContext
-// so a service row can be dragged onto a manicurist row to reassign it. The
-// prefix tells handleDragEnd which kind of row was dragged.
-const TURNS_ID = (id: string) => `t:${id}`;
-const SERVICE_ID = (id: string) => `s:${id}`;
-const parseDndId = (raw: string): { kind: 't' | 's'; id: string } | null => {
-  if (raw.startsWith('t:')) return { kind: 't', id: raw.slice(2) };
-  if (raw.startsWith('s:')) return { kind: 's', id: raw.slice(2) };
-  return null;
-};
 
 // ─── Sortable turns row ──────────────────────────────────────────────────────
 
@@ -294,7 +54,7 @@ function SortableTurnsRow({
   draggable: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: TURNS_ID(entry.id),
+    id: entry.id,
     disabled: !draggable,
   });
 
@@ -385,40 +145,42 @@ function formatDateDisplay(dateStr: string): string {
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// Drop target for a single completed-service entry. The "sticky hand" lives on
-// the TURNS PER MANICURIST rows — dragging a manicurist row and dropping it on
-// a service row reassigns that service to the dragged manicurist. The pencil
-// button opens the edit modal.
-function DroppableServiceRow({
+// One row of the History table. The pencil opens the edit modal where the
+// user can change services / manicurist / turn value, mark a request, or
+// void the row. Voided rows render grayed out with a strikethrough turn value.
+function ServiceRow({
   entry,
-  droppable,
   onEdit,
 }: {
   entry: CompletedEntry;
-  droppable: boolean;
   onEdit?: (entry: CompletedEntry) => void;
 }) {
-  const { setNodeRef, isOver, active } = useDroppable({
-    id: SERVICE_ID(entry.id),
-    disabled: !droppable,
-  });
-
-  // Highlight only when a manicurist row (kind 't') is being dragged over us.
-  const incomingKind = active ? parseDndId(String(active.id))?.kind : null;
-  const showDropHighlight = isOver && incomingKind === 't';
+  const isVoided = !!entry.voided;
+  const isEdited = !!entry.edited;
 
   return (
     <tr
-      ref={setNodeRef}
       className={`border-b border-gray-50 transition-colors ${
-        showDropHighlight ? 'bg-pink-50/60' : 'hover:bg-gray-50/50'
+        isVoided ? 'bg-gray-50/40' : 'hover:bg-gray-50/50'
       }`}
     >
-      <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-900">
-        {entry.clientName}
+      <td className={`px-4 py-3 font-mono text-xs font-semibold ${isVoided ? 'text-gray-400' : 'text-gray-900'}`}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span>{entry.clientName}</span>
+          {isVoided && (
+            <span className="font-mono text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200 rounded-full px-1.5 py-0.5 tracking-wider">
+              VOID
+            </span>
+          )}
+          {isEdited && !isVoided && (
+            <span className="font-mono text-[9px] font-bold text-sky-700 bg-sky-100 border border-sky-200 rounded-full px-1.5 py-0.5 tracking-wider">
+              EDIT
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-4 py-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className={`flex items-center gap-1.5 flex-wrap ${isVoided ? 'opacity-60' : ''}`}>
           {groupServices(entry.services).map(([s, count]) => {
             const wasRequested =
               Array.isArray(entry.requestedServices) &&
@@ -440,14 +202,18 @@ function DroppableServiceRow({
           })}
         </div>
       </td>
-      <td className="px-4 py-3 font-mono text-xs font-bold text-gray-900">{entry.turnValue}</td>
+      <td className={`px-4 py-3 font-mono text-xs font-bold ${isVoided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+        {entry.turnValue}
+      </td>
       <td className="px-4 py-3">
-        <span className="flex items-center gap-2">
+        <span className={`flex items-center gap-2 ${isVoided ? 'opacity-60' : ''}`}>
           <span
             className="w-2.5 h-2.5 rounded-full"
             style={{ backgroundColor: entry.manicuristColor }}
           />
-          <span className="font-mono text-xs font-bold text-gray-900">{entry.manicuristName}</span>
+          <span className={`font-mono text-xs font-bold ${isVoided ? 'text-gray-400' : 'text-gray-900'}`}>
+            {entry.manicuristName}
+          </span>
         </span>
       </td>
       <td className="pr-3 pl-1 py-3 w-10 text-right">
@@ -468,11 +234,10 @@ function DroppableServiceRow({
 
 interface HistoryTableProps {
   entries: CompletedEntry[];
-  droppable: boolean;
   onEdit?: (entry: CompletedEntry) => void;
 }
 
-function HistoryTable({ entries, droppable, onEdit }: HistoryTableProps) {
+function HistoryTable({ entries, onEdit }: HistoryTableProps) {
   const [sortMode, setSortMode] = useState<SortMode>('time');
   const [manicuristFilter, setManicuristFilter] = useState<string>('all');
 
@@ -554,10 +319,9 @@ function HistoryTable({ entries, droppable, onEdit }: HistoryTableProps) {
             </thead>
             <tbody>
               {sortedEntries.map((entry) => (
-                <DroppableServiceRow
+                <ServiceRow
                   key={entry.id}
                   entry={entry}
-                  droppable={droppable}
                   onEdit={onEdit}
                 />
               ))}
@@ -637,7 +401,7 @@ export default function HistoryScreen() {
           clockInTime: '',
         });
       }
-      map.get(e.manicuristId)!.turns += e.turnValue;
+      if (!e.voided) map.get(e.manicuristId)!.turns += e.turnValue;
     }
     return Array.from(map.values());
   }, [viewingPastDay, state.manicurists, displayedEntries]);
@@ -651,11 +415,6 @@ export default function HistoryScreen() {
   // works by swapping clockInTime values, which only exist for clocked-in staff).
   const turnsDraggable = !viewingPastDay && state.manicurists.some((m) => m.clockedIn);
 
-  // Service rows are drop targets on today's view — the user drags a manicurist
-  // row from TURNS PER MANICURIST onto a service row to reassign that entry to
-  // them. Disabled on past-day views since the day has already been archived.
-  const serviceRowsDroppable = !viewingPastDay;
-
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
@@ -663,48 +422,22 @@ export default function HistoryScreen() {
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+    if (!turnsDraggable) return;
 
-    const activeKind = parseDndId(String(active.id));
-    const overKind = parseDndId(String(over.id));
-    if (!activeKind || !overKind) return;
+    // Reorder turns rows — swap the clockInTimes so the manicurist priority
+    // order on today's queue follows the new visual order.
+    const ids = turnsPerManicurist.map((e) => e.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
 
-    // ── Reorder turns rows (manicurist priority order) ──────────────────────
-    if (activeKind.kind === 't' && overKind.kind === 't') {
-      if (!turnsDraggable) return;
-      const ids = turnsPerManicurist.map((e) => e.id);
-      const oldIndex = ids.indexOf(activeKind.id);
-      const newIndex = ids.indexOf(overKind.id);
-      if (oldIndex < 0 || newIndex < 0) return;
-
-      const newOrder = arrayMove(ids, oldIndex, newIndex);
-      const originalTimes = turnsPerManicurist.map(
-        (e) => state.manicurists.find((m) => m.id === e.id)?.clockInTime ?? null
-      );
-      newOrder.forEach((id, i) => {
-        dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
-      });
-      return;
-    }
-
-    // ── Reassign a service entry by dropping a manicurist row onto it ──────
-    // The "sticky hand" lives on the TURNS PER MANICURIST rows — dragging one
-    // onto a service row credits that service's turns to the dragged manicurist.
-    if (activeKind.kind === 't' && overKind.kind === 's') {
-      if (!serviceRowsDroppable) return;
-      const entry = displayedEntries.find((e) => e.id === overKind.id);
-      const newManicurist = state.manicurists.find((m) => m.id === activeKind.id);
-      if (!entry || !newManicurist) return;
-      if (entry.manicuristId === newManicurist.id) return;
-      dispatch({
-        type: 'UPDATE_COMPLETED',
-        id: entry.id,
-        updates: {
-          manicuristId: newManicurist.id,
-          manicuristName: newManicurist.name,
-          manicuristColor: newManicurist.color,
-        },
-      });
-    }
+    const newOrder = arrayMove(ids, oldIndex, newIndex);
+    const originalTimes = turnsPerManicurist.map(
+      (e) => state.manicurists.find((m) => m.id === e.id)?.clockInTime ?? null
+    );
+    newOrder.forEach((id, i) => {
+      dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
+    });
   }
 
   async function handleSave() {
@@ -877,11 +610,6 @@ export default function HistoryScreen() {
         </div>
       )}
 
-      {/* Clock-in order — drag to reorder, tap time to edit (today only) */}
-      {!viewingPastDay && (
-        <ClockInOrderSection manicurists={state.manicurists} dispatch={dispatch} />
-      )}
-
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -896,14 +624,9 @@ export default function HistoryScreen() {
                   DRAG TO REORDER
                 </span>
               )}
-              {serviceRowsDroppable && (
-                <span className="font-mono text-[9px] text-pink-500 border border-pink-200 bg-pink-50 rounded-full px-2 py-0.5 tracking-wider">
-                  OR DROP ON A SERVICE TO REASSIGN
-                </span>
-              )}
             </div>
             <SortableContext
-              items={turnsPerManicurist.map((e) => TURNS_ID(e.id))}
+              items={turnsPerManicurist.map((e) => e.id)}
               strategy={verticalListSortingStrategy}
             >
               <div className="flex flex-col gap-1.5">
@@ -929,7 +652,6 @@ export default function HistoryScreen() {
         ) : (
           <HistoryTable
             entries={displayedEntries}
-            droppable={serviceRowsDroppable}
             onEdit={!viewingPastDay ? setEditingEntry : undefined}
           />
         )}

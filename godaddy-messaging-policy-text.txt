@@ -1,0 +1,54 @@
+Messaging Policy
+Aqua Nails Bar — Last updated: April 26, 2026
+
+This Messaging Policy governs the SMS text-messaging program operated by Aqua Nails Bar ("we", "our", or "us"). By providing your mobile phone number to us, you agree to this Messaging Policy. Our SMS program is delivered through the TurnEm salon turn-management platform and Twilio.
+
+1. Program Description
+Aqua Nails Bar uses SMS to send transactional messages only — appointment confirmations, reminders, "ready now" notifications, and queue updates. We do not send marketing or promotional SMS through this program.
+
+2. Consent / Opt-In
+You provide consent to receive SMS by giving your mobile phone number to Aqua Nails Bar (in person, by phone, or when booking an appointment) and agreeing to be contacted about your appointment or queue status. Consent to receive SMS is not a condition of receiving services in person.
+
+By providing your phone number, you consent to receive transactional SMS messages from Aqua Nails Bar related to your appointment or queue position.
+
+3. Types of Messages You May Receive
+- Appointment confirmations and reminders.
+- Notifications that your manicurist is ready or that you are next in the queue.
+- Updates about queue position or wait time.
+
+4. Message Frequency
+Message frequency varies based on your appointments and queue activity. You may receive multiple messages on days you visit the salon (for example, an appointment reminder and a "ready now" notification).
+
+5. Cost
+Message and data rates may apply through your wireless carrier. Aqua Nails Bar does not charge a separate fee for SMS messages.
+
+6. Opt-Out (STOP)
+You may opt out of SMS at any time by replying STOP to any message. After opting out you will receive one final confirmation message and no further texts. You may opt back in by contacting the salon directly.
+
+7. Help (HELP)
+For help, reply HELP to any message, or contact us using the information at the end of this policy.
+
+8. Privacy and Information Sharing
+Mobile information will not be shared with third parties or affiliates for marketing or promotional purposes. All categories of information collected exclude text-messaging originator opt-in data and consent; this information will not be shared with any third parties.
+
+We share information only as needed to operate our SMS service:
+- Service providers — including TurnEm (queue and SMS software), Twilio (SMS delivery), and similar infrastructure providers acting on our behalf.
+- Legal compliance — when required by law, subpoena, or to protect rights and safety.
+
+For full information on how we handle your data, see our Privacy Policy.
+
+9. Eligibility
+You must be at least 18 years old, or the age of legal majority in your jurisdiction, to enroll in our SMS program. You are responsible for the accuracy of the phone number you provide and for any messaging charges from your wireless carrier.
+
+10. Carriers
+Carriers (including but not limited to T-Mobile, AT&T, Verizon, and others) are not liable for delayed or undelivered messages.
+
+11. Changes to This Policy
+We may update this Messaging Policy from time to time. The "Last updated" date at the top reflects the most recent revision. Continued participation in our SMS program after changes constitutes acceptance of the revised policy.
+
+12. Contact
+Questions about this Messaging Policy or your information can be sent to:
+
+Aqua Nails Bar
+Phone: 559-298-9818
+Email: kaylalenguyen@gmail.com

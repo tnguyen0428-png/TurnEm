@@ -154,6 +154,8 @@ function mapDbCompleted(row: Record<string, unknown>): CompletedEntry {
     requestedServices: rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined,
     isAppointment: (row.is_appointment as boolean) || false,
     isRequested: (row.is_requested as boolean) || false,
+    edited: (row.edited as boolean) || false,
+    voided: (row.voided as boolean) || false,
   };
 }
 
@@ -1238,6 +1240,8 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
         previous.completedAt === c.completedAt &&
         previous.isAppointment === c.isAppointment &&
         previous.isRequested === c.isRequested &&
+        !!previous.edited === !!c.edited &&
+        !!previous.voided === !!c.voided &&
         JSON.stringify(previous.services) === JSON.stringify(c.services) &&
         JSON.stringify(previous.requestedServices ?? []) === JSON.stringify(c.requestedServices ?? []);
       if (unchanged) continue;
@@ -1256,6 +1260,8 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
       requested_services: c.requestedServices ?? [],
       is_appointment: !!c.isAppointment,
       is_requested: !!c.isRequested,
+      edited: !!c.edited,
+      voided: !!c.voided,
     }, { onConflict: 'id' }));
     if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
   }

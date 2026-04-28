@@ -81,6 +81,10 @@ export interface CompletedEntry {
   requestedServices?: ServiceType[];
   isAppointment?: boolean;
   isRequested?: boolean;
+  /** Set to true when this row was modified via the History edit modal. */
+  edited?: boolean;
+  /** Set to true when the row was voided (kept for visibility, excluded from turn totals). */
+  voided?: boolean;
 }
 
 export interface Appointment {
