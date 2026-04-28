@@ -393,7 +393,11 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       const [startH, startM] = appt.time.split(':').map(Number);
 
       const occurrenceCount: Record<string, number> = {};
-      let colOffsetMins = 0;
+      // Track total elapsed minutes across ALL services in this appointment,
+      // regardless of which manicurist's column they end up in. That way a
+      // pedi requested with Tammy auto-shifts to start when the fill with
+      // Sam ends, instead of overlapping it at 10:00.
+      let elapsedMins = 0;
       let isFirst = true;
 
       for (let i = 0; i < svcs.length; i++) {
@@ -410,42 +414,55 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         } else if (req && req.manicuristIds.length === 0) {
           assignedMId = null;
         } else {
+          // No per-service request — try the appointment's primary column
+          // first. If that manicurist can't do this service (skill mismatch),
+          // route the block to the first visible-in-book manicurist who can.
+          // This prevents a "gel pedi" added to a fill-with-Sam booking from
+          // silently disappearing because Sam doesn't do pedicures.
           const fallbackMId = appt.manicuristId ?? null;
           const colMani = fallbackMId ? state.manicurists.find((m) => m.id === fallbackMId) : null;
-          const hasSkill = !colMani || colMani.skills.length === 0 || colMani.skills.includes(svcName);
-          assignedMId = (hasSkill && fallbackMId) ? fallbackMId : null;
+          const colManiHasSkill = !colMani || colMani.skills.length === 0 || colMani.skills.includes(svcName);
+          if (colManiHasSkill && fallbackMId) {
+            assignedMId = fallbackMId;
+          } else {
+            const skilledColMani = manicurists.find(
+              (m) => m.skills.length === 0 || m.skills.includes(svcName)
+            );
+            assignedMId = skilledColMani?.id ?? null;
+          }
         }
-
-        if (assignedMId !== mId) continue;
 
         const dur = svcDuration(svcName);
 
-        let blockTopPx: number;
-        let blockTime: string;
-        if (req?.startTime) {
-          blockTopPx = timeToTopPx(req.startTime, slotHeight);
-          blockTime  = req.startTime;
-        } else {
-          const startMins = (startH - START_HOUR) * 60 + startM + colOffsetMins;
-          blockTopPx = startMins / SLOT_MINUTES * slotHeight;
-          const totalMins = startH * 60 + startM + colOffsetMins;
-          blockTime = `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`;
+        if (assignedMId === mId) {
+          let blockTopPx: number;
+          let blockTime: string;
+          if (req?.startTime) {
+            blockTopPx = timeToTopPx(req.startTime, slotHeight);
+            blockTime  = req.startTime;
+          } else {
+            const startMins = (startH - START_HOUR) * 60 + startM + elapsedMins;
+            blockTopPx = startMins / SLOT_MINUTES * slotHeight;
+            const totalMins = startH * 60 + startM + elapsedMins;
+            blockTime = `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`;
+          }
+
+          const height     = Math.max(dur / SLOT_MINUTES * slotHeight - 3, 20);
+          const isApptFirst = isFirst && i === 0;
+          const hasRequest  = !!(req && req.manicuristIds.length > 0 && req.clientRequest === true);
+          const requestedManicuristId = hasRequest ? (req!.manicuristIds[0] ?? null) : null;
+
+          blocks.push({ appt, serviceName: svcName, occurrence: occ, blockTime, duration: dur,
+            top: blockTopPx, height, isFirst, isApptFirst, colManicuristId: mId,
+            hasRequest, requestedManicuristId });
+          isFirst = false;
         }
 
-        const height     = Math.max(dur / SLOT_MINUTES * slotHeight - 3, 20);
-        const isApptFirst = isFirst && i === 0;
-        const hasRequest  = !!(req && req.manicuristIds.length > 0 && req.clientRequest === true);
-        const requestedManicuristId = hasRequest ? (req!.manicuristIds[0] ?? null) : null;
-
-        blocks.push({ appt, serviceName: svcName, occurrence: occ, blockTime, duration: dur,
-          top: blockTopPx, height, isFirst, isApptFirst, colManicuristId: mId,
-          hasRequest, requestedManicuristId });
-
-        // Always advance the offset by this service's duration so any later
-        // services that don't have their own startTime stack correctly even when
-        // an earlier one has been pinned via drag-and-drop.
-        colOffsetMins += dur;
-        isFirst = false;
+        // Always advance elapsed time across all services in the appointment,
+        // even if this one is rendered in a different column (or skipped here).
+        // That keeps later services stacked after earlier ones regardless of
+        // which manicurist each lands on.
+        elapsedMins += dur;
       }
     }
     return blocks;
