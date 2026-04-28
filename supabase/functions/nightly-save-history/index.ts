@@ -9,9 +9,21 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
  * shape the front-end expects, then upserts a single row into daily_history
  * keyed by date.
  *
- * Does NOT clear completed_services — manual clear via the UI is the intended
- * flow.
+ * After archival, prunes:
+ *   1. completed_services rows whose completed_at is older than
+ *      COMPLETED_RETENTION_DAYS (10) days — keeps the live service list lean.
+ *   2. daily_history rows whose date is older than HISTORY_RETENTION_DAYS
+ *      (10) days — ages out the archive so it doesn't grow forever.
+ *
+ * Today's rows in completed_services are NOT cleared — the manual "clear" via
+ * the UI is still the intended flow for end-of-day reset.
  */
+
+/** How many days of completed_services rows to retain before nightly purge. */
+const COMPLETED_RETENTION_DAYS = 10;
+
+/** How many days of daily_history rows to retain before nightly purge. */
+const HISTORY_RETENTION_DAYS = 10;
 
 interface CompletedEntry {
   id: string;
@@ -91,10 +103,85 @@ Deno.serve(async (_req: Request) => {
       });
     }
 
+    // Inline helpers so we can run the retention purges whether or not we
+    // have anything to archive for today.
+    async function purgeOldCompletedServices(): Promise<{
+      purged: number;
+      error?: string;
+    }> {
+      const cutoff = new Date(
+        Date.now() - COMPLETED_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      const { data, error } = await supabase
+        .from("completed_services")
+        .delete()
+        .lt("completed_at", cutoff)
+        .select("id");
+      if (error) {
+        console.error(
+          `[nightly-save-history] Purge error (older than ${COMPLETED_RETENTION_DAYS}d):`,
+          error.message,
+        );
+        return { purged: 0, error: error.message };
+      }
+      console.log(
+        `[nightly-save-history] ✓ Purged ${data?.length ?? 0} completed_services rows older than ${COMPLETED_RETENTION_DAYS} days (cutoff ${cutoff})`,
+      );
+      return { purged: data?.length ?? 0 };
+    }
+
+    /**
+     * Delete daily_history rows whose `date` (YYYY-MM-DD) is older than
+     * HISTORY_RETENTION_DAYS days from today's LA date. We compute the cutoff
+     * date string in LA time so it lines up with how rows are keyed.
+     */
+    async function purgeOldDailyHistory(): Promise<{
+      purged: number;
+      error?: string;
+    }> {
+      // Compute the cutoff date string in LA time (YYYY-MM-DD). Anything with
+      // date < cutoffDate gets dropped.
+      const cutoffMs =
+        Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+      const cutoffDate = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Los_Angeles",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(cutoffMs));
+
+      const { data, error } = await supabase
+        .from("daily_history")
+        .delete()
+        .lt("date", cutoffDate)
+        .select("id");
+      if (error) {
+        console.error(
+          `[nightly-save-history] daily_history purge error (older than ${HISTORY_RETENTION_DAYS}d):`,
+          error.message,
+        );
+        return { purged: 0, error: error.message };
+      }
+      console.log(
+        `[nightly-save-history] ✓ Purged ${data?.length ?? 0} daily_history rows older than ${HISTORY_RETENTION_DAYS} days (cutoff ${cutoffDate})`,
+      );
+      return { purged: data?.length ?? 0 };
+    }
+
     if (todayRows.length === 0) {
       console.log("[nightly-save-history] No completed services today — skipping upsert.");
+      const completedPurge = await purgeOldCompletedServices();
+      const historyPurge = await purgeOldDailyHistory();
       return new Response(
-        JSON.stringify({ ok: true, date: todayLA, saved: 0 }),
+        JSON.stringify({
+          ok: true,
+          date: todayLA,
+          saved: 0,
+          purgedCompleted: completedPurge.purged,
+          purgedHistory: historyPurge.purged,
+          completedRetentionDays: COMPLETED_RETENTION_DAYS,
+          historyRetentionDays: HISTORY_RETENTION_DAYS,
+        }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
@@ -132,8 +219,24 @@ Deno.serve(async (_req: Request) => {
     console.log(
       `[nightly-save-history] ✓ Saved ${entries.length} entries for ${todayLA}`,
     );
+
+    // ── Retention purge ──────────────────────────────────────────────────
+    // Drop completed_services rows older than COMPLETED_RETENTION_DAYS, and
+    // age out daily_history rows older than HISTORY_RETENTION_DAYS. Errors are
+    // logged but do not fail the response — archival already succeeded.
+    const completedPurge = await purgeOldCompletedServices();
+    const historyPurge = await purgeOldDailyHistory();
+
     return new Response(
-      JSON.stringify({ ok: true, date: todayLA, saved: entries.length }),
+      JSON.stringify({
+        ok: true,
+        date: todayLA,
+        saved: entries.length,
+        purgedCompleted: completedPurge.purged,
+        purgedHistory: historyPurge.purged,
+        completedRetentionDays: COMPLETED_RETENTION_DAYS,
+        historyRetentionDays: HISTORY_RETENTION_DAYS,
+      }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   } catch (err) {
