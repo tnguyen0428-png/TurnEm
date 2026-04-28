@@ -1,0 +1,393 @@
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Calendar, X } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { getTodayLA, formatTimeOfDay } from '../../utils/time';
+
+/**
+ * DailySchedulePanel
+ * ------------------
+ * Manicurist-only view of today's request appointments.
+ *
+ * Shows a "Daily Schedule" pill in the staff panel. Tap to open the full-screen
+ * schedule view; tap again (or the close button) to dismiss back to the panel.
+ *
+ * Privacy boundary (proprietary client info stays with the salon):
+ *   - Only first name + last initial are surfaced (e.g. "Sarah K.")
+ *   - Phone, email, address, full last name are never shown
+ *   - Service notes are NOT shown — only an "N" flag indicates notes exist;
+ *     manicurist asks admin for details
+ *
+ * Walk-ins are excluded (filtered out by the literal client_name "Walk-in"
+ * which the admin app uses for non-request appointments).
+ *
+ * Live updates: polled from Supabase every 7s (matches existing staff panel
+ * polling cadence). Diffs against the last seen set to fire toast alerts and
+ * increment an unread count badge on the pill for new requests, cancellations,
+ * and reschedules. Badge clears when the view is opened.
+ *
+ * 8 AM rule: before 8:00 AM (America/Los_Angeles), the opened view shows an
+ * empty state — "Today's schedule loads at 8:00 AM" — instead of the list.
+ */
+
+interface DailyScheduleEntry {
+  id: string;
+  time: string; // "HH:MM" 24h
+  displayName: string; // "Sarah K." — already stripped server-side
+  service: string;
+  hasNotes: boolean;
+  status: string; // 'scheduled' | 'confirmed' | 'cancelled' | 'rescheduled' | 'no-show' | 'completed'
+}
+
+// Row shape from the privacy-safe view `public.manicurist_daily_schedule`.
+// The view exposes only fields the manicurist may see: full client_name,
+// client_phone, and the contents of `notes` are NOT included.
+interface ScheduleViewRow {
+  id: string;
+  manicurist_id: string | null;
+  date: string | null;
+  time: string | null;
+  status: string | null;
+  service: string | null;
+  services: string[] | null;
+  display_name: string | null; // "First L." — computed server-side
+  has_notes: boolean | null;
+  is_requested: boolean | null; // mirrors the R-badge logic from admin screens
+}
+
+interface DailySchedulePanelProps {
+  manicuristId: string;
+}
+
+function toMinutes(t: string | null): number {
+  if (!t) return Number.POSITIVE_INFINITY;
+  const m = t.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return Number.POSITIVE_INFINITY;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+function safeFormatTime(t: string | null): string {
+  if (!t) return '';
+  const m = t.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return t;
+  return formatTimeOfDay(`${m[1].padStart(2, '0')}:${m[2]}`);
+}
+
+/** Inline Aqua nails bar logo — no external asset required. */
+function AquaSalonLogo() {
+  return (
+    <svg
+      width="180"
+      height="84"
+      viewBox="0 0 200 90"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-label="Aqua Nails Bar"
+    >
+      <text
+        x="100"
+        y="44"
+        textAnchor="middle"
+        fontFamily="Georgia, 'Times New Roman', serif"
+        fontSize="40"
+        fontWeight="400"
+        fill="#4FBDC2"
+        letterSpacing="2"
+      >
+        AQUA
+      </text>
+      <ellipse
+        cx="100"
+        cy="54"
+        rx="78"
+        ry="9"
+        fill="none"
+        stroke="#9A9A9A"
+        strokeWidth="1.2"
+        transform="rotate(-3 100 54)"
+      />
+      <text
+        x="100"
+        y="78"
+        textAnchor="middle"
+        fontFamily="Helvetica, Arial, sans-serif"
+        fontSize="12"
+        fontWeight="300"
+        fill="#9A9A9A"
+        letterSpacing="3"
+      >
+        nails bar
+      </text>
+    </svg>
+  );
+}
+
+export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelProps) {
+  const [open, setOpen] = useState(false);
+  const [entries, setEntries] = useState<DailyScheduleEntry[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Cache of last seen rows by id — used to diff and fire alerts on changes.
+  const lastSeenRef = useRef<Map<string, ScheduleViewRow>>(new Map());
+  const isFirstFetchRef = useRef(true);
+
+  const today = getTodayLA();
+
+  // Today's date in long form, e.g. "Monday, April 27".
+  const todayLabel = useMemo(() => {
+    const d = new Date(`${today}T12:00:00`);
+    return d.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    });
+  }, [today]);
+
+  // Salon opens at 8:00 AM Los Angeles time. Before then, show an empty state.
+  const isBeforeOpen = useMemo(() => {
+    const hourStr = new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      hour12: false,
+      timeZone: 'America/Los_Angeles',
+    }).format(new Date());
+    // Intl can yield "24" at midnight LA — treat that as 0
+    const hour = parseInt(hourStr, 10) % 24;
+    return hour < 8;
+  }, []);
+
+  const fetchAndDiff = useCallback(async () => {
+    // Query the privacy-safe view, NOT the appointments table directly.
+    // The view filters out client_phone, full last name, and notes contents.
+    // We also filter at the database level to is_requested = true, so only
+    // appointments the client explicitly requested (the same flag that drives
+    // the R badge in the admin screens) reach the manicurist.
+    const { data, error } = await supabase
+      .from('manicurist_daily_schedule')
+      .select(
+        'id, manicurist_id, date, time, status, service, services, display_name, has_notes, is_requested'
+      )
+      .eq('manicurist_id', manicuristId)
+      .eq('date', today)
+      .eq('is_requested', true);
+
+    if (error || !data) return;
+
+    const rows = data as ScheduleViewRow[];
+
+    // Defensive belt-and-suspenders: ignore any odd rows missing a name.
+    const requestRows = rows.filter((r) => {
+      const name = (r.display_name || '').trim();
+      return name !== '' && name.toLowerCase() !== 'client';
+    });
+
+    const newEntries: DailyScheduleEntry[] = requestRows
+      .map((r) => {
+        const serviceLabel =
+          r.services && r.services.length > 0 ? r.services.join(', ') : r.service || '';
+        return {
+          id: r.id,
+          time: r.time || '',
+          displayName: r.display_name || 'Client',
+          service: serviceLabel,
+          hasNotes: !!r.has_notes,
+          status: r.status || 'scheduled',
+        };
+      })
+      .sort((a, b) => toMinutes(a.time) - toMinutes(b.time));
+
+    // Diff against last seen to surface alerts for changes that happen DURING the day.
+    if (!isFirstFetchRef.current) {
+      const prev = lastSeenRef.current;
+      const events: string[] = [];
+
+      for (const r of requestRows) {
+        const before = prev.get(r.id);
+        if (!before) {
+          // New request booked
+          const svc =
+            r.services && r.services.length > 0 ? r.services.join(', ') : r.service || '';
+          events.push(
+            `New ${safeFormatTime(r.time)} request — ${r.display_name || 'Client'}, ${svc}`
+          );
+        } else if (before.status !== r.status) {
+          if (r.status === 'cancelled') {
+            events.push(
+              `${safeFormatTime(r.time)} ${r.display_name || 'Client'} has been cancelled`
+            );
+          } else if (r.status === 'rescheduled') {
+            events.push(
+              `${r.display_name || 'Client'} ${safeFormatTime(before.time)} has been rescheduled`
+            );
+          }
+        }
+      }
+
+      if (events.length > 0) {
+        setUnreadCount((c) => c + events.length);
+        // Show the most recent event in the toast (only when panel is closed)
+        setToast(events[events.length - 1]);
+      }
+    }
+
+    // Refresh the cache
+    const nextMap = new Map<string, ScheduleViewRow>();
+    for (const r of requestRows) nextMap.set(r.id, r);
+    lastSeenRef.current = nextMap;
+
+    setEntries(newEntries);
+    isFirstFetchRef.current = false;
+  }, [manicuristId, today]);
+
+  // Initial fetch + polling at 7s (matches existing staff panel cadence).
+  useEffect(() => {
+    fetchAndDiff();
+    const id = setInterval(fetchAndDiff, 7000);
+    return () => clearInterval(id);
+  }, [fetchAndDiff]);
+
+  // Auto-dismiss toast after a short window
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Esc closes the opened panel
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  const handleOpen = useCallback(() => {
+    setOpen(true);
+    // Opening clears the unread badge — the manicurist has now seen the changes
+    setUnreadCount(0);
+    setToast(null);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    setOpen(false);
+  }, []);
+
+  return (
+    <>
+      {/* Pill button — entry point inside the staff panel layout */}
+      <button
+        type="button"
+        onClick={handleOpen}
+        className="w-full flex items-center justify-center gap-2 bg-white border border-gray-200 rounded-full px-5 py-3 active:scale-[0.98] hover:border-cyan-300 transition-all shadow-sm"
+        aria-label="Open daily schedule"
+      >
+        <Calendar size={16} className="text-cyan-500" />
+        <span className="font-mono text-sm font-semibold text-gray-900 tracking-wide">
+          Daily Schedule
+        </span>
+        {unreadCount > 0 && (
+          <span
+            className="bg-cyan-500 text-white font-bold rounded-full inline-flex items-center justify-center px-1.5"
+            style={{ minWidth: 18, height: 18, fontSize: 10 }}
+            aria-label={`${unreadCount} new updates`}
+          >
+            {unreadCount}
+          </span>
+        )}
+      </button>
+
+      {/* Live toast — only when the opened panel is NOT visible */}
+      {toast && !open && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-50 max-w-md w-[90%] bg-gray-900 text-white rounded-2xl shadow-xl px-4 py-3 font-mono text-xs"
+          style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}
+          role="status"
+        >
+          {toast}
+        </div>
+      )}
+
+      {/* Opened full-screen view */}
+      {open && (
+        <div
+          className="fixed inset-0 z-50 bg-white overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Daily schedule"
+        >
+          <div className="min-h-screen max-w-lg mx-auto px-4 pt-5 pb-10">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleClose}
+                className="p-2 -mr-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                aria-label="Close daily schedule"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="flex flex-col items-center gap-2 mt-2 mb-6">
+              <AquaSalonLogo />
+              <p className="font-mono text-xs text-gray-500 tracking-wide">{todayLabel}</p>
+            </div>
+
+            <div className="border-t border-gray-100">
+              {isBeforeOpen ? (
+                <div className="py-14 text-center">
+                  <p className="font-mono text-sm text-gray-400">
+                    Today's schedule loads at 8:00 AM.
+                  </p>
+                </div>
+              ) : entries.length === 0 ? (
+                <div className="py-14 text-center">
+                  <p className="font-mono text-sm text-gray-400">
+                    No requests for today.
+                  </p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {entries.map((e) => {
+                    const isCancelled = e.status === 'cancelled' || e.status === 'no-show';
+                    const isRescheduled = e.status === 'rescheduled';
+                    const nameClass = isCancelled
+                      ? 'line-through text-gray-400 decoration-gray-400 decoration-[1.5px]'
+                      : isRescheduled
+                      ? 'line-through text-gray-500 decoration-amber-500 decoration-[1.5px]'
+                      : 'text-gray-900';
+
+                    return (
+                      <li
+                        key={e.id}
+                        className="grid items-center gap-3 py-3.5"
+                        style={{ gridTemplateColumns: '72px 1fr auto' }}
+                      >
+                        <span className="font-mono text-sm font-semibold text-gray-900">
+                          {safeFormatTime(e.time)}
+                        </span>
+                        <div className="min-w-0">
+                          <p className={`font-mono text-sm font-semibold truncate ${nameClass}`}>
+                            {e.displayName}
+                          </p>
+                          <p className="font-mono text-xs text-gray-500 truncate mt-0.5">
+                            {e.service}
+                          </p>
+                        </div>
+                        {e.hasNotes && !isCancelled && !isRescheduled ? (
+                          <span
+                            className="bg-cyan-100 text-cyan-700 font-mono font-semibold rounded-full inline-flex items-center justify-center"
+                            style={{ width: 24, height: 24, fontSize: 11 }}
+                            title="Service notes — ask admin"
+                            aria-label="Service notes — ask admin"
+                          >
+                            N
+                          </span>
+                        ) : isCancelled ? (
+                          <span className="font-mono text-[10px] italic text-gray-400">
+                            cancelled
+                          </span>
+                        ) : isRescheduled ? (
+                          <span className="font-mono text-[10px] italic text-amber-600">
+                            rescheduled
+                          </span>
+                        ) :

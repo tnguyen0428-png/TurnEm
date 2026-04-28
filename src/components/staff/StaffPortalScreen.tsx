@@ -11,6 +11,7 @@ import {
 } from '../../utils/pushNotifications';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { Manicurist, CompletedEntry } from '../../types';
+import DailySchedulePanel from './DailySchedulePanel';
 
 interface StaffPortalScreenProps {
   manicurist: Manicurist;
@@ -527,6 +528,9 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             </button>
           </div>
         )}
+
+        {/* Daily Schedule pill — request appointments for today */}
+        <DailySchedulePanel manicuristId={manicurist.id} />
 
         {/* Stats Row */}
         <div className="grid grid-cols-2 gap-3">
