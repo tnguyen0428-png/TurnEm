@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Clock,
   Trash2,
@@ -10,6 +10,8 @@ import {
   CalendarDays,
   GripVertical,
   Pencil,
+  Check,
+  X,
 } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
@@ -17,7 +19,7 @@ import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import EditCompletedModal from '../modals/EditCompletedModal';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
-import type { CompletedEntry } from '../../types';
+import type { CompletedEntry, Manicurist } from '../../types';
 import {
   DndContext,
   closestCenter,
@@ -34,6 +36,232 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import type React from 'react';
+
+/** Convert a timestamp to "HH:MM" (24h) for <input type="time"> */
+function timestampToTimeInput(ts: number): string {
+  const d = new Date(ts);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+/** Convert "HH:MM" from <input type="time"> to today's timestamp */
+function timeInputToTimestamp(val: string): number | null {
+  const parts = val.split(':').map(Number);
+  if (parts.length < 2 || parts.some(isNaN)) return null;
+  const [hours, minutes] = parts;
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0).getTime();
+}
+
+// ─── Sortable clock-in row ───────────────────────────────────────────────────
+
+interface SortableClockInRowProps {
+  manicurist: Pick<Manicurist, 'id' | 'name' | 'color' | 'clockInTime'>;
+  editingId: string | null;
+  editValue: string;
+  onStartEdit: (id: string) => void;
+  onChangeEdit: (val: string) => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+}
+
+function SortableClockInRow({
+  manicurist,
+  editingId,
+  editValue,
+  onStartEdit,
+  onChangeEdit,
+  onSaveEdit,
+  onCancelEdit,
+}: SortableClockInRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: manicurist.id,
+  });
+
+  const isEditing = editingId === manicurist.id;
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') onSaveEdit();
+    if (e.key === 'Escape') onCancelEdit();
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-3 px-3 py-2.5 bg-white rounded-xl border transition-all duration-150 ${
+        isDragging
+          ? 'opacity-40 shadow-lg border-pink-300'
+          : 'border-gray-100 hover:border-gray-200'
+      }`}
+    >
+      {/* drag handle */}
+      <button
+        {...attributes}
+        {...listeners}
+        className="touch-none flex-shrink-0 text-gray-300 hover:text-pink-400 cursor-grab active:cursor-grabbing"
+        tabIndex={-1}
+        aria-label="Drag to reorder"
+      >
+        <GripVertical size={14} />
+      </button>
+
+      {/* color dot + name */}
+      <span
+        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+        style={{ backgroundColor: manicurist.color }}
+      />
+      <span className="font-mono text-xs font-bold text-gray-900 flex-1 min-w-0 truncate">
+        {manicurist.name}
+      </span>
+
+      {/* clock-in time — editable */}
+      {isEditing ? (
+        <div className="flex items-center gap-1.5">
+          <input
+            type="time"
+            value={editValue}
+            onChange={(e) => onChangeEdit(e.target.value)}
+            onKeyDown={handleKeyDown}
+            autoFocus
+            className="font-mono text-xs border border-pink-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-pink-200"
+          />
+          <button
+            onClick={onSaveEdit}
+            className="w-6 h-6 flex items-center justify-center rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 transition-colors"
+          >
+            <Check size={11} />
+          </button>
+          <button
+            onClick={onCancelEdit}
+            className="w-6 h-6 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => onStartEdit(manicurist.id)}
+          title="Edit clock-in time"
+          className="flex items-center gap-1.5 font-mono text-[11px] text-gray-500 hover:text-pink-500 border border-gray-200 hover:border-pink-200 rounded-lg px-2 py-1 transition-colors"
+        >
+          <Clock size={10} />
+          {manicurist.clockInTime ? formatTime(manicurist.clockInTime) : '—'}
+          <Pencil size={9} className="ml-0.5 opacity-50" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Clock-in order section ──────────────────────────────────────────────────
+
+interface ClockInOrderSectionProps {
+  manicurists: Manicurist[];
+  dispatch: React.Dispatch<import('../../state/actions').AppAction>;
+}
+
+function ClockInOrderSection({ manicurists, dispatch }: ClockInOrderSectionProps) {
+  const clockedIn = useMemo(
+    () =>
+      manicurists
+        .filter((m) => m.clockedIn)
+        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity)),
+    [manicurists]
+  );
+
+  const [items, setItems] = useState<string[]>(() => clockedIn.map((m) => m.id));
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+
+  // Keep local order in sync when manicurists change externally (new clock-in, etc.)
+  useEffect(() => {
+    setItems((prev) => {
+      const prevSet = new Set(prev);
+      const newIds = clockedIn.map((m) => m.id);
+      const newSet = new Set(newIds);
+      // If same set of IDs, keep existing order; otherwise reset
+      const same = newIds.every((id) => prevSet.has(id)) && prev.every((id) => newSet.has(id));
+      return same ? prev : newIds;
+    });
+  }, [clockedIn]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = items.indexOf(active.id as string);
+    const newIndex = items.indexOf(over.id as string);
+    const newOrder = arrayMove(items, oldIndex, newIndex);
+    setItems(newOrder);
+
+    // Collect original clock-in times in the old sorted order, then reassign
+    const originalTimes = clockedIn.map((m) => m.clockInTime);
+    newOrder.forEach((id, i) => {
+      dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
+    });
+  }
+
+  function handleStartEdit(id: string) {
+    const mani = manicurists.find((m) => m.id === id);
+    setEditValue(mani?.clockInTime ? timestampToTimeInput(mani.clockInTime) : '');
+    setEditingId(id);
+  }
+
+  function handleSaveEdit() {
+    if (!editingId) return;
+    const ts = timeInputToTimestamp(editValue);
+    if (ts !== null) {
+      dispatch({ type: 'UPDATE_MANICURIST', id: editingId, updates: { clockInTime: ts } });
+    }
+    setEditingId(null);
+  }
+
+  function handleCancelEdit() {
+    setEditingId(null);
+  }
+
+  if (clockedIn.length === 0) return null;
+
+  const displayItems = items
+    .map((id) => clockedIn.find((m) => m.id === id))
+    .filter((m): m is Manicurist => !!m);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <h3 className="font-bebas text-xl tracking-[2px] text-gray-900 font-bold">CLOCK IN ORDER</h3>
+        <span className="font-mono text-[9px] text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 tracking-wider">
+          DRAG TO REORDER · TAP TIME TO EDIT
+        </span>
+      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={items} strategy={verticalListSortingStrategy}>
+          <div className="flex flex-col gap-2">
+            {displayItems.map((mani) => (
+              <SortableClockInRow
+                key={mani.id}
+                manicurist={mani}
+                editingId={editingId}
+                editValue={editValue}
+                onStartEdit={handleStartEdit}
+                onChangeEdit={setEditValue}
+                onSaveEdit={handleSaveEdit}
+                onCancelEdit={handleCancelEdit}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
 
 // DnD id namespacing — turns rows and service rows live in the same DndContext
 // so a service row can be dragged onto a manicurist row to reassign it. The
@@ -647,6 +875,11 @@ export default function HistoryScreen() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Clock-in order — drag to reorder, tap time to edit (today only) */}
+      {!viewingPastDay && (
+        <ClockInOrderSection manicurists={state.manicurists} dispatch={dispatch} />
       )}
 
       <DndContext
