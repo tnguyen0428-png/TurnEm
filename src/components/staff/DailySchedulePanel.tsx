@@ -75,51 +75,14 @@ function safeFormatTime(t: string | null): string {
   return formatTimeOfDay(`${m[1].padStart(2, '0')}:${m[2]}`);
 }
 
-/** Inline Aqua nails bar logo — no external asset required. */
+/** Aqua nails bar logo — served from /public so Vite handles asset URLs. */
 function AquaSalonLogo() {
   return (
-    <svg
-      width="180"
-      height="84"
-      viewBox="0 0 200 90"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-label="Aqua Nails Bar"
-    >
-      <text
-        x="100"
-        y="44"
-        textAnchor="middle"
-        fontFamily="Georgia, 'Times New Roman', serif"
-        fontSize="40"
-        fontWeight="400"
-        fill="#4FBDC2"
-        letterSpacing="2"
-      >
-        AQUA
-      </text>
-      <ellipse
-        cx="100"
-        cy="54"
-        rx="78"
-        ry="9"
-        fill="none"
-        stroke="#9A9A9A"
-        strokeWidth="1.2"
-        transform="rotate(-3 100 54)"
-      />
-      <text
-        x="100"
-        y="78"
-        textAnchor="middle"
-        fontFamily="Helvetica, Arial, sans-serif"
-        fontSize="12"
-        fontWeight="300"
-        fill="#9A9A9A"
-        letterSpacing="3"
-      >
-        nails bar
-      </text>
-    </svg>
+    <img
+      src="/AQUA_logo_FINAL.jpg"
+      alt="Aqua Nails Bar"
+      className="h-20 w-auto object-contain"
+    />
   );
 }
 
