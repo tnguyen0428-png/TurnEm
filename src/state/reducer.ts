@@ -190,11 +190,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'SPLIT_AND_ASSIGN': {
       const now = Date.now();
+      // All split children share parentQueueId = action.originalId so they
+      // map to a single ticket at checkout.
       const newEntries = action.entries.map(({ client, manicuristId }) => {
+        const base = { ...client, parentQueueId: action.originalId };
         if (manicuristId) {
-          return { ...client, status: 'inProgress' as const, assignedManicuristId: manicuristId, startedAt: now, turnValue: client.turnValue };
+          return { ...base, status: 'inProgress' as const, assignedManicuristId: manicuristId, startedAt: now, turnValue: client.turnValue };
         }
-        return client;
+        return base;
       });
       const assignMap = new Map<string, { clientId: string; turns: number; isWax: boolean; is4thPosition: boolean }>();
       for (const { client, manicuristId } of action.entries) {

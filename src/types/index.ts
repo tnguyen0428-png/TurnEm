@@ -2,7 +2,7 @@ export type ServiceType = string;
 
 export type ManicuristStatus = 'available' | 'busy' | 'break';
 export type ClientStatus = 'waiting' | 'inProgress' | 'complete';
-export type ViewType = 'queue' | 'staff' | 'history' | 'appointments' | 'services' | 'criteria' | 'calendar' | 'blueprint';
+export type ViewType = 'queue' | 'staff' | 'history' | 'appointments' | 'services' | 'criteria' | 'calendar' | 'blueprint' | 'register';
 export type ModalType =
   | 'addClient'
   | 'editClient'
@@ -48,6 +48,13 @@ export interface ServiceRequest {
 
 export interface QueueEntry {
   id: string;
+  /**
+   * The "visit" id — same across all queue entries for a single client visit.
+   * For original (non-split) entries this equals `id`. For SPLIT_AND_ASSIGN
+   * children this points back to the original client.id. Tickets are keyed by
+   * this so a multi-service split client still ends up on ONE ticket.
+   */
+  parentQueueId?: string;
   clientName: string;
   services: ServiceType[];
   turnValue: number;
@@ -85,6 +92,121 @@ export interface CompletedEntry {
   edited?: boolean;
   /** Set to true when the row was voided (kept for visibility, excluded from turn totals). */
   voided?: boolean;
+}
+
+// ── POS / Register ───────────────────────────────────────────────────────────
+//
+// SalonBiz-mirrored register flow.
+//
+// Lifecycle:
+//   open    — created at check-in (queue entry), edits allowed, no payment
+//   closed  — Process Ticket completed; payments captured; cannot be edited
+//   voided  — manager-only; row preserved for audit
+//
+// Money everywhere is integer cents. Per-line attribution supports two staff
+// (Staff1/Staff2) so split work can be tracked even when one ticket is paid.
+
+export type TicketStatus = 'open' | 'closed' | 'voided';
+export type TicketItemKind = 'service' | 'retail' | 'discount' | 'gift_card_sale';
+export type PaymentMethod = 'cash' | 'visa_mc' | 'gift';
+export type ShiftStatus = 'open' | 'closed';
+export type ShiftMovementKind = 'pay_in' | 'pay_out';
+
+export interface TicketItem {
+  id: string;
+  ticketId: string;
+  kind: TicketItemKind;
+  name: string;
+  serviceId: string | null;
+  staff1Id: string | null;
+  staff1Name: string;
+  staff1Color: string;
+  staff2Id: string | null;
+  staff2Name: string;
+  staff2Color: string;
+  unitPriceCents: number;       // can be negative for kind='discount'
+  quantity: number;             // >= 1
+  discountCents: number;        // per-line discount, positive
+  extPriceCents: number;        // unit_price * qty - discount
+  sortOrder: number;
+}
+
+export interface Payment {
+  id: string;
+  ticketId: string;
+  shiftId: string | null;
+  method: PaymentMethod;
+  amountCents: number;          // positive for charge, negative for refund
+  tenderedCents: number | null; // cash only
+  changeCents: number | null;   // cash only
+  giftCardCode: string;         // gift only
+  processor: 'manual' | 'square' | 'stripe';
+  processorPaymentId: string;
+  cardBrand: string;
+  cardLast4: string;
+  refundOf: string | null;
+  capturedAt: number;           // ms epoch
+}
+
+export interface Ticket {
+  id: string;
+  ticketNumber: number;         // per-business-date sequential
+  businessDate: string;         // YYYY-MM-DD (LA-local)
+  queueEntryId: string | null;
+  appointmentId: string | null;
+  completedServiceId: string | null;
+  shiftId: string | null;       // set when closed
+
+  clientName: string;
+  clientPhone: string;
+  clientEmail: string;
+
+  primaryManicuristId: string | null;
+  primaryManicuristName: string;
+  primaryManicuristColor: string;
+
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  tipCents: number;
+  totalCents: number;
+  paidCents: number;
+
+  status: TicketStatus;
+  note: string;
+  voidReason: string;
+
+  openedAt: number;             // ms epoch
+  closedAt: number | null;      // ms epoch
+  updatedAt: number;            // ms epoch
+
+  items: TicketItem[];
+  payments: Payment[];
+}
+
+export interface Shift {
+  id: string;
+  businessDate: string;         // YYYY-MM-DD
+  drawerNumber: number;
+  status: ShiftStatus;
+  openedAt: number;
+  openingCashCents: number;
+  closedAt: number | null;
+  expectedCashCents: number | null;
+  declaredCashCents: number | null;
+  varianceCents: number | null;
+  varianceNote: string;
+  openingCount: Record<string, number>;
+  closingCount: Record<string, number>;
+}
+
+export interface ShiftMovement {
+  id: string;
+  shiftId: string;
+  kind: ShiftMovementKind;
+  amountCents: number;          // always positive; sign comes from kind
+  reason: string;
+  createdAt: number;
 }
 
 export interface Appointment {

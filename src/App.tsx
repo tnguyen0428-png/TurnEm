@@ -7,6 +7,7 @@ import QueueScreen from './components/queue/QueueScreen';
 import HistoryScreen from './components/history/HistoryScreen';
 import AppointmentsScreen from './components/appointments/AppointmentsScreen';
 import BlueprintScreen from './components/blueprint/BlueprintScreen';
+import RegisterScreen from './components/register/RegisterScreen';
 import AddClientModal from './components/modals/AddClientModal';
 import EditClientModal from './components/modals/EditClientModal';
 import AssignModal from './components/modals/AssignModal';
@@ -50,8 +51,8 @@ function AppContent() {
           justifyContent: 'space-between',
           alignItems: 'center',
         }}>
-          ⚠️ {syncError}
-          <button onClick={clearSyncError} style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer' }}>✕</button>
+          {'⚠️'} {syncError}
+          <button onClick={clearSyncError} style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer' }}>{'✕'}</button>
         </div>
       )}
       {!syncError && (saveStatus === 'saving' || saveStatus === 'saved') && (
@@ -85,10 +86,10 @@ function AppContent() {
                 borderTopColor: 'white',
                 animation: 'turnem-spin 0.8s linear infinite',
               }} />
-              SAVING…
+              {'SAVING…'}
             </>
           ) : (
-            <>✓ SAVED</>
+            <>{'✓ SAVED'}</>
           )}
         </div>
       )}
@@ -98,6 +99,7 @@ function AppContent() {
         {state.view === 'queue' && <QueueScreen />}
         {state.view === 'history' && <HistoryScreen />}
         {state.view === 'appointments' && <AppointmentsScreen />}
+        {state.view === 'register' && <RegisterScreen />}
         {(state.view === 'blueprint' || state.view === 'staff' || state.view === 'services' || state.view === 'criteria' || state.view === 'calendar') && <BlueprintScreen />}
       </main>
 
@@ -144,7 +146,6 @@ function StaffPortal() {
   const [loggedInManicurist, setLoggedInManicurist] = useState<Manicurist | null>(null);
   const [checked, setChecked] = useState(false);
 
-  // Restore saved login AFTER state has loaded (manicurists are available)
   useEffect(() => {
     if (!state.loaded) return;
     const savedId = localStorage.getItem('turnem_staff_id');

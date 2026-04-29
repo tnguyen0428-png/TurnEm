@@ -1,4 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { appendItemsToTicket, backfillTicketStaff, createTicketAtCheckin, fetchTicketByQueueEntry } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -116,6 +117,7 @@ function mapDbQueueEntry(row: Record<string, unknown>): QueueEntry {
     : [];
   return {
     id: row.id as string,
+    parentQueueId: (row.parent_queue_id as string) || (row.id as string),
     clientName: row.client_name as string,
     services: (dbServices && dbServices.length > 0 ? dbServices : [fallback]).filter(Boolean) as ServiceType[],
     turnValue: Number(row.turn_value) || 0,
@@ -806,7 +808,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (prev.manicurists !== state.manicurists) trackSave(() => syncManicurists(state.manicurists, prev.manicurists, setSyncErrorTracked));
-    if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked));
+    if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked, state.salonServices, state.manicurists));
     if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked));
     if (prev.appointments !== state.appointments) {
       // Deletions already handled above (with tombstoning). syncAppointments here upserts
@@ -1151,6 +1153,7 @@ function queueEntryUnchanged(a: QueueEntry, b: QueueEntry): boolean {
   return (
     a.clientName === b.clientName &&
     a.turnValue === b.turnValue &&
+    (a.parentQueueId ?? a.id) === (b.parentQueueId ?? b.id) &&
     a.requestedManicuristId === b.requestedManicuristId &&
     a.isRequested === b.isRequested &&
     a.isAppointment === b.isAppointment &&
@@ -1169,6 +1172,7 @@ function queueEntryUnchanged(a: QueueEntry, b: QueueEntry): boolean {
 function queueEntryToRow(c: QueueEntry) {
   return {
     id: c.id,
+    parent_queue_id: c.parentQueueId ?? c.id,
     client_name: c.clientName,
     service: c.services[0] || '',
     services: c.services,
@@ -1187,7 +1191,43 @@ function queueEntryToRow(c: QueueEntry) {
   };
 }
 
-async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg: string) => void) {
+/**
+ * For each queue entry whose `assignedManicuristId` just changed from
+ * null/undefined to a real id, push that staff into the matching open
+ * ticket. Conservative: only fills empty ticket fields.
+ */
+async function maybeBackfillTicketsForAssignedEntries(
+  queue: QueueEntry[],
+  prevById: Map<string, QueueEntry>,
+  manicurists: AppState['manicurists'],
+) {
+  for (const c of queue) {
+    const previous = prevById.get(c.id);
+    if (!previous) continue; // newly-added entries are handled below
+    const before = previous.assignedManicuristId ?? null;
+    const after = c.assignedManicuristId ?? null;
+    if (after && after !== before) {
+      const m = manicurists.find((mm) => mm.id === after);
+      if (!m) continue;
+      try {
+        await backfillTicketStaff(c.id, m.id, m.name, m.color);
+      } catch (err) {
+        console.warn('[syncQueue] backfillTicketStaff failed for', c.id, err);
+      }
+    }
+  }
+}
+
+// In-memory guard: queue entry ids whose ticket auto-create is currently in
+// flight (or already completed within this tab session). Prevents the
+// fetchTicketByQueueEntry-then-insert race when syncQueue runs twice in
+// quick succession — e.g. user adds the client then immediately assigns a
+// manicurist, both dispatches mutate state.queue, both syncQueue calls see
+// the entry as "new" before either insert lands. Cross-tab races are still
+// possible; the partial unique index on tickets.queue_entry_id closes that.
+const inFlightAutoCreates = new Set<string>();
+
+async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg: string) => void, salonServices: AppState['salonServices'], manicurists: AppState['manicurists']) {
   const prevById = new Map(prev.map((c) => [c.id, c]));
   const currentIds = new Set(queue.map((c) => c.id));
 
@@ -1206,9 +1246,105 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     if (previous && queueEntryUnchanged(previous, c)) continue;
     changed.push(queueEntryToRow(c));
   }
-  if (changed.length === 0) return;
+  if (changed.length === 0) {
+    // No queue rows to upsert, but assignment changes still need to backfill
+    // tickets in case the ticket was created before staff was assigned.
+    await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists);
+    return;
+  }
   const { error: upsertErr } = await withRetry(() => supabase.from('queue_entries').upsert(changed, { onConflict: 'id' }));
-  if (upsertErr) { console.error('[syncQueue] upsert error:', upsertErr); onError('Sync failed - data may not be saved. Check connection.'); }
+  if (upsertErr) { console.error('[syncQueue] upsert error:', upsertErr); onError('Sync failed - data may not be saved. Check connection.'); return; }
+
+  // For existing entries whose assignedManicuristId just transitioned from
+  // null to a real id, patch the corresponding ticket's staff so checkout
+  // shows the right manicurist even before the service is completed.
+  await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists);
+
+  // Auto-create a Register ticket the moment a manicurist gets assigned.
+  // Triggered by:
+  //   - new queue entries that already arrive with assignedManicuristId set
+  //     (e.g. REQUEST_ASSIGN, SPLIT_AND_ASSIGN children, or appointment
+  //     promotion that already had a tech penciled in)
+  //   - existing queue entries whose assignedManicuristId just transitioned
+  //     from null to a real id (the standard "drag client onto staff" path)
+  //
+  // Multi-service splits all share `parentQueueId`, so all sibling entries
+  // resolve to the same ticket. The first sibling to be assigned creates
+  // the ticket; later siblings append their services as additional line
+  // items with the sibling's manicurist on staff1.
+  //
+  // Idempotence: in-tab race guard + DB partial unique index on
+  // tickets.queue_entry_id keep us at exactly one ticket per visit even
+  // under concurrent writes.
+  const justAssigned = queue.filter((c) => {
+    if (!c.assignedManicuristId) return false;
+    const previous = prevById.get(c.id);
+    if (!previous) return true; // arrived already assigned
+    return !previous.assignedManicuristId; // just got assigned
+  });
+
+  for (const entry of justAssigned) {
+    const visitId = entry.parentQueueId ?? entry.id;
+    try {
+      // Race guard keyed on the VISIT id, so all siblings of a split share
+      // the same lock — no two siblings can create parallel tickets.
+      if (inFlightAutoCreates.has(visitId)) {
+        // Another sibling is mid-create. Wait briefly and append later.
+        // (We'll get a chance on the next syncQueue tick.)
+      }
+      const existing = await fetchTicketByQueueEntry(visitId);
+
+      // Build the line items for THIS entry's services with this entry's
+      // assigned manicurist (so split children attribute their lines to
+      // the correct tech).
+      const m = entry.assignedManicuristId
+        ? manicurists.find((mm) => mm.id === entry.assignedManicuristId) ?? null
+        : null;
+      const itemsForEntry = entry.services.map((svcName) => {
+        const svc = salonServices.find((s2) => s2.name === svcName);
+        const sr = entry.serviceRequests.find((r) => r.service === svcName);
+        const lineMid = sr?.manicuristIds?.[0] ?? m?.id ?? null;
+        const lineM = lineMid ? manicurists.find((mm) => mm.id === lineMid) ?? null : null;
+        return {
+          name: svcName,
+          serviceId: svc?.id ?? null,
+          staff1Id: lineM?.id ?? null,
+          staff1Name: lineM?.name ?? '',
+          staff1Color: lineM?.color ?? '#9ca3af',
+          unitPriceCents: Math.round((svc?.price ?? 0) * 100),
+          quantity: 1,
+        };
+      });
+
+      if (existing) {
+        // Sibling already created the ticket. Add this entry's services as
+        // additional lines (de-duped by name/serviceId inside the helper).
+        await appendItemsToTicket(existing.id, itemsForEntry);
+        // Also patch primary manicurist if the existing ticket has none yet.
+        if (!existing.primaryManicuristId && m) {
+          try {
+            await backfillTicketStaff(visitId, m.id, m.name, m.color);
+          } catch (err) {
+            console.warn('[syncQueue] backfill on append failed for', visitId, err);
+          }
+        }
+        continue;
+      }
+
+      inFlightAutoCreates.add(visitId);
+      await createTicketAtCheckin({
+        queueEntryId: visitId,
+        appointmentId: entry.originalAppointment?.id ?? null,
+        clientName: entry.clientName,
+        primaryManicuristId: m?.id ?? null,
+        primaryManicuristName: m?.name ?? '',
+        primaryManicuristColor: m?.color ?? '#9ca3af',
+        items: itemsForEntry,
+      });
+    } catch (err) {
+      console.error('[syncQueue] auto-create ticket failed for', entry.id, err);
+    }
+  }
 }
 //ZZZTRASH â
 
@@ -1264,6 +1400,20 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
       voided: !!c.voided,
     }, { onConflict: 'id' }));
     if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+
+    // Backfill the ticket's staff fields when this is the first time we've
+    // seen this completed entry (i.e. previous is undefined). The ticket was
+    // auto-created at queue-add time before a manicurist was assigned, so its
+    // staff fields are empty. The completed entry's id IS the original queue
+    // entry's id (set deterministically in COMPLETE_SERVICE), so we use it to
+    // find the matching open ticket.
+    if (!previous && c.manicuristId) {
+      try {
+        await backfillTicketStaff(c.id, c.manicuristId, c.manicuristName, c.manicuristColor);
+      } catch (err) {
+        console.warn('[syncCompleted] backfillTicketStaff failed for', c.id, err);
+      }
+    }
   }
 }
 

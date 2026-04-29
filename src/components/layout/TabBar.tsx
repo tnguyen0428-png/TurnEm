@@ -1,4 +1,4 @@
-import { ClipboardList, Clock, CalendarCheck, Settings2, LogOut } from 'lucide-react';
+import { ClipboardList, Clock, CalendarCheck, Settings2, LogOut, Receipt } from 'lucide-react';
 import type { ViewType } from '../../types';
 import { useApp } from '../../state/AppContext';
 import { useAuth } from '../../state/AuthContext';
@@ -6,6 +6,7 @@ import { useAuth } from '../../state/AuthContext';
 const TABS: { id: ViewType; label: string; icon: typeof ClipboardList }[] = [
   { id: 'queue',        label: 'QUEUE',     icon: ClipboardList },
   { id: 'appointments', label: 'APPTS',     icon: CalendarCheck },
+  { id: 'register',     label: 'REGISTER',  icon: Receipt },
   { id: 'blueprint',   label: 'BLUEPRINT', icon: Settings2 },
   { id: 'history',      label: 'HISTORY',   icon: Clock },
 ];
