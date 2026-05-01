@@ -376,17 +376,23 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     };
   }, []);
 
-  // Service duration accounting for the assigned staff's per-service time
-  // adjustment (Staff Management → "+/- m" knob). Falls back to the base
-  // service duration when no manicurist is assigned (e.g. unassigned column
-  // or column staff has no adjustment for this service). Always clamped to
-  // at least 5 minutes so block heights and overlap math stay sane.
-  function svcDuration(name: string, manicuristId?: string | null): number {
+  // Service duration accounting for both the assigned staff's per-service
+  // time adjustment (Staff Management → "+/- m" knob) AND any per-appointment
+  // adjustment captured on the ServiceRequest (Appointment Modal → "+/- m"
+  // knob). Stacks both. Falls back to the base service duration when no
+  // manicurist is assigned. Always clamped to at least 5 minutes so block
+  // heights and overlap math stay sane.
+  function svcDuration(
+    name: string,
+    manicuristId?: string | null,
+    apptAdjustment?: number,
+  ): number {
     const base = state.salonServices.find((s) => s.name === name)?.duration ?? 60;
-    if (!manicuristId) return base;
-    const m = state.manicurists.find((mm) => mm.id === manicuristId);
-    const adj = (m?.timeAdjustments && m.timeAdjustments[name]) || 0;
-    return Math.max(base + adj, 5);
+    const staffAdj = manicuristId
+      ? ((state.manicurists.find((mm) => mm.id === manicuristId)?.timeAdjustments?.[name]) || 0)
+      : 0;
+    const apptAdj = apptAdjustment || 0;
+    return Math.max(base + staffAdj + apptAdj, 5);
   }
 
   function getApptSvcs(appt: Appointment): string[] {
@@ -441,11 +447,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           }
         }
 
-        // Pass the manicurist this service is being routed to so any
-        // per-staff time adjustment (e.g. Christina needs +15 min for Hard Gel
-        // Full Set) is reflected in the block height and pushes the next
-        // service down by the right amount.
-        const dur = svcDuration(svcName, assignedMId);
+        // Pass the assigned manicurist plus any per-appointment adjustment
+        // so the block height (and the running elapsedMins used for stacking
+        // the next service) reflects both staff- and booking-level tweaks.
+        const dur = svcDuration(svcName, assignedMId, req?.durationAdjustment);
 
         if (assignedMId === mId) {
           let blockTopPx: number;
@@ -608,10 +613,14 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       }
     }
 
-    // No-overlap check: dropping here would span [slot, slot+span) — make sure no other block in this column overlaps.
-    // Use the destination column's staff time adjustment so a service that takes longer with this staff
-    // member doesn't get a too-short overlap window (and silently clobber the next block).
-    const dur = svcDuration(info.serviceName, mId);
+    // No-overlap check: dropping here would span [slot, slot+span). Use the
+    // destination column's staff time adjustment AND the dragged service's
+    // per-appointment adjustment so a block that would actually take longer
+    // doesn't get a too-short overlap window (and silently clobber the next).
+    const draggedAppt = state.appointments.find((a) => a.id === info.apptId);
+    const draggedReqs = (draggedAppt?.serviceRequests || []).filter((r) => r.service === info.serviceName);
+    const draggedReq = draggedReqs[info.occurrence] ?? null;
+    const dur = svcDuration(info.serviceName, mId, draggedReq?.durationAdjustment);
     const span = Math.max(1, Math.ceil(dur / SLOT_MINUTES));
     const dropStart = slot;
     const dropEnd   = slot + span;

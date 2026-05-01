@@ -15,6 +15,9 @@ interface SelectedService {
   serviceName: string;
   turnValue: number;
   requestedManicuristIds: string[];
+  // Per-appointment, per-service duration tweak in minutes. Stacks on top of
+  // the base service duration and the assigned staff timeAdjustments.
+  durationAdjustment: number;
 }
 
 export default function AppointmentModal({ mode }: AppointmentModalProps) {
@@ -84,6 +87,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           serviceName: svcName,
           turnValue: svc?.turnValue ?? 1,
           requestedManicuristIds: (req?.clientRequest === true) ? (req.manicuristIds || []) : [],
+          durationAdjustment: req?.durationAdjustment ?? 0,
         };
       });
       setSelectedServices(restored);
@@ -95,6 +99,12 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     setSelectedServices((prev) => prev.filter((_, i) => i !== index));
     if (expandedIndex === index) setExpandedIndex(null);
     else if (expandedIndex !== null && expandedIndex > index) setExpandedIndex(expandedIndex - 1);
+  }
+
+  function bumpDurationAdjustment(index: number, deltaMinutes: number) {
+    setSelectedServices((prev) =>
+      prev.map((s, i) => (i === index ? { ...s, durationAdjustment: s.durationAdjustment + deltaMinutes } : s))
+    );
   }
 
   function toggleManicurist(index: number, manicuristId: string) {
@@ -135,6 +145,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const reqsForSvc = existingReqs.filter((r) => r.service === s.serviceName);
       const existingReq = reqsForSvc[occ] ?? null;
       const preservedStartTime = timeChanged ? undefined : existingReq?.startTime;
+      // Only attach the per-appointment adjustment when it is non-zero so the
+      // JSON payload stays tidy and toggling back to 0 clears it from the row.
+      const apptAdj = s.durationAdjustment !== 0 ? { durationAdjustment: s.durationAdjustment } : {};
 
       if (s.requestedManicuristIds.length > 0) {
         // Client request: merge with existing startTime so block stays at its dragged position
@@ -143,11 +156,24 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           manicuristIds: s.requestedManicuristIds,
           clientRequest: true as const,
           startTime: preservedStartTime,
+          ...apptAdj,
         });
       } else if (existingReq && existingReq.clientRequest !== true) {
         // No client request — keep existing placement entry (startTime + column from drag),
         // but drop the startTime if the user just moved the whole appointment via the time field.
-        serviceRequests.push(timeChanged ? { ...existingReq, startTime: undefined } : existingReq);
+        // Always overwrite durationAdjustment from current modal state so toggling it down to 0 clears it.
+        const base = timeChanged ? { ...existingReq, startTime: undefined } : existingReq;
+        const { durationAdjustment: _drop, ...rest } = base;
+        void _drop;
+        serviceRequests.push({ ...rest, ...apptAdj });
+      } else if (s.durationAdjustment !== 0) {
+        // No request, no existing placement, but the receptionist set an
+        // adjustment — mint a minimal entry so the book view sizes the block.
+        serviceRequests.push({
+          service: s.serviceName as ServiceType,
+          manicuristIds: [],
+          ...apptAdj,
+        });
       }
       // If previously had clientRequest but now cleared — nothing added (fully unassigned)
     }
@@ -289,7 +315,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                   if (!svc) return;
                   setSelectedServices((prev) => [
                     ...prev,
-                    { serviceId: svc.id, serviceName: svc.name, turnValue: svc.turnValue, requestedManicuristIds: [] },
+                    { serviceId: svc.id, serviceName: svc.name, turnValue: svc.turnValue, requestedManicuristIds: [], durationAdjustment: 0 },
                   ]);
                   setSelectedServiceId('');
                   setSelectedCategory('');
@@ -317,6 +343,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                 const skilledStaff = allStaffSorted.filter((m) => m.skills.includes(s.serviceName));
                 const displayStaff = skilledStaff.length > 0 ? skilledStaff : allStaffSorted;
 
+                const baseDuration = state.salonServices.find((ss) => ss.name === s.serviceName)?.duration ?? 60;
+                const adjustedDuration = Math.max(baseDuration + s.durationAdjustment, 5);
                 return (
                   <div key={idx}>
                     <div className="flex items-center justify-between px-3.5 py-3 rounded-xl border-2 border-pink-300 bg-pink-50 shadow-sm">
@@ -329,6 +357,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                               <span className="font-mono text-[10px] text-pink-600 font-semibold">
                                 {s.requestedManicuristIds.map((id) => state.manicurists.find((m) => m.id === id)?.name).filter(Boolean).join(', ')}
                               </span>
+                            </span>
+                          )}
+                          {s.durationAdjustment !== 0 && (
+                            <span
+                              className={`px-1.5 py-0.5 rounded-md font-mono text-[10px] font-semibold leading-none ${
+                                s.durationAdjustment > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                              }`}
+                              title="Per-appointment duration adjustment"
+                            >
+                              {s.durationAdjustment > 0 ? '+' : ''}{s.durationAdjustment}m
                             </span>
                           )}
                         </div>
@@ -352,27 +390,62 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                     </div>
 
                     {isExpanded && (
-                      <div className="mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white">
-                        <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">
-                          REQUEST MANICURIST <span className="text-gray-300 font-normal">(optional)</span>
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {displayStaff.map((m) => {
-                            const isSelected = s.requestedManicuristIds.includes(m.id);
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                onClick={() => toggleManicurist(idx, m.id)}
-                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[10px] font-semibold transition-all ${
-                                  isSelected ? 'bg-pink-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                }`}
-                              >
-                                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
-                                {m.name}
-                              </button>
-                            );
-                          })}
+                      <div className="mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white space-y-3">
+                        <div>
+                          <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">
+                            REQUEST MANICURIST <span className="text-gray-300 font-normal">(optional)</span>
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {displayStaff.map((m) => {
+                              const isSelected = s.requestedManicuristIds.includes(m.id);
+                              return (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  onClick={() => toggleManicurist(idx, m.id)}
+                                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[10px] font-semibold transition-all ${
+                                    isSelected ? 'bg-pink-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                  }`}
+                                >
+                                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                                  {m.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">
+                            DURATION ADJUSTMENT <span className="text-gray-300 font-normal">(optional)</span>
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => bumpDurationAdjustment(idx, -5)}
+                              className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 font-mono text-sm font-bold text-gray-600 transition-colors"
+                            >
+                              -
+                            </button>
+                            <span className={`font-mono text-xs font-semibold w-14 text-center tabular-nums ${
+                              s.durationAdjustment > 0 ? 'text-amber-600' :
+                              s.durationAdjustment < 0 ? 'text-emerald-600' : 'text-gray-400'
+                            }`}>
+                              {s.durationAdjustment > 0 ? '+' : ''}{s.durationAdjustment}m
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => bumpDurationAdjustment(idx, 5)}
+                              className="w-7 h-7 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 font-mono text-sm font-bold text-gray-600 transition-colors"
+                            >
+                              +
+                            </button>
+                            <span className="font-mono text-[10px] text-gray-400 ml-2">
+                              base {baseDuration}m &rarr; <span className="text-gray-600 font-semibold">{adjustedDuration}m</span>
+                            </span>
+                          </div>
+                          <p className="font-mono text-[9px] text-gray-300 mt-1.5">
+                            One-off tweak for this booking. Stacks with the staff member&apos;s own +/- if they have one.
+                          </p>
                         </div>
                       </div>
                     )}

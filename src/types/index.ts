@@ -44,6 +44,9 @@ export interface ServiceRequest {
   manicuristIds: string[];
   clientRequest?: boolean; // true = client explicitly requested; false/undefined = salon placed
   startTime?: string;      // HH:MM — per-service start time (overrides appointment time)
+  // Per-appointment, per-service duration tweak in minutes. Stacks on top of
+  // the base service duration and the assigned staff time adjustment.
+  durationAdjustment?: number;
 }
 
 export interface QueueEntry {

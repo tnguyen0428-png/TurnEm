@@ -86,17 +86,21 @@ function mapDbManicurist(row: Record<string, unknown>): Manicurist {
 }
 
 function mapDbServiceRequest(r: Record<string, unknown>): ServiceRequest {
-  // Preserve clientRequest and startTime fields when round-tripping through
-  // the DB. Dropping them would silently demote real customer requests to
-  // anonymous column placements once the row syncs back from Supabase.
+  // Preserve clientRequest, startTime, and durationAdjustment fields when round-
+  // tripping through the DB. Dropping them would silently demote real customer
+  // requests or lose per-appointment duration tweaks once the row syncs back.
   const clientRequest = r.clientRequest === true ? true : undefined;
   const startTime = typeof r.startTime === 'string' ? r.startTime : undefined;
+  const durationAdjustment = typeof r.durationAdjustment === 'number' && r.durationAdjustment !== 0
+    ? r.durationAdjustment
+    : undefined;
   if (Array.isArray(r.manicuristIds)) {
     return {
       service: r.service as ServiceType,
       manicuristIds: r.manicuristIds as string[],
       ...(clientRequest !== undefined ? { clientRequest } : {}),
       ...(startTime !== undefined ? { startTime } : {}),
+      ...(durationAdjustment !== undefined ? { durationAdjustment } : {}),
     };
   }
   const legacy = r.manicuristId as string | null;
@@ -105,6 +109,7 @@ function mapDbServiceRequest(r: Record<string, unknown>): ServiceRequest {
     manicuristIds: legacy ? [legacy] : [],
     ...(clientRequest !== undefined ? { clientRequest } : {}),
     ...(startTime !== undefined ? { startTime } : {}),
+    ...(durationAdjustment !== undefined ? { durationAdjustment } : {}),
   };
 }
 
