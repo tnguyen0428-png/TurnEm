@@ -376,8 +376,17 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     };
   }, []);
 
-  function svcDuration(name: string): number {
-    return state.salonServices.find((s) => s.name === name)?.duration || 60;
+  // Service duration accounting for the assigned staff's per-service time
+  // adjustment (Staff Management → "+/- m" knob). Falls back to the base
+  // service duration when no manicurist is assigned (e.g. unassigned column
+  // or column staff has no adjustment for this service). Always clamped to
+  // at least 5 minutes so block heights and overlap math stay sane.
+  function svcDuration(name: string, manicuristId?: string | null): number {
+    const base = state.salonServices.find((s) => s.name === name)?.duration ?? 60;
+    if (!manicuristId) return base;
+    const m = state.manicurists.find((mm) => mm.id === manicuristId);
+    const adj = (m?.timeAdjustments && m.timeAdjustments[name]) || 0;
+    return Math.max(base + adj, 5);
   }
 
   function getApptSvcs(appt: Appointment): string[] {
@@ -432,7 +441,11 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           }
         }
 
-        const dur = svcDuration(svcName);
+        // Pass the manicurist this service is being routed to so any
+        // per-staff time adjustment (e.g. Christina needs +15 min for Hard Gel
+        // Full Set) is reflected in the block height and pushes the next
+        // service down by the right amount.
+        const dur = svcDuration(svcName, assignedMId);
 
         if (assignedMId === mId) {
           let blockTopPx: number;
@@ -595,8 +608,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       }
     }
 
-    // No-overlap check: dropping here would span [slot, slot+span) — make sure no other block in this column overlaps
-    const dur = svcDuration(info.serviceName);
+    // No-overlap check: dropping here would span [slot, slot+span) — make sure no other block in this column overlaps.
+    // Use the destination column's staff time adjustment so a service that takes longer with this staff
+    // member doesn't get a too-short overlap window (and silently clobber the next block).
+    const dur = svcDuration(info.serviceName, mId);
     const span = Math.max(1, Math.ceil(dur / SLOT_MINUTES));
     const dropStart = slot;
     const dropEnd   = slot + span;
