@@ -734,11 +734,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     setPendingOpen({ kind: 'edit', appt });
   }
 
-  function openEditModal(appt: Appointment) {
-    dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: appt.id });
-    dispatch({ type: 'SET_MODAL', modal: 'editAppointment' });
-  }
-
   function renderColumn(m: Manicurist | null) {
     const mId    = m ? m.id : null;
     const blocks = getServiceBlocks(mId);
@@ -896,7 +891,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                       draggable={false}
                       onMouseDown={(e) => e.stopPropagation()}
                       onDragStart={(e) => e.preventDefault()}
-                      onClick={(e) => { e.stopPropagation(); openEditModal(appt); }}
+                      onClick={(e) => { e.stopPropagation(); openEditModalGated(appt); }}
                       title="Edit appointment"
                       className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 font-mono text-[9px] font-bold">
                       &#x270E;

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import {
   Plus, CalendarCheck, Phone, Pencil, Trash2, UserCheck,
   XCircle, AlertTriangle, ChevronLeft, ChevronRight, LayoutGrid, List, Maximize2, Minimize2,
@@ -62,6 +63,30 @@ export default function AppointmentsScreen() {
   function getManicuristColor(id: string | null) {
     if (!id) return '#9ca3af';
     return state.manicurists.find((m) => m.id === id)?.color ?? '#9ca3af';
+  }
+
+  type PendingOpen =
+    | { kind: 'add' }
+    | { kind: 'edit'; apptId: string };
+  const [pendingOpen, setPendingOpen] = useState<PendingOpen | null>(null);
+
+  function commitOpenModal(receptionistId: string) {
+    if (!pendingOpen) return;
+    if (pendingOpen.kind === 'add') {
+      dispatch({
+        type: 'SET_APPOINTMENT_DRAFT',
+        draft: { date: selectedDate, bookedByReceptionistId: receptionistId },
+      });
+      dispatch({ type: 'SET_MODAL', modal: 'addAppointment' });
+    } else {
+      dispatch({
+        type: 'SET_APPOINTMENT_DRAFT',
+        draft: { editingReceptionistId: receptionistId },
+      });
+      dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: pendingOpen.apptId });
+      dispatch({ type: 'SET_MODAL', modal: 'editAppointment' });
+    }
+    setPendingOpen(null);
   }
 
   function handleStatusChange(apptId: string, newStatus: Appointment['status']) {
@@ -218,7 +243,7 @@ export default function AppointmentsScreen() {
                               </>
                             )}
                             {appt.status === 'checked-in' && <button onClick={() => handleStatusChange(appt.id, 'completed')} className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white font-mono text-[10px] font-semibold hover:bg-emerald-600 transition-colors">COMPLETE</button>}
-                            <button onClick={() => { dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: appt.id }); dispatch({ type: 'SET_MODAL', modal: 'editAppointment' }); }} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"><Pencil size={14} /></button>
+                            <button onClick={() => setPendingOpen({ kind: 'edit', apptId: appt.id })} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"><Pencil size={14} /></button>
                             <button onClick={() => setDeleteId(appt.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
                           </div>
                         </div>
@@ -263,6 +288,21 @@ export default function AppointmentsScreen() {
           onCancel={() => setDeleteId(null)}
         />
       )}
-    </div>
+          {pendingOpen && (
+        <ReceptionistPinGate
+          open={!!pendingOpen}
+          title={pendingOpen.kind === 'add' ? 'BOOK APPOINTMENT' : 'EDIT APPOINTMENT'}
+          subtitle={pendingOpen.kind === 'add'
+            ? 'Enter your PIN to open a new booking.'
+            : 'Enter your PIN to edit this appointment.'}
+          confirmLabel="OPEN"
+          tone="primary"
+          pinOnly
+          receptionists={state.manicurists.filter((m) => m.isReceptionist)}
+          onCancel={() => setPendingOpen(null)}
+          onConfirm={(receptionistId) => commitOpenModal(receptionistId)}
+        />
+      )}
+      </div>
   );
 }
