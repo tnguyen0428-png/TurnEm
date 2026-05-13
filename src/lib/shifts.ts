@@ -23,6 +23,8 @@ interface DbShift {
   variance_note: string;
   opening_count: Record<string, number>;
   closing_count: Record<string, number>;
+  opened_by_receptionist_id: string | null;
+  closed_by_receptionist_id: string | null;
 }
 
 interface DbShiftMovement {
@@ -49,6 +51,8 @@ function fromDbShift(row: DbShift): Shift {
     varianceNote: row.variance_note,
     openingCount: (row.opening_count ?? {}) as Record<string, number>,
     closingCount: (row.closing_count ?? {}) as Record<string, number>,
+    openedByReceptionistId: row.opened_by_receptionist_id ?? null,
+    closedByReceptionistId: row.closed_by_receptionist_id ?? null,
   };
 }
 
@@ -120,7 +124,11 @@ export async function fetchShiftMovements(shiftId: string): Promise<ShiftMovemen
 
 // ── writes ───────────────────────────────────────────────────────────────────
 
-export async function openShift(openingCashCents: number, openingCount: Record<string, number> = {}): Promise<Shift | null> {
+export async function openShift(
+  openingCashCents: number,
+  openingCount: Record<string, number> = {},
+  receptionistId?: string | null,
+): Promise<Shift | null> {
   const businessDate = getTodayLA();
   // Dedupe against TODAY's open shift only. A stale unfinished shift from
   // yesterday should not block opening today's drawer.
@@ -137,6 +145,7 @@ export async function openShift(openingCashCents: number, openingCount: Record<s
       status: 'open',
       opening_cash_cents: openingCashCents,
       opening_count: openingCount,
+      opened_by_receptionist_id: receptionistId ?? null,
     })
     .select('*')
     .single();
@@ -222,6 +231,7 @@ export async function closeShift(input: {
   expectedCashCents: number;
   varianceNote?: string;
   closingCount?: Record<string, number>;
+  receptionistId?: string | null;
 }): Promise<Shift | null> {
   const variance = input.declaredCashCents - input.expectedCashCents;
   const { data, error } = await supabase
@@ -234,6 +244,7 @@ export async function closeShift(input: {
       variance_cents: variance,
       variance_note: input.varianceNote ?? '',
       closing_count: input.closingCount ?? {},
+      closed_by_receptionist_id: input.receptionistId ?? null,
     })
     .eq('id', input.shiftId)
     .select('*')

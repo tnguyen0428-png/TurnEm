@@ -114,6 +114,12 @@ export default function RegisterScreen() {
     }
   }
 
+  // Receptionists who can authenticate with their PIN on the open/close-shift
+  // modals so the shift row records who physically opened/closed the drawer.
+  const receptionists = useMemo(
+    () => state.manicurists.filter((m) => m.isReceptionist),
+    [state.manicurists],
+  );
   const openTickets = useMemo(() => tickets.filter((t) => t.status === 'open'), [tickets]);
   const closedTickets = useMemo(() => tickets.filter((t) => t.status === 'closed'), [tickets]);
   const voidedTickets = useMemo(() => tickets.filter((t) => t.status === 'voided'), [tickets]);
@@ -241,6 +247,7 @@ export default function RegisterScreen() {
       )}
       {showOpenShift && (
         <OpenShiftModal
+          receptionists={receptionists}
           onClose={() => setShowOpenShift(false)}
           onOpened={() => { setShowOpenShift(false); void refreshShift(); }}
         />
@@ -248,6 +255,7 @@ export default function RegisterScreen() {
       {showCloseShift && shift && (
         <CloseShiftScreen
           shift={shift}
+          receptionists={receptionists}
           onClose={() => setShowCloseShift(false)}
           onClosed={() => { setShowCloseShift(false); void refreshShift(); }}
         />

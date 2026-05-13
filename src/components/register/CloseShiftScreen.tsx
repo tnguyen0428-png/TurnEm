@@ -26,7 +26,7 @@ import {
   fetchTicketsForDate,
   fetchTicketsForShift,
 } from '../../lib/tickets';
-import type { Payment, PaymentMethod, Shift, Ticket } from '../../types';
+import type { Manicurist, Payment, PaymentMethod, Shift, Ticket } from '../../types';
 import MoneyCountTable, {
   totalFromCount,
   type DenominationCount,
@@ -34,13 +34,15 @@ import MoneyCountTable, {
 
 interface Props {
   shift: Shift;
+  /** Roster of receptionists who can PIN-gate the close. */
+  receptionists: Manicurist[];
   onClose: () => void;
   onClosed: () => void;
 }
 
 type Tab = 'summary' | 'reconcile' | 'cash' | 'card' | 'gift' | 'tickets';
 
-export default function CloseShiftScreen({ shift, onClose, onClosed }: Props) {
+export default function CloseShiftScreen({ shift, receptionists, onClose, onClosed }: Props) {
   const [tab, setTab] = useState<Tab>('summary');
   const [lines, setLines] = useState<ShiftBalanceLine[]>([]);
   const [expectedCashCents, setExpectedCashCents] = useState(0);
@@ -75,6 +77,8 @@ export default function CloseShiftScreen({ shift, onClose, onClosed }: Props) {
 
   // ─── Close-shift action ───────────────────────────────────────────────────
   const [busy, setBusy] = useState(false);
+  const [receptionistId, setReceptionistId] = useState<string>('');
+  const [pin, setPin] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const hasOpenTickets = openTickets.length > 0;
 
@@ -88,6 +92,19 @@ export default function CloseShiftScreen({ shift, onClose, onClosed }: Props) {
       setError('Variance is non-zero — please add a note explaining why.');
       return;
     }
+    const selected = receptionists.find((r) => r.id === receptionistId) ?? null;
+    if (!selected) {
+      setError('Pick a receptionist to attribute the close to.');
+      return;
+    }
+    if (!selected.pinCode) {
+      setError(`${selected.name} has no PIN configured. Set one in Staff before closing.`);
+      return;
+    }
+    if (pin !== selected.pinCode) {
+      setError('Incorrect PIN.');
+      return;
+    }
     setBusy(true);
     const closed = await closeShift({
       shiftId: shift.id,
@@ -95,6 +112,7 @@ export default function CloseShiftScreen({ shift, onClose, onClosed }: Props) {
       expectedCashCents,
       varianceNote: varianceNote.trim(),
       closingCount,
+      receptionistId: selected.id,
     });
     setBusy(false);
     if (!closed) {
@@ -142,6 +160,15 @@ export default function CloseShiftScreen({ shift, onClose, onClosed }: Props) {
             <h2 className="font-bebas text-2xl tracking-widest text-gray-900">CLOSE SHIFT</h2>
             <p className="font-mono text-xs text-gray-400 mt-0.5">
               Drawer #{shift.drawerNumber} — opened {new Date(shift.openedAt).toLocaleString()}
+              {shift.openedByReceptionistId ? (
+                <>
+                  {' '}by{' '}
+                  <span className="font-bold text-gray-600">
+                    {receptionists.find((r) => r.id === shift.openedByReceptionistId)?.name
+                      ?? 'unknown'}
+                  </span>
+                </>
+              ) : null}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -210,7 +237,31 @@ export default function CloseShiftScreen({ shift, onClose, onClosed }: Props) {
         </div>
 
         <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
-          {error && <p className="font-mono text-xs text-red-500">{error}</p>}
+          {error && <p className="font-mono text-xs text-red-500 w-full">{error}</p>}
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="flex items-center gap-2">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Closing as</span>
+              <select
+                value={receptionistId}
+                onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
+                className="px-2 py-1.5 rounded-lg border border-gray-200 font-mono text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
+              >
+                <option value="">Select…</option>
+                {receptionists.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </label>
+            <input
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              value={pin}
+              onChange={(e) => { setPin(e.target.value); setError(null); }}
+              placeholder="PIN"
+              className="px-2 py-1.5 w-24 rounded-lg border border-gray-200 font-mono text-xs tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
+            />
+          </div>
           <div className="ml-auto flex items-center gap-2">
             <button onClick={onClose}
               className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50">
@@ -218,12 +269,12 @@ export default function CloseShiftScreen({ shift, onClose, onClosed }: Props) {
             </button>
             <button
               onClick={handleCloseShift}
-              disabled={busy || hasOpenTickets}
+              disabled={busy || hasOpenTickets || !receptionistId || pin.length === 0}
               title={hasOpenTickets ? 'Close all open tickets first' : undefined}
               className={`px-4 py-2 rounded-lg font-mono text-xs font-bold transition-colors ${
                 hasOpenTickets
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-50'
+                  : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed'
               }`}
             >
               {busy

@@ -1,7 +1,10 @@
-// OpenShiftModal — count the starting drawer cash by denomination, then open.
-// The total cents and the breakdown both persist to the shift row.
+// OpenShiftModal — count the starting drawer cash by denomination, identify
+// the receptionist with their PIN, then open.
+//
+// The total cents, the breakdown, and the receptionist id all persist to
+// the shift row so reports can attribute the open to a real person.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { openShift } from '../../lib/shifts';
 import MoneyCountTable, {
@@ -9,14 +12,19 @@ import MoneyCountTable, {
   type DenominationCount,
 } from './MoneyCountTable';
 import { formatMoneyCents } from '../../lib/tickets';
+import type { Manicurist } from '../../types';
 
 interface Props {
+  /** Receptionist roster — only these can identify themselves on the PIN gate. */
+  receptionists: Manicurist[];
   onClose: () => void;
   onOpened: () => void;
 }
 
-export default function OpenShiftModal({ onClose, onOpened }: Props) {
+export default function OpenShiftModal({ receptionists, onClose, onOpened }: Props) {
   const [count, setCount] = useState<DenominationCount>({});
+  const [receptionistId, setReceptionistId] = useState<string>('');
+  const [pin, setPin] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,11 +34,30 @@ export default function OpenShiftModal({ onClose, onOpened }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const selected = useMemo(
+    () => receptionists.find((r) => r.id === receptionistId) ?? null,
+    [receptionists, receptionistId],
+  );
+
   async function handleOpen() {
     setError(null);
+    if (!selected) {
+      setError('Pick a receptionist first.');
+      return;
+    }
+    // Compare against the receptionist's own pin_code. A missing or empty
+    // pin on the roster means "no pin set" — refuse rather than auto-pass.
+    if (!selected.pinCode) {
+      setError(`${selected.name} has no PIN configured. Set one in Staff before opening.`);
+      return;
+    }
+    if (pin !== selected.pinCode) {
+      setError('Incorrect PIN.');
+      return;
+    }
     setBusy(true);
     const cents = totalFromCount(count);
-    const shift = await openShift(cents, count);
+    const shift = await openShift(cents, count, selected.id);
     setBusy(false);
     if (!shift) {
       setError('Could not open shift — try again.');
@@ -40,6 +67,7 @@ export default function OpenShiftModal({ onClose, onOpened }: Props) {
   }
 
   const totalCents = totalFromCount(count);
+  const canOpen = !busy && !!selected && pin.length > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -62,6 +90,33 @@ export default function OpenShiftModal({ onClose, onOpened }: Props) {
             billsAscending
             hideTotal
           />
+          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Receptionist</span>
+              <select
+                value={receptionistId}
+                onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
+                className="px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
+              >
+                <option value="">Select…</option>
+                {receptionists.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">PIN</span>
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                value={pin}
+                onChange={(e) => { setPin(e.target.value); setError(null); }}
+                className="px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
+                placeholder="••••"
+              />
+            </label>
+          </div>
           {error && <p className="font-mono text-xs text-red-500">{error}</p>}
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
@@ -78,8 +133,8 @@ export default function OpenShiftModal({ onClose, onOpened }: Props) {
               className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50">
               CANCEL
             </button>
-            <button onClick={handleOpen} disabled={busy}
-              className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50">
+            <button onClick={handleOpen} disabled={!canOpen}
+              className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed">
               {busy ? 'OPENING…' : 'OPEN SHIFT'}
             </button>
           </div>

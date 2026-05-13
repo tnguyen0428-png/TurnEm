@@ -201,6 +201,10 @@ export interface Shift {
   varianceNote: string;
   openingCount: Record<string, number>;
   closingCount: Record<string, number>;
+  // Receptionist (manicurist row, is_receptionist=true) who physically opened
+  // / closed the drawer. Distinct from the auth.users account that logged in.
+  openedByReceptionistId: string | null;
+  closedByReceptionistId: string | null;
 }
 
 export interface ShiftMovement {
