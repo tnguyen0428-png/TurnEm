@@ -338,7 +338,7 @@ function TicketList({
 
   return (
     <div>
-      <div className="grid grid-cols-[60px_70px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_100px] gap-3 px-4 py-2 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+      <div className="grid grid-cols-[60px_70px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_100px] gap-3 px-4 py-2 border-b border-gray-100 font-mono text-xs tracking-wider font-semibold text-gray-400 uppercase">
         <SortHdr label="#"      keyId="number" sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
         <SortHdr label="Time"   keyId="time"   sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
         <SortHdr label="Client" keyId="client" sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
@@ -380,13 +380,13 @@ function TicketList({
               ));
             })()}
           </span>
-          <span className="font-mono text-[10px] text-gray-500 flex items-start gap-1.5 min-w-0">
+          <span className="font-mono text-xs text-gray-500 flex items-start gap-2 min-w-0">
             {t.items.length > 0 ? (
               <>
-                <span className="font-mono text-xs font-bold text-red-600 flex-shrink-0 mt-px">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full border-2 border-red-500 text-red-600 font-mono text-xs font-bold flex items-center justify-center">
                   {t.items.filter((i) => i.kind === 'service').length}
                 </span>
-                <span className="text-gray-600 leading-snug break-words">{t.items.map((i) => i.name).join(', ')}</span>
+                <span className="text-gray-700 leading-snug break-words self-center">{t.items.map((i) => i.name).join(', ')}</span>
               </>
             ) : (
               <span>—</span>
