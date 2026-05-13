@@ -2,10 +2,11 @@ import { useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
   Clock3, ChevronRight, GripVertical, KeyRound,
-  DollarSign, UserCheck,
+  DollarSign, UserCheck, Gift,
 } from 'lucide-react';
 import SalesReport from './SalesReport';
 import StaffReport from './StaffReport';
+import GiftCertificatesReport from './GiftCertificatesReport';
 import { PinVerifyModal } from '../shared/AdminPinGate';
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
@@ -33,7 +34,8 @@ type BlueprintSection =
   | 'services'
   | 'criteria'
   | 'reports-sales'
-  | 'reports-staff';
+  | 'reports-staff'
+  | 'reports-gift-certs';
 
 interface NavItem {
   id: BlueprintSection;
@@ -70,6 +72,7 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     items: [
       { id: 'reports-sales',        label: 'Sales',              icon: DollarSign, description: 'Daily / weekly sales totals and payment mix' },
       { id: 'reports-staff',        label: 'Staff',              icon: UserCheck,  description: 'Manicurist sales + receptionist hours' },
+      { id: 'reports-gift-certs',   label: 'Gift Certificates',  icon: Gift,       description: 'Open + used gift certs, searchable by serial' },
     ],
   },
 ];
@@ -311,6 +314,7 @@ export default function BlueprintScreen() {
       case 'criteria':         return <CriteriaScreen />;
       case 'reports-sales':        return <SalesReport />;
       case 'reports-staff':        return <StaffReport />;
+      case 'reports-gift-certs':   return <GiftCertificatesReport />;
       default: return null;
     }
   }
