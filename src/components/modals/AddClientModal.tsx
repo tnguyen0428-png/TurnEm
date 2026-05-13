@@ -3,6 +3,7 @@ import { useApp } from '../../state/AppContext';
 import ClientForm from './ClientForm';
 import type { ClientFormData } from './ClientForm';
 import type { QueueEntry } from '../../types';
+import { upsertCustomerFromIntake, splitClientName } from '../../lib/customers';
 
 export default function AddClientModal() {
   const { state, dispatch } = useApp();
@@ -32,6 +33,11 @@ export default function AddClientModal() {
 
     dispatch({ type: 'ADD_CLIENT', client: newClient });
     dispatch({ type: 'SET_MODAL', modal: null });
+    // Fire-and-forget customer profile upsert so the Blueprint → Customers
+    // list auto-fills as the salon takes walk-ins. Failure is non-blocking;
+    // the queue entry is already saved by the dispatch above.
+    const { firstName, lastName } = splitClientName(data.clientName);
+    void upsertCustomerFromIntake({ firstName, lastName });
   }
 
   return (

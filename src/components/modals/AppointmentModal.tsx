@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
+import { upsertCustomerFromIntake } from '../../lib/customers';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { getTodayLA } from '../../utils/time';
 import type { ServiceType, ServiceRequest, Appointment } from '../../types';
@@ -253,6 +254,15 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       };
       dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
     }
+
+    // Fire-and-forget customer profile upsert. Whether we just created or
+    // updated the appointment, the customer's info should sync to Blueprint
+    // → Customers so receptionists never have to manually add a profile.
+    void upsertCustomerFromIntake({
+      firstName: clientFirstName,
+      lastName: clientLastName,
+      phone: clientPhone,
+    });
 
     handleClose();
   }

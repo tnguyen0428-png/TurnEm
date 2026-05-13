@@ -191,3 +191,108 @@ export async function fetchCustomerTickets(c: Customer): Promise<Ticket[]> {
   // is heavy. Cast and let the caller treat returned values as readonly.
   return filtered as unknown as Ticket[];
 }
+
+/**
+ * Split a combined "First Last Doe" string into a first + last pair on the
+ * first space. Standalone helper so intake forms that still emit a single
+ * clientName string can plumb through without UI changes.
+ */
+export function splitClientName(name: string): { firstName: string; lastName: string } {
+  const s = (name ?? '').trim();
+  if (!s) return { firstName: '', lastName: '' };
+  const i = s.indexOf(' ');
+  if (i === -1) return { firstName: s, lastName: '' };
+  return { firstName: s.slice(0, i), lastName: s.slice(i + 1).trim() };
+}
+
+/**
+ * Fire-and-forget upsert called from queue and appointment intake flows so
+ * the Customer Profiles list auto-fills as the salon takes bookings.
+ *
+ * Matching: phone (digits-only equality) first, then full lowercased name.
+ * Behavior on match: fill in blank fields (phone, email) but never overwrite
+ * an already-populated value — receptionists are inconsistent about how
+ * they type names, and we don't want a "Sara" intake to clobber a saved
+ * "Sara Jane" record.
+ *
+ * Returns the resulting customer id, or null if both name + phone are empty
+ * (we silently skip "Walk-in" entries with no identifying info).
+ */
+export async function upsertCustomerFromIntake(input: {
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  email?: string;
+}): Promise<string | null> {
+  const first = (input.firstName ?? '').trim();
+  const last = (input.lastName ?? '').trim();
+  const phoneNorm = normalizePhone(input.phone ?? '');
+  const fullName = normalizeName(first, last);
+  const hasName = !!fullName && fullName !== 'walk-in';
+  if (!phoneNorm && !hasName) return null;
+
+  try {
+    // 1. Try phone match (cheapest, most precise).
+    let existing: Customer | null = null;
+    if (phoneNorm) {
+      const { data } = await supabase
+        .from('customers')
+        .select('*')
+        .neq('phone', '')
+        .limit(50);
+      const rows = (data ?? []) as DbCustomer[];
+      const match = rows.find((r) => normalizePhone(r.phone) === phoneNorm);
+      if (match) existing = fromDb(match);
+    }
+    // 2. Fallback to lowercased-name match if phone didn't hit.
+    if (!existing && hasName) {
+      const { data } = await supabase
+        .from('customers')
+        .select('*')
+        .ilike('first_name', `${first}%`)
+        .limit(50);
+      const rows = (data ?? []) as DbCustomer[];
+      const match = rows.find(
+        (r) => normalizeName(r.first_name, r.last_name) === fullName,
+      );
+      if (match) existing = fromDb(match);
+    }
+
+    if (existing) {
+      // Only patch fields the existing record is missing — never overwrite.
+      const patch: Record<string, unknown> = {};
+      if (!existing.phone && phoneNorm) patch.phone = (input.phone ?? '').trim();
+      if (!existing.email && input.email) patch.email = input.email.trim();
+      if (!existing.firstName && first) patch.first_name = first;
+      if (!existing.lastName && last) patch.last_name = last;
+      if (Object.keys(patch).length === 0) return existing.id;
+      patch.updated_at = new Date().toISOString();
+      const { error } = await supabase.from('customers').update(patch).eq('id', existing.id);
+      if (error) console.warn('[customers] upsert patch failed:', error.message);
+      return existing.id;
+    }
+
+    // 3. New profile.
+    const { data, error } = await supabase
+      .from('customers')
+      .insert({
+        first_name: first,
+        last_name: last,
+        phone: (input.phone ?? '').trim(),
+        email: (input.email ?? '').trim(),
+        notes: '',
+        popup_note: '',
+      })
+      .select('id')
+      .single();
+    if (error) {
+      console.warn('[customers] upsert insert failed:', error.message);
+      return null;
+    }
+    return (data as { id: string }).id;
+  } catch (err) {
+    console.warn('[customers] upsertCustomerFromIntake unexpected error:', err);
+    return null;
+  }
+}
+
