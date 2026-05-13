@@ -87,9 +87,13 @@ export default function RegisterScreen() {
   }, [dateLA, state.completed, state.salonServices]);
 
   const [shift, setShift] = useState<Shift | null>(null);
+  // Scope the "open shift" lookup to the currently-displayed date. On a fresh
+  // day, even if yesterday's shift was never closed, this returns null and
+  // the header shows the OPEN SHIFT button (clickable) instead of locking the
+  // user into yesterday's still-open drawer.
   const refreshShift = useCallback(async () => {
-    setShift(await fetchOpenShift());
-  }, []);
+    setShift(await fetchOpenShift(dateLA));
+  }, [dateLA]);
   useEffect(() => { void refreshShift(); }, [refreshShift]);
 
   const [openTicket, setOpenTicket] = useState<Ticket | null>(null);

@@ -65,11 +65,22 @@ function fromDbMovement(row: DbShiftMovement): ShiftMovement {
 
 // ── reads ────────────────────────────────────────────────────────────────────
 
-export async function fetchOpenShift(): Promise<Shift | null> {
+/**
+ * Find the open shift for a given business date (defaults to today LA).
+ *
+ * Without the business_date filter, yesterday's shift that was left open
+ * would still surface on the new day and block the Register header from
+ * showing the OPEN SHIFT button (it would show SHIFT OPEN + CLOSE SHIFT
+ * instead). Cashiers can still navigate the date picker back to yesterday
+ * to close the stale shift.
+ */
+export async function fetchOpenShift(dateLA?: string): Promise<Shift | null> {
+  const businessDate = dateLA ?? getTodayLA();
   const { data, error } = await supabase
     .from('shifts')
     .select('*')
     .eq('status', 'open')
+    .eq('business_date', businessDate)
     .order('opened_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -110,15 +121,18 @@ export async function fetchShiftMovements(shiftId: string): Promise<ShiftMovemen
 // ── writes ───────────────────────────────────────────────────────────────────
 
 export async function openShift(openingCashCents: number, openingCount: Record<string, number> = {}): Promise<Shift | null> {
-  const existing = await fetchOpenShift();
+  const businessDate = getTodayLA();
+  // Dedupe against TODAY's open shift only. A stale unfinished shift from
+  // yesterday should not block opening today's drawer.
+  const existing = await fetchOpenShift(businessDate);
   if (existing) {
-    console.warn('[shifts] openShift: a shift is already open', existing.id);
+    console.warn('[shifts] openShift: a shift is already open for today', existing.id);
     return existing;
   }
   const { data, error } = await supabase
     .from('shifts')
     .insert({
-      business_date: getTodayLA(),
+      business_date: businessDate,
       drawer_number: 1,
       status: 'open',
       opening_cash_cents: openingCashCents,
