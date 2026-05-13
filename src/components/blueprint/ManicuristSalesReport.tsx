@@ -135,7 +135,7 @@ export default function ManicuristSalesReport() {
 
       <div className="grid grid-cols-3 gap-3">
         <Kpi label="Manicurists" value={summary.manicurists.toString()} loading={loading} />
-        <Kpi label="Services" value={summary.totalServices.toString()} loading={loading} />
+        <Kpi label="Services" value={summary.totalServices.toString()} accent="red" loading={loading} />
         <Kpi label="Total Sales" value={formatMoney(summary.totalGross)} accent="emerald" loading={loading} />
       </div>
 
@@ -225,12 +225,17 @@ export default function ManicuristSalesReport() {
 function Kpi({
   label, value, accent, loading,
 }: {
-  label: string; value: string; accent?: 'emerald'; loading?: boolean;
+  label: string; value: string; accent?: 'emerald' | 'red'; loading?: boolean;
 }) {
+  const color = accent === 'emerald'
+    ? 'text-emerald-600'
+    : accent === 'red'
+      ? 'text-red-600'
+      : 'text-gray-900';
   return (
     <div className="bg-white rounded-2xl border border-gray-100 px-4 py-4">
       <div className="font-mono text-[10px] font-bold text-gray-400 tracking-wider uppercase">{label}</div>
-      <div className={`font-mono text-2xl font-bold mt-1 ${accent === 'emerald' ? 'text-emerald-600' : 'text-gray-900'}`}>
+      <div className={`font-mono text-2xl font-bold mt-1 ${color}`}>
         {loading ? '…' : value}
       </div>
     </div>
