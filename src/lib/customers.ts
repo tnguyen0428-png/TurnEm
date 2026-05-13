@@ -232,30 +232,64 @@ export async function upsertCustomerFromIntake(input: {
   if (!phoneNorm && !hasName) return null;
 
   try {
-    // 1. Try phone match (cheapest, most precise).
+    // Match phone + name together. Phone alone is NOT enough — a household
+    // commonly shares one phone across multiple people (parents + kids on
+    // one number) and matching on phone alone would silently merge their
+    // profiles into the first one to use that number.
+    //
+    // Priority:
+    //   1. phone match AND name match → same person (cheap + precise)
+    //   2. phone match, missing name on existing → patch name onto it
+    //   3. no phone match, name match → same person (legacy / phone-less)
+    //   4. nothing → new profile
     let existing: Customer | null = null;
     if (phoneNorm) {
       const { data } = await supabase
         .from('customers')
         .select('*')
         .neq('phone', '')
-        .limit(50);
+        .limit(200);
       const rows = (data ?? []) as DbCustomer[];
-      const match = rows.find((r) => normalizePhone(r.phone) === phoneNorm);
-      if (match) existing = fromDb(match);
+      const samePhone = rows.filter((r) => normalizePhone(r.phone) === phoneNorm);
+      // Exact name match within same-phone group → same person.
+      const exactNameMatch = samePhone.find(
+        (r) => normalizeName(r.first_name, r.last_name) === fullName,
+      );
+      if (exactNameMatch) {
+        existing = fromDb(exactNameMatch);
+      } else if (samePhone.length > 0) {
+        // Phone matches but a record exists with a non-matching name (e.g.
+        // family member). Look for a same-phone row whose name is BLANK
+        // — that's a profile created without a name yet, safe to patch.
+        const blankNameSibling = samePhone.find(
+          (r) => normalizeName(r.first_name, r.last_name) === '',
+        );
+        if (blankNameSibling) existing = fromDb(blankNameSibling);
+        // Otherwise leave existing=null and fall through to the create
+        // path so Tony / Tria / Kayla each get their own row.
+      }
     }
-    // 2. Fallback to lowercased-name match if phone didn't hit.
     if (!existing && hasName) {
+      // No phone match (or no phone at all). Try a strict name match. This
+      // catches phone-less walk-ins typed on the queue form.
       const { data } = await supabase
         .from('customers')
         .select('*')
         .ilike('first_name', `${first}%`)
-        .limit(50);
+        .limit(200);
       const rows = (data ?? []) as DbCustomer[];
       const match = rows.find(
         (r) => normalizeName(r.first_name, r.last_name) === fullName,
       );
-      if (match) existing = fromDb(match);
+      // Only treat as a match if the existing row has NO phone OR the same
+      // phone — otherwise it's almost certainly a different "Sarah" at the
+      // shop with a different number.
+      if (match) {
+        const existingPhone = normalizePhone(match.phone);
+        if (!existingPhone || existingPhone === phoneNorm) {
+          existing = fromDb(match);
+        }
+      }
     }
 
     if (existing) {
