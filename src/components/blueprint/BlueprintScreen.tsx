@@ -7,6 +7,7 @@ import {
 import SalesReport from './SalesReport';
 import StaffReport from './StaffReport';
 import GiftCertificatesReport from './GiftCertificatesReport';
+import CustomersScreen from './CustomersScreen';
 import { PinVerifyModal } from '../shared/AdminPinGate';
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
@@ -322,6 +323,7 @@ export default function BlueprintScreen() {
       case 'reports-sales':        return <SalesReport />;
       case 'reports-staff':        return <StaffReport />;
       case 'reports-gift-certs':   return <GiftCertificatesReport />;
+      case 'customers':            return <CustomersScreen />;
       default: return null;
     }
   }
