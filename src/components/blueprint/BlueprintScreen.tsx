@@ -2,10 +2,9 @@ import { useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
   Clock3, ChevronRight, GripVertical, KeyRound,
-  DollarSign, XCircle, UserCheck,
+  DollarSign, UserCheck,
 } from 'lucide-react';
 import SalesReport from './SalesReport';
-import CancellationReport from './CancellationReport';
 import StaffReport from './StaffReport';
 import { PinVerifyModal } from '../shared/AdminPinGate';
 import {
@@ -34,7 +33,6 @@ type BlueprintSection =
   | 'services'
   | 'criteria'
   | 'reports-sales'
-  | 'reports-cancellation'
   | 'reports-staff';
 
 interface NavItem {
@@ -71,7 +69,6 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     heading: 'REPORTS',
     items: [
       { id: 'reports-sales',        label: 'Sales',              icon: DollarSign, description: 'Daily / weekly sales totals and payment mix' },
-      { id: 'reports-cancellation', label: 'Cancellations & Void', icon: XCircle,    description: 'Voided tickets, cancelled appointments, no-shows' },
       { id: 'reports-staff',        label: 'Staff',              icon: UserCheck,  description: 'Manicurist sales + receptionist hours' },
     ],
   },
@@ -313,7 +310,6 @@ export default function BlueprintScreen() {
       case 'services':         return <ServicesScreen />;
       case 'criteria':         return <CriteriaScreen />;
       case 'reports-sales':        return <SalesReport />;
-      case 'reports-cancellation': return <CancellationReport />;
       case 'reports-staff':        return <StaffReport />;
       default: return null;
     }

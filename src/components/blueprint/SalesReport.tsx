@@ -10,8 +10,23 @@ import { fetchTicketsForRange } from '../../lib/tickets';
 import { fetchShiftsForRange } from '../../lib/shifts';
 import { useApp } from '../../state/AppContext';
 import {
-  ReportRangeHeader, useReportRange, formatMoney, formatLongDate, eachDateInRange,
+  ReportRangeHeader, useReportRange, formatMoney, formatLongDate, formatTime, eachDateInRange,
 } from './reportShared';
+
+// Local shape for the cancellations & void detail rows — merged from voided
+// tickets and cancelled/no-show appointments so a manager can see all
+// negative-outcome events for the date range in one list.
+interface CancelRow {
+  id: string;
+  date: string;
+  whenMs: number;
+  source: 'ticket' | 'appointment';
+  status: 'voided' | 'cancelled' | 'no-show';
+  clientName: string;
+  reason: string;
+  amountCents: number;
+  byReceptionistName: string;
+}
 
 export default function SalesReport() {
   const [range, setRange] = useReportRange();
@@ -82,6 +97,68 @@ export default function SalesReport() {
       .filter((t) => t.totalDiscountCents > 0)
       .sort((a, b) => b.totalDiscountCents - a.totalDiscountCents);
   }, [closed]);
+
+  // Cancellations & Void: voided tickets in range + cancelled/no-show
+  // appointments in range. Same logic as the legacy CancellationReport,
+  // inlined here so everything for the date range is on one page.
+  const receptionistNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of state.manicurists) m.set(r.id, r.name);
+    return m;
+  }, [state.manicurists]);
+
+  const cancelRows = useMemo<CancelRow[]>(() => {
+    const out: CancelRow[] = [];
+    for (const t of tickets) {
+      if (t.status !== 'voided') continue;
+      const byName = t.voidedByReceptionistId
+        ? receptionistNameById.get(t.voidedByReceptionistId) ?? '(removed)'
+        : '—';
+      out.push({
+        id: `t:${t.id}`,
+        date: t.businessDate,
+        whenMs: t.openedAt,
+        source: 'ticket',
+        status: 'voided',
+        clientName: t.clientName || 'Walk-in',
+        reason: t.voidReason || '',
+        amountCents: t.totalCents,
+        byReceptionistName: byName,
+      });
+    }
+    for (const a of state.appointments) {
+      if (a.status !== 'cancelled' && a.status !== 'no-show') continue;
+      if (a.date < range.from || a.date > range.to) continue;
+      const [hh, mm] = (a.time || '00:00').split(':').map((s) => parseInt(s, 10));
+      const d = new Date(a.date + 'T12:00:00');
+      d.setHours(Number.isFinite(hh) ? hh : 12, Number.isFinite(mm) ? mm : 0, 0, 0);
+      out.push({
+        id: `a:${a.id}`,
+        date: a.date,
+        whenMs: d.getTime(),
+        source: 'appointment',
+        status: a.status as 'cancelled' | 'no-show',
+        clientName: a.clientName || 'Walk-in',
+        reason: a.notes || '',
+        amountCents: 0,
+        byReceptionistName: '—',
+      });
+    }
+    return out.sort((a, b) => b.whenMs - a.whenMs);
+  }, [tickets, state.appointments, range.from, range.to, receptionistNameById]);
+
+  const cancelSummary = useMemo(() => {
+    let voided = 0;
+    let cancelled = 0;
+    let noShow = 0;
+    let lostCents = 0;
+    for (const r of cancelRows) {
+      if (r.status === 'voided') { voided += 1; lostCents += r.amountCents; }
+      else if (r.status === 'cancelled') cancelled += 1;
+      else if (r.status === 'no-show') noShow += 1;
+    }
+    return { voided, cancelled, noShow, lostCents };
+  }, [cancelRows]);
 
   const byPaymentMethod = useMemo(() => {
     const map = new Map<string, number>();
@@ -175,6 +252,53 @@ export default function SalesReport() {
                 <span className="font-mono text-sm text-gray-700 truncate">{t.primaryManicuristName || '—'}</span>
                 <span className="font-mono text-sm text-red-600 text-right">-{formatMoney(t.totalDiscountCents)}</span>
                 <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoney(t.totalCents)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Cancellations & Void — voided tickets + cancelled / no-show appts */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">CANCELLATIONS &amp; VOID</h3>
+          <span className="font-mono text-[10px] text-gray-400">
+            {cancelSummary.voided} voided · {cancelSummary.cancelled} cancelled · {cancelSummary.noShow} no-show · {formatMoney(cancelSummary.lostCents)} lost
+          </span>
+        </div>
+        {cancelRows.length === 0 ? (
+          <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">
+            {loading ? 'Loading…' : 'No cancellations in this range.'}
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-[120px_70px_90px_1fr_120px_1fr_90px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+              <span>Date</span>
+              <span>Time</span>
+              <span>Status</span>
+              <span>Client</span>
+              <span>Voided by</span>
+              <span>Reason</span>
+              <span className="text-right">Amount</span>
+            </div>
+            {cancelRows.map((r) => (
+              <div key={r.id} className="grid grid-cols-[120px_70px_90px_1fr_120px_1fr_90px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
+                <span className="font-mono text-xs text-gray-700">{formatLongDate(r.date)}</span>
+                <span className="font-mono text-xs text-gray-500">{formatTime(r.whenMs)}</span>
+                <span>
+                  <CancelStatusPill status={r.status} />
+                </span>
+                <span className="font-mono text-sm font-semibold text-gray-900 truncate">{r.clientName}</span>
+                <span
+                  className="font-mono text-xs text-gray-700 truncate"
+                  title={r.byReceptionistName}
+                >
+                  {r.byReceptionistName}
+                </span>
+                <span className="font-mono text-xs text-gray-500 truncate">{r.reason || '—'}</span>
+                <span className="font-mono text-sm text-gray-900 text-right">
+                  {r.amountCents > 0 ? formatMoney(r.amountCents) : '—'}
+                </span>
               </div>
             ))}
           </div>
@@ -295,5 +419,17 @@ function Kpi({
         {loading ? '…' : value}
       </div>
     </div>
+  );
+}
+
+function CancelStatusPill({ status }: { status: 'voided' | 'cancelled' | 'no-show' }) {
+  const cls =
+    status === 'voided'
+      ? 'bg-amber-50 text-amber-700'
+      : 'bg-red-50 text-red-700';
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full font-mono text-[10px] font-bold tracking-wider uppercase ${cls}`}>
+      {status}
+    </span>
   );
 }
