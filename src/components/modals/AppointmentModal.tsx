@@ -30,7 +30,11 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const today = getTodayLA();
   const draft = mode === 'add' ? state.appointmentDraft : null;
 
-  const [clientName, setClientName] = useState('');
+  const [clientFirstName, setClientFirstName] = useState('');
+  const [clientLastName, setClientLastName] = useState('');
+  // Combined name used everywhere else in this modal (save payload, display).
+  // The two inputs stay the single source of truth.
+  const clientName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim();
   const [clientPhone, setClientPhone] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedServiceId, setSelectedServiceId] = useState('');
@@ -64,7 +68,10 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
   useEffect(() => {
     if (editing) {
-      setClientName(editing.clientName);
+      const _s = (editing.clientName ?? '').trim();
+      const _i = _s.indexOf(' ');
+      setClientFirstName(_i === -1 ? _s : _s.slice(0, _i));
+      setClientLastName(_i === -1 ? '' : _s.slice(_i + 1).trim());
       setClientPhone(editing.clientPhone);
       setDate(editing.date);
       setTime(editing.time);
@@ -265,14 +272,24 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       <form onSubmit={handleSubmit} className="space-y-4">
 
         {/* Client info */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">CLIENT NAME</label>
+            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">FIRST NAME</label>
             <input
               type="text"
-              value={clientName}
-              onChange={(e) => setClientName(e.target.value)}
-              placeholder="Walk-in"
+              value={clientFirstName}
+              onChange={(e) => setClientFirstName(e.target.value)}
+              placeholder="First"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+            />
+          </div>
+          <div>
+            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">LAST NAME</label>
+            <input
+              type="text"
+              value={clientLastName}
+              onChange={(e) => setClientLastName(e.target.value)}
+              placeholder="Last"
               className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>

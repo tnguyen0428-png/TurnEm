@@ -37,7 +37,19 @@ export default function ClientForm({
   submitLabel,
   onSubmit,
 }: ClientFormProps) {
-  const [clientName, setClientName] = useState(initialName);
+  // Split incoming initialName on the first space so an edit of an existing
+  // record ("Sarah Klein Doe") puts "Sarah" in First and "Klein Doe" in Last.
+  // On submit we re-combine.
+  const [clientFirstName, setClientFirstName] = useState(() => {
+    const s = (initialName ?? '').trim();
+    const i = s.indexOf(' ');
+    return i === -1 ? s : s.slice(0, i);
+  });
+  const [clientLastName, setClientLastName] = useState(() => {
+    const s = (initialName ?? '').trim();
+    const i = s.indexOf(' ');
+    return i === -1 ? '' : s.slice(i + 1).trim();
+  });
   const [isAppointment, setIsAppointment] = useState(initialIsAppointment);
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>(
     () => initialSelectedServices || []
@@ -130,8 +142,9 @@ export default function ClientForm({
       })
     );
 
+    const combinedName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim() || 'Walk-in';
     onSubmit({
-      clientName: clientName.trim() || 'Walk-in',
+      clientName: combinedName,
       isAppointment,
       services,
       serviceRequests,
@@ -141,17 +154,31 @@ export default function ClientForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
-      <div>
-        <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
-          CLIENT NAME
-        </label>
-        <input
-          type="text"
-          value={clientName}
-          onChange={(e) => setClientName(e.target.value)}
-          placeholder="Walk-in"
-          className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
-        />
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
+            FIRST NAME
+          </label>
+          <input
+            type="text"
+            value={clientFirstName}
+            onChange={(e) => setClientFirstName(e.target.value)}
+            placeholder="First"
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+          />
+        </div>
+        <div>
+          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
+            LAST NAME
+          </label>
+          <input
+            type="text"
+            value={clientLastName}
+            onChange={(e) => setClientLastName(e.target.value)}
+            placeholder="Last"
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+          />
+        </div>
       </div>
 
       <div
