@@ -476,7 +476,8 @@ export default function TicketModal({
 
               {/* Line items grid — scrolls inside if needed so the rest stays in view */}
               <div className="border border-gray-100 rounded-xl overflow-hidden flex flex-col min-h-0">
-                <div className="grid grid-cols-[50px_1fr_130px_90px_90px_90px_30px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 text-[11px] tracking-wider font-mono font-semibold text-gray-400 uppercase">
+                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_30px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 text-[11px] tracking-wider font-mono font-semibold text-gray-400 uppercase">
+                  <span className="text-center">#</span>
                   <span className="text-center">Qty</span>
                   <span>Service</span>
                   <span>Staff</span>
@@ -491,17 +492,32 @@ export default function TicketModal({
                       No line items yet.
                     </div>
                   ) : (
-                    lines.map((line, idx) => {
+                    (() => {
+                      // Sequential service-only counter for the left-edge
+                      // red-circle badge. Retail / discount / gift_card_sale
+                      // lines don't get numbered — only manicurist work counts.
+                      let svcN = 0;
+                      return lines.map((line, idx) => {
                       const ext = computeLineExt({
                         unitPriceCents: parseDollarsToCents(line.priceInput),
                         quantity: line.quantity,
                         discountCents: parseDollarsToCents(line.discountInput),
                       });
+                      const isService = line.kind === 'service';
+                      if (isService) svcN += 1;
+                      const badgeNumber = isService ? svcN : null;
                       return (
                         <div
                           key={idx}
-                          className="grid grid-cols-[50px_1fr_130px_90px_90px_90px_30px] gap-2 items-center px-3 py-1 border-b border-gray-50 last:border-b-0"
+                          className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_30px] gap-2 items-center px-3 py-1 border-b border-gray-50 last:border-b-0"
                         >
+                          {badgeNumber !== null ? (
+                            <span className="justify-self-center w-9 h-9 rounded-full border-2 border-red-500 text-red-600 font-mono text-lg font-bold flex items-center justify-center">
+                              {badgeNumber}
+                            </span>
+                          ) : (
+                            <span />
+                          )}
                           <input
                             type="number" min={1} step={1} value={line.quantity}
                             onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value || '1', 10)) })}
@@ -559,7 +575,8 @@ export default function TicketModal({
                           ) : <span />}
                         </div>
                       );
-                    })
+                    });
+                    })()
                   )}
                 </div>
 
