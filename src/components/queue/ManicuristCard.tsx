@@ -1,13 +1,13 @@
-import { useState } from 'react';
-import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff, Clock } from 'lucide-react';
+import { memo, useState } from 'react';
+import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
 import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { SharedAutoFitText } from '../shared/SharedAutoFitText';
-import { useApp } from '../../state/AppContext';
+import { useAppDispatch } from '../../state/AppContext';
 import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
-import { useElapsedTime } from '../../hooks/useElapsedTime';
+import BreakElapsedBadge from './BreakElapsedBadge';
 
 interface ManicuristCardProps {
   manicurist: Manicurist;
@@ -32,13 +32,14 @@ function getStatusConfig(status: Manicurist['status']) {
   }
 }
 
-export default function ManicuristCard({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, clientDurationMs = 0, hasPushSub = false }: ManicuristCardProps) {
-  const { dispatch } = useApp();
+function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, clientDurationMs = 0, hasPushSub = false }: ManicuristCardProps) {
+  // dispatch-only — using the narrow useAppDispatch hook skips re-renders
+  // triggered by unrelated state changes (queue/appointments/etc.).
+  const dispatch = useAppDispatch();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
   const [bellSending, setBellSending] = useState(false);
   const statusConfig = getStatusConfig(manicurist.status);
-  const breakElapsed = useElapsedTime(manicurist.status === 'break' ? (manicurist.breakStartTime ?? null) : null);
 
   function handleClockToggle() {
     if (manicurist.clockedIn) {
@@ -338,12 +339,8 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
           </div>
         )}
 
-        {manicurist.status === 'break' && breakElapsed && (
-          <div className="bg-amber-50 rounded-lg px-2 py-1.5 mb-1.5 flex items-center gap-1.5">
-            <Clock size={11} className="text-amber-500 shrink-0" />
-            <span className="font-mono text-[11px] font-bold text-amber-700 tabular-nums">{breakElapsed}</span>
-            <span className="font-mono text-[9px] text-amber-500 tracking-wider">ON BREAK</span>
-          </div>
+        {manicurist.status === 'break' && (
+          <BreakElapsedBadge breakStartTime={manicurist.breakStartTime ?? null} />
         )}
 
         <div className="flex gap-1">
@@ -398,3 +395,9 @@ export default function ManicuristCard({ manicurist, currentClient, clientHasWax
   </>
   );
 }
+
+// Memo wrapper — ManicuristCard re-renders only when its own props change.
+// Combined with useAppDispatch (no state subscription) this means the card
+// stays still during unrelated queue/appointment updates.
+const ManicuristCard = memo(ManicuristCardImpl);
+export default ManicuristCard;

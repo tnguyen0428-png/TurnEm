@@ -203,11 +203,22 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
     isFirstFetchRef.current = false;
   }, [manicuristId, today]);
 
-  // Initial fetch + polling at 7s (matches existing staff panel cadence).
+  // Initial fetch on mount, then refresh whenever the appointments table
+  // changes via Supabase realtime. Previously this polled every 7s
+  // unconditionally — even on quiet days a manicurist's tablet hit Supabase
+  // ~500 times per shift. With realtime we only fetch when something
+  // actually changed.
   useEffect(() => {
-    fetchAndDiff();
-    const id = setInterval(fetchAndDiff, 7000);
-    return () => clearInterval(id);
+    void fetchAndDiff();
+    const channel = supabase
+      .channel('daily-schedule-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'appointments' },
+        () => { void fetchAndDiff(); },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [fetchAndDiff]);
 
   // Auto-dismiss toast after a short window

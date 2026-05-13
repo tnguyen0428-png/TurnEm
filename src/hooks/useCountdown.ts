@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useSyncExternalStore } from 'react';
+import { subscribeToClock, getClockNow } from './sharedClock';
 
 interface CountdownResult {
   remainingMs: number | null;
@@ -8,12 +9,8 @@ interface CountdownResult {
 }
 
 export function useCountdown(startedAt: number | null, totalDurationMs: number): CountdownResult {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
+  // Single shared 1Hz clock — no per-instance setInterval.
+  const now = useSyncExternalStore(subscribeToClock, getClockNow, getClockNow);
 
   if (startedAt === null) {
     return { remainingMs: null, display: '', isFinishingUp: false, isAlmostDone: false };

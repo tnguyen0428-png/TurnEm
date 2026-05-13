@@ -1,23 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './state/AuthContext';
 import { AppProvider, useApp } from './state/AppContext';
 import TabBar from './components/layout/TabBar';
 import LoginScreen from './components/auth/LoginScreen';
 import QueueScreen from './components/queue/QueueScreen';
-import HistoryScreen from './components/history/HistoryScreen';
-import AppointmentsScreen from './components/appointments/AppointmentsScreen';
-import BlueprintScreen from './components/blueprint/BlueprintScreen';
-import RegisterScreen from './components/register/RegisterScreen';
-import AddClientModal from './components/modals/AddClientModal';
-import EditClientModal from './components/modals/EditClientModal';
-import AssignModal from './components/modals/AssignModal';
-import StaffModal from './components/modals/StaffModal';
-import AppointmentModal from './components/modals/AppointmentModal';
 import SmsToast from './components/shared/SmsToast';
-import StaffLoginScreen from './components/staff/StaffLoginScreen';
-import StaffPortalScreen from './components/staff/StaffPortalScreen';
 import { Loader2 } from 'lucide-react';
 import type { Manicurist } from './types';
+
+// Heavy screens loaded only when their tab opens.
+const HistoryScreen      = lazy(() => import('./components/history/HistoryScreen'));
+const AppointmentsScreen = lazy(() => import('./components/appointments/AppointmentsScreen'));
+const RegisterScreen     = lazy(() => import('./components/register/RegisterScreen'));
+const BlueprintScreen    = lazy(() => import('./components/blueprint/BlueprintScreen'));
+
+const AddClientModal   = lazy(() => import('./components/modals/AddClientModal'));
+const EditClientModal  = lazy(() => import('./components/modals/EditClientModal'));
+const AssignModal      = lazy(() => import('./components/modals/AssignModal'));
+const StaffModal       = lazy(() => import('./components/modals/StaffModal'));
+const AppointmentModal = lazy(() => import('./components/modals/AppointmentModal'));
+
+const StaffLoginScreen  = lazy(() => import('./components/staff/StaffLoginScreen'));
+const StaffPortalScreen = lazy(() => import('./components/staff/StaffPortalScreen'));
+
+function ScreenFallback() {
+  return (
+    <div className="min-h-[50vh] flex items-center justify-center">
+      <Loader2 className="w-6 h-6 text-pink-400 animate-spin" />
+    </div>
+  );
+}
 
 function AppContent() {
   const { state, syncError, clearSyncError, saveStatus } = useApp();
@@ -36,56 +48,16 @@ function AppContent() {
   return (
     <div className="h-screen bg-[#fafafa] flex flex-col overflow-hidden">
       {syncError && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 9999,
-          background: '#dc2626',
-          color: 'white',
-          padding: '10px 16px',
-          fontSize: '14px',
-          fontWeight: 600,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, background: '#dc2626', color: 'white', padding: '10px 16px', fontSize: '14px', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           {'⚠️'} {syncError}
           <button onClick={clearSyncError} style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer' }}>{'✕'}</button>
         </div>
       )}
       {!syncError && (saveStatus === 'saving' || saveStatus === 'saved') && (
-        <div style={{
-          position: 'fixed',
-          bottom: 16,
-          right: 16,
-          zIndex: 9999,
-          background: saveStatus === 'saving' ? '#1f2937' : '#10b981',
-          color: 'white',
-          padding: '8px 14px',
-          borderRadius: 999,
-          fontSize: 12,
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-          fontWeight: 600,
-          letterSpacing: '0.05em',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          transition: 'opacity 200ms ease',
-        }}>
+        <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 9999, background: saveStatus === 'saving' ? '#1f2937' : '#10b981', color: 'white', padding: '8px 14px', borderRadius: 999, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontWeight: 600, letterSpacing: '0.05em', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 8, transition: 'opacity 200ms ease' }}>
           {saveStatus === 'saving' ? (
             <>
-              <span style={{
-                display: 'inline-block',
-                width: 10,
-                height: 10,
-                borderRadius: '50%',
-                border: '2px solid rgba(255,255,255,0.3)',
-                borderTopColor: 'white',
-                animation: 'turnem-spin 0.8s linear infinite',
-              }} />
+              <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', animation: 'turnem-spin 0.8s linear infinite' }} />
               {'SAVING…'}
             </>
           ) : (
@@ -96,20 +68,24 @@ function AppContent() {
       <style>{`@keyframes turnem-spin { to { transform: rotate(360deg); } }`}</style>
       <TabBar />
       <main className="flex-1 min-h-0 overflow-hidden relative">
-        {state.view === 'queue' && <QueueScreen />}
-        {state.view === 'history' && <HistoryScreen />}
-        {state.view === 'appointments' && <AppointmentsScreen />}
-        {state.view === 'register' && <RegisterScreen />}
-        {(state.view === 'blueprint' || state.view === 'staff' || state.view === 'services' || state.view === 'criteria' || state.view === 'calendar') && <BlueprintScreen />}
+        <Suspense fallback={<ScreenFallback />}>
+          {state.view === 'queue' && <QueueScreen />}
+          {state.view === 'history' && <HistoryScreen />}
+          {state.view === 'appointments' && <AppointmentsScreen />}
+          {state.view === 'register' && <RegisterScreen />}
+          {(state.view === 'blueprint' || state.view === 'staff' || state.view === 'services' || state.view === 'criteria' || state.view === 'calendar') && <BlueprintScreen />}
+        </Suspense>
       </main>
 
-      {state.modal === 'addClient' && <AddClientModal />}
-      {state.modal === 'editClient' && <EditClientModal />}
-      {state.modal === 'assignConfirm' && <AssignModal />}
-      {state.modal === 'addStaff' && <StaffModal mode="add" />}
-      {state.modal === 'editStaff' && <StaffModal mode="edit" />}
-      {state.modal === 'addAppointment' && <AppointmentModal mode="add" />}
-      {state.modal === 'editAppointment' && <AppointmentModal mode="edit" />}
+      <Suspense fallback={null}>
+        {state.modal === 'addClient' && <AddClientModal />}
+        {state.modal === 'editClient' && <EditClientModal />}
+        {state.modal === 'assignConfirm' && <AssignModal />}
+        {state.modal === 'addStaff' && <StaffModal mode="add" />}
+        {state.modal === 'editStaff' && <StaffModal mode="edit" />}
+        {state.modal === 'addAppointment' && <AppointmentModal mode="add" />}
+        {state.modal === 'editAppointment' && <AppointmentModal mode="edit" />}
+      </Suspense>
 
       <SmsToast />
     </div>
@@ -169,24 +145,28 @@ function StaffPortal() {
 
   if (!loggedInManicurist) {
     return (
-      <StaffLoginScreen
-        manicurists={state.manicurists}
-        onLogin={(m) => {
-          localStorage.setItem('turnem_staff_id', m.id);
-          setLoggedInManicurist(m);
-        }}
-      />
+      <Suspense fallback={<ScreenFallback />}>
+        <StaffLoginScreen
+          manicurists={state.manicurists}
+          onLogin={(m) => {
+            localStorage.setItem('turnem_staff_id', m.id);
+            setLoggedInManicurist(m);
+          }}
+        />
+      </Suspense>
     );
   }
 
   return (
-    <StaffPortalScreen
-      manicurist={loggedInManicurist}
-      onLogout={() => {
-        localStorage.removeItem('turnem_staff_id');
-        setLoggedInManicurist(null);
-      }}
-    />
+    <Suspense fallback={<ScreenFallback />}>
+      <StaffPortalScreen
+        manicurist={loggedInManicurist}
+        onLogout={() => {
+          localStorage.removeItem('turnem_staff_id');
+          setLoggedInManicurist(null);
+        }}
+      />
+    </Suspense>
   );
 }
 

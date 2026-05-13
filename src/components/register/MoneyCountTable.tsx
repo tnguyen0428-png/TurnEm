@@ -39,40 +39,60 @@ interface Props {
   value: DenominationCount;
   onChange: (next: DenominationCount) => void;
   disabled?: boolean;
+  /** Hide the coins column — bills only, full width. */
+  hideCoins?: boolean;
+  /** Order bills $1 → $100 instead of the default $100 → $1. */
+  billsAscending?: boolean;
+  /** Hide the bottom TOTAL row (use when the parent displays its own total). */
+  hideTotal?: boolean;
 }
 
-export default function MoneyCountTable({ value, onChange, disabled }: Props) {
+export default function MoneyCountTable({
+  value,
+  onChange,
+  disabled,
+  hideCoins = false,
+  billsAscending = false,
+  hideTotal = false,
+}: Props) {
   function setQty(key: string, qty: number) {
     const safe = Number.isFinite(qty) && qty >= 0 ? Math.floor(qty) : 0;
     onChange({ ...value, [key]: safe });
   }
 
   const total = totalFromCount(value);
+  const bills = billsAscending
+    ? [...BILL_DENOMINATIONS_CENTS].sort((a, b) => a - b)
+    : BILL_DENOMINATIONS_CENTS;
 
   return (
     <div className="border border-gray-100 rounded-xl overflow-hidden">
-      <div className="grid grid-cols-2 gap-0">
+      <div className={hideCoins ? 'grid grid-cols-1 gap-0' : 'grid grid-cols-2 gap-0'}>
         <Column
           title="BILLS"
-          denominations={BILL_DENOMINATIONS_CENTS}
+          denominations={bills}
           value={value}
           onSetQty={setQty}
           disabled={disabled}
         />
-        <Column
-          title="COINS"
-          denominations={COIN_DENOMINATIONS_CENTS}
-          value={value}
-          onSetQty={setQty}
-          disabled={disabled}
-        />
+        {!hideCoins && (
+          <Column
+            title="COINS"
+            denominations={COIN_DENOMINATIONS_CENTS}
+            value={value}
+            onSetQty={setQty}
+            disabled={disabled}
+          />
+        )}
       </div>
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-100">
-        <span className="font-bebas text-base tracking-widest text-gray-700">TOTAL</span>
-        <span className="font-mono text-lg font-bold text-gray-900">
-          {formatMoneyCents(total)}
-        </span>
-      </div>
+      {!hideTotal && (
+        <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-100">
+          <span className="font-bebas text-base tracking-widest text-gray-700">TOTAL</span>
+          <span className="font-mono text-lg font-bold text-gray-900">
+            {formatMoneyCents(total)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

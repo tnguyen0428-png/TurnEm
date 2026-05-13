@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useSyncExternalStore } from 'react';
+import { subscribeToClock, getClockNow } from './sharedClock';
 
+/**
+ * Returns "M:SS" elapsed time since `startedAt`. Subscribes to a single
+ * shared 1Hz clock — N consumers cost one setInterval, not N.
+ */
 export function useElapsedTime(startedAt: number | null): string {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const now = useSyncExternalStore(subscribeToClock, getClockNow, getClockNow);
 
   if (startedAt === null) return '';
 

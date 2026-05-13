@@ -1,5 +1,5 @@
-import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketStaff, createTicketAtCheckin, fetchTicketByQueueEntry } from '../lib/tickets';
+import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
+import { appendItemsToTicket, backfillTicketStaff, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -55,6 +55,12 @@ function readLocalSvcPriority(): Record<string, string[]> | null {
 }
 
 const AppContext = createContext<AppContextType | null>(null);
+
+// Separate dispatch context so dispatch-only consumers (modals, action buttons
+// that fire reducer actions but never read state) don't re-render when state
+// changes. The dispatch reference is stable from useReducer, so this context
+// value never changes after mount.
+const AppDispatchContext = createContext<React.Dispatch<AppAction> | null>(null);
 
 
 function mapDbManicurist(row: Record<string, unknown>): Manicurist {
@@ -813,8 +819,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (prev.manicurists !== state.manicurists) trackSave(() => syncManicurists(state.manicurists, prev.manicurists, setSyncErrorTracked));
-    if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked, state.salonServices, state.manicurists));
-    if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked));
+    if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked, state.salonServices, state.manicurists, state.completed));
+    if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked, state.salonServices));
     if (prev.appointments !== state.appointments) {
       // Deletions already handled above (with tombstoning). syncAppointments here upserts
       // current rows; its internal delete pass is a redundant safety net. We funnel both
@@ -1058,11 +1064,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timeoutId);
   }, [state.loaded, archiveTodayIfNeeded]);
 
-  return (
-    <AppContext.Provider value={{ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority }}>
-      {children}
-    </AppContext.Provider>
+  // Memoize the context value so AppProvider re-renders that didn't actually
+  // change anything (e.g. parent re-render with same props) don't cascade
+  // into all 30+ useApp() consumers. When state/syncError/saveStatus do change,
+  // useMemo returns a fresh object and consumers correctly re-render.
+  const ctxValue = useMemo(
+    () => ({ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority }),
+    [state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority],
   );
+
+  return (
+    <AppDispatchContext.Provider value={dispatch}>
+      <AppContext.Provider value={ctxValue}>
+        {children}
+      </AppContext.Provider>
+    </AppDispatchContext.Provider>
+  );
+}
+
+/** Subscribe only to the dispatch function. Stable across the lifetime of
+ *  AppProvider, so consumers using this hook never re-render from state
+ *  changes — they only re-render if their own state/props change. */
+export function useAppDispatch() {
+  const dispatch = useContext(AppDispatchContext);
+  if (!dispatch) throw new Error('useAppDispatch must be used within AppProvider');
+  return dispatch;
 }
 
 async function withRetry<T>(
@@ -1232,9 +1258,14 @@ async function maybeBackfillTicketsForAssignedEntries(
 // possible; the partial unique index on tickets.queue_entry_id closes that.
 const inFlightAutoCreates = new Set<string>();
 
-async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg: string) => void, salonServices: AppState['salonServices'], manicurists: AppState['manicurists']) {
+async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg: string) => void, salonServices: AppState['salonServices'], manicurists: AppState['manicurists'], completed: AppState['completed']) {
   const prevById = new Map(prev.map((c) => [c.id, c]));
   const currentIds = new Set(queue.map((c) => c.id));
+  // Used by the orphan-ticket-line cleanup at the end: an entry that left
+  // the queue legitimately moves to `completed`, where COMPLETE_SERVICE
+  // gives the new row the same id as the queue entry. So an entry id that
+  // appears here is "removed because completed", not orphaned.
+  const completedIds = new Set(completed.map((c) => c.id));
 
   // Deletes: rows in prev that are no longer in current state. Use .in() to batch.
   const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
@@ -1292,10 +1323,11 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     const visitId = entry.parentQueueId ?? entry.id;
     try {
       // Race guard keyed on the VISIT id, so all siblings of a split share
-      // the same lock — no two siblings can create parallel tickets.
+      // the same lock — no two siblings can create parallel tickets. If a
+      // sibling is mid-create, skip this tick entirely; the next syncQueue
+      // pass will see the new ticket and take the append path below.
       if (inFlightAutoCreates.has(visitId)) {
-        // Another sibling is mid-create. Wait briefly and append later.
-        // (We'll get a chance on the next syncQueue tick.)
+        continue;
       }
       const existing = await fetchTicketByQueueEntry(visitId);
 
@@ -1350,10 +1382,49 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
       console.error('[syncQueue] auto-create ticket failed for', entry.id, err);
     }
   }
+
+  // ── orphan ticket-line cleanup ─────────────────────────────────────────
+  //
+  // When a queue entry that was previously assigned to a manicurist
+  // disappears WITHOUT being completed (e.g. cashier re-ran
+  // MultiServiceAssign with different staff, or manually removed the entry
+  // before the work started), the line we appended at assignment time is
+  // now orphaned — the ticket bills the client for a service the
+  // manicurist never performed. Sweep those lines out here.
+  //
+  // We only act on entries that were assigned in `prev`. The cleanup
+  // helper also cross-checks completed_services, so even if a service was
+  // performed via a different code path we won't delete its line.
+  const removedWithoutCompletion = prev.filter(
+    (p) =>
+      !!p.assignedManicuristId &&
+      !currentIds.has(p.id) &&
+      !completedIds.has(p.id),
+  );
+  for (const removed of removedWithoutCompletion) {
+    const visitId = removed.parentQueueId ?? removed.id;
+    const staffId = removed.assignedManicuristId;
+    if (!staffId) continue;
+    try {
+      const n = await removeOrphanTicketLines(visitId, staffId, removed.services);
+      if (n > 0) {
+        console.info(
+          `[syncQueue] removed ${n} orphan ticket line(s) for visit ${visitId} / staff ${staffId}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[syncQueue] orphan cleanup failed for', removed.id, err);
+    }
+  }
 }
 //ZZZTRASH â
 
-async function syncCompleted(completed: AppState['completed'], prev: AppState['completed'], onError: (msg: string) => void) {
+async function syncCompleted(
+  completed: AppState['completed'],
+  prev: AppState['completed'],
+  onError: (msg: string) => void,
+  salonServices: AppState['salonServices'],
+) {
   const prevById = new Map(prev.map((c) => [c.id, c]));
   const currentIds = new Set(completed.map((c) => c.id));
 
@@ -1412,11 +1483,80 @@ async function syncCompleted(completed: AppState['completed'], prev: AppState['c
     // staff fields are empty. The completed entry's id IS the original queue
     // entry's id (set deterministically in COMPLETE_SERVICE), so we use it to
     // find the matching open ticket.
+    //
+    // SAFETY NET: if no ticket exists for this queue entry yet (e.g. the
+    // service was completed without ever going through the standard
+    // "assign in queue" auto-create path), create one now so the register
+    // always reflects what was actually performed. Idempotent: we re-check
+    // existence inside the in-flight guard so siblings of a split-visit
+    // don't each create their own ticket.
     if (!previous && c.manicuristId) {
+      // The visit id is what tickets are keyed on. For non-split entries it
+      // equals c.id; for SPLIT_AND_ASSIGN children (`${parent}-mani-N` or
+      // `${parent}-waiting`) it strips the suffix down to the parent UUID.
+      // Using c.id here was the bug that let split-visit children miss the
+      // existing ticket and fall into the "append with allowDuplicates"
+      // path on every re-mount.
+      const visitId = getVisitId(c.id);
       try {
-        await backfillTicketStaff(c.id, c.manicuristId, c.manicuristName, c.manicuristColor);
+        await backfillTicketStaff(visitId, c.manicuristId, c.manicuristName, c.manicuristColor);
       } catch (err) {
         console.warn('[syncCompleted] backfillTicketStaff failed for', c.id, err);
+      }
+
+      if (!inFlightAutoCreates.has(visitId)) {
+        try {
+          const existing = await fetchTicketByQueueEntry(visitId);
+          if (!existing) {
+            inFlightAutoCreates.add(visitId);
+            const items = (c.services && c.services.length > 0 ? c.services : [''])
+              .filter((name) => name.trim().length > 0)
+              .map((svcName) => {
+                const svc = salonServices.find((s) => s.name === svcName);
+                return {
+                  name: svcName,
+                  serviceId: svc?.id ?? null,
+                  staff1Id: c.manicuristId,
+                  staff1Name: c.manicuristName,
+                  staff1Color: c.manicuristColor,
+                  unitPriceCents: Math.round((svc?.price ?? 0) * 100),
+                  quantity: 1,
+                };
+              });
+            // Only do anything if we have at least one service line.
+            if (items.length > 0) {
+              // Consolidation: if the same client already has an open
+              // ticket today, append these services to it instead of
+              // creating a duplicate. This keeps mani + pedi on one
+              // ticket for easy checkout.
+              const businessDate = getLocalDateStr(new Date(c.completedAt));
+              const sameClient = await findOpenTicketForClient(c.clientName, '', businessDate);
+              if (sameClient) {
+                await appendItemsToTicket(sameClient.id, items, { allowDuplicates: true });
+                if (!sameClient.primaryManicuristId) {
+                  await backfillTicketStaff(
+                    sameClient.queueEntryId ?? visitId,
+                    c.manicuristId,
+                    c.manicuristName,
+                    c.manicuristColor,
+                  );
+                }
+              } else {
+                await createTicketAtCheckin({
+                  queueEntryId: visitId,
+                  appointmentId: null,
+                  clientName: c.clientName,
+                  primaryManicuristId: c.manicuristId,
+                  primaryManicuristName: c.manicuristName,
+                  primaryManicuristColor: c.manicuristColor,
+                  items,
+                });
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[syncCompleted] fallback ticket create failed for', c.id, err);
+        }
       }
     }
   }
@@ -1650,61 +1790,4 @@ async function syncStaffSchedules(current: StaffScheduleEntry[], prev: StaffSche
   const removed = prev.filter((s) => !currentIds.has(s.id));
   if (removed.length > 0) {
     const { error } = await withRetry(() => supabase.from('staff_schedules').delete().in('id', removed.map((s) => s.id)));
-    if (error) { console.error('[syncStaffSchedules] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
-  const prevById = new Map(prev.map((s) => [s.id, s]));
-  const changed: ReturnType<typeof staffScheduleToRow>[] = [];
-  for (const s of current) {
-    const previous = prevById.get(s.id);
-    if (previous && staffScheduleUnchanged(previous, s)) continue;
-    changed.push(staffScheduleToRow(s));
-  }
-  if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from('staff_schedules').upsert(changed, { onConflict: 'id' }));
-  if (error) { console.error('[syncStaffSchedules] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-}
-
-function staffTimeOffToRow(t: StaffTimeOff) {
-  return {
-    id: t.id,
-    manicurist_id: t.manicuristId,
-    start_date: t.startDate,
-    end_date: t.endDate,
-    reason: t.reason,
-  };
-}
-
-function staffTimeOffUnchanged(a: StaffTimeOff, b: StaffTimeOff): boolean {
-  if (a === b) return true;
-  return (
-    a.manicuristId === b.manicuristId &&
-    a.startDate === b.startDate &&
-    a.endDate === b.endDate &&
-    a.reason === b.reason
-  );
-}
-
-async function syncStaffTimeOff(current: StaffTimeOff[], prev: StaffTimeOff[], onError: (msg: string) => void) {
-  const currentIds = new Set(current.map((t) => t.id));
-  const removed = prev.filter((t) => !currentIds.has(t.id));
-  if (removed.length > 0) {
-    const { error } = await withRetry(() => supabase.from('staff_time_off').delete().in('id', removed.map((t) => t.id)));
-    if (error) { console.error('[syncStaffTimeOff] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
-  const prevById = new Map(prev.map((t) => [t.id, t]));
-  const changed: ReturnType<typeof staffTimeOffToRow>[] = [];
-  for (const t of current) {
-    const previous = prevById.get(t.id);
-    if (previous && staffTimeOffUnchanged(previous, t)) continue;
-    changed.push(staffTimeOffToRow(t));
-  }
-  if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from('staff_time_off').upsert(changed, { onConflict: 'id' }));
-  if (error) { console.error('[syncStaffTimeOff] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-}
-
-export function useApp() {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used within AppProvider');
-  return ctx;
-}
+    if (error) { console.error('[s

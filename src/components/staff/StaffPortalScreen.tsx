@@ -68,17 +68,23 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     const d = new Date(dateStr + 'T12:00:00');
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   }
-  // Poll Supabase every 3s for live data (staff mode sync-back is disabled in AppContext)
+  // Live data for staff mode: subscribe to realtime changes on the same three
+  // tables admin syncs, plus an initial fetch on mount. Replaces the previous
+  // unconditional 3s poll, so the staff browser only round-trips when
+  // something actually changed.
   useEffect(() => {
-    const interval = setInterval(async () => {
+    let cancelled = false;
+
+    async function refresh() {
       try {
         const [{ data: staffRows, error: staffErr }, { data: queueRows, error: queueErr }, { data: completedRows }] = await Promise.all([
           supabase.from('manicurists').select('*'),
           supabase.from('queue_entries').select('*'),
           supabase.from('completed_services').select('*'),
         ]);
+        if (cancelled) return;
         if (staffErr || queueErr) {
-          console.error('[staff poll] DB error:', staffErr?.message || queueErr?.message);
+          console.error('[staff refresh] DB error:', staffErr?.message || queueErr?.message);
           return;
         }
         if (staffRows && queueRows) {
@@ -128,10 +134,27 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           });
         }
       } catch (e) {
-        console.error('[staff poll] error:', e);
+        if (!cancelled) console.error('[staff refresh] error:', e);
       }
-    }, 3000);
-    return () => clearInterval(interval);
+    }
+
+    // Initial fetch on mount so the portal has data before the first event.
+    void refresh();
+
+    // Realtime: any insert/update/delete on the three watched tables triggers
+    // a single refresh. Coarse-grained but matches the previous polling shape
+    // and stays consistent across all three tables in one round trip.
+    const channel = supabase
+      .channel('staff-portal-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'manicurists' },        () => { void refresh(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'queue_entries' },      () => { void refresh(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'completed_services' }, () => { void refresh(); })
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [dispatch]);
 
   // Get live data for this manicurist from state

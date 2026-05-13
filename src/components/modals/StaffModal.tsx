@@ -105,15 +105,21 @@ export default function StaffModal({ mode }: StaffModalProps) {
     if (!name.trim()) return;
     if (!isReceptionist && skills.length === 0) return;
 
+    // A staff member shows in the appointment book when they have at least one
+    // skill. This means a receptionist who is ALSO a manicurist (Panda, Kayla,
+    // etc.) shows up in the book, while a pure receptionist (no skills) does
+    // not. `isReceptionist` and skills are independent — a person can be both.
+    const showInBook = skills.length > 0;
+
     if (mode === 'edit' && editingStaff) {
       dispatch({
         type: 'UPDATE_MANICURIST',
         id: editingStaff.id,
         updates: {
           name: name.trim(), phone: phone.trim(), color,
-          skills: isReceptionist ? [] : skills,
+          skills,
           timeAdjustments, pinCode: pinCode.trim(),
-          isReceptionist, showInBook: !isReceptionist,
+          isReceptionist, showInBook,
           notificationBody: notificationBody.trim(),
         },
       });
@@ -123,7 +129,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
         name: name.trim(),
         color,
         phone: phone.trim(),
-        skills: isReceptionist ? [] : skills,
+        skills,
         clockedIn: false,
         clockInTime: null,
         totalTurns: 0,
@@ -140,7 +146,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
         breakStartTime: null,
         smsOptIn: false,
         isReceptionist,
-        showInBook: !isReceptionist,
+        showInBook,
         notificationBody: notificationBody.trim(),
       };
       dispatch({ type: 'ADD_MANICURIST', manicurist: newManicurist });
@@ -240,7 +246,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
               Receptionist
             </p>
             <p className="font-mono text-[10px] text-gray-400 mt-0.5">
-              No services needed — can book appointments &amp; has security access
+              Can book appointments &amp; has security access. Can also pick services below to work as a manicurist.
             </p>
           </div>
           <div className={`w-10 h-6 rounded-full transition-all relative flex-shrink-0 ml-4 ${isReceptionist ? 'bg-indigo-500' : 'bg-gray-200'}`}>
@@ -269,10 +275,10 @@ export default function StaffModal({ mode }: StaffModalProps) {
           </div>
         </div>
 
-        {!isReceptionist && <div>
+        <div>
           <div className="flex items-center justify-between mb-2">
             <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider">
-              SERVICES
+              SERVICES {isReceptionist && <span className="text-gray-300 font-normal normal-case ml-1">(optional for receptionists)</span>}
             </label>
             <div className="flex gap-2">
               <button
@@ -411,7 +417,7 @@ export default function StaffModal({ mode }: StaffModalProps) {
               })}
             </div>
           )}
-        </div>}
+        </div>
 
         <button
           type="submit"

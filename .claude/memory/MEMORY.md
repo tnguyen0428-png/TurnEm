@@ -1,5 +1,5 @@
 # Memory Index
-_Last updated: 2026-04-23_
+_Last updated: 2026-05-12_
 
 - [Profile](profile.md) — Tony Nguyen, runs TurnEm salon app, email: tnguyen0428@gmail.com
 - [TurnEmApp](turnem-app.md) — React/Vite/Supabase salon queue management app, Vercel deployment

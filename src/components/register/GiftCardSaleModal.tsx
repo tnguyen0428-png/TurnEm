@@ -27,19 +27,23 @@ export default function GiftCardSaleModal({ onClose, onAdd }: Props) {
 
   const [serial, setSerial] = useState<string>('…');
   const [valueInput, setValueInput] = useState<string>('0.00');
-  const [staffId, setStaffId] = useState<string>('');
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Sorted staff list — receptionists first (when the flag is set), then
-  // everyone else, so the cashier sees front-desk choices at the top.
-  const staff = useMemo(() => {
-    const all = [...state.manicurists].sort((a, b) => a.name.localeCompare(b.name));
-    return [
-      ...all.filter((m) => m.isReceptionist),
-      ...all.filter((m) => !m.isReceptionist),
-    ];
-  }, [state.manicurists]);
+  // Only receptionists can sell a gift card — they're the only role that
+  // processes tickets at the front desk.
+  const receptionists = useMemo(
+    () =>
+      [...state.manicurists]
+        .filter((m) => m.isReceptionist)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [state.manicurists],
+  );
+
+  // Auto-select when there's exactly one receptionist; otherwise the user picks.
+  const [staffId, setStaffId] = useState<string>(() =>
+    receptionists.length === 1 ? receptionists[0].id : '',
+  );
 
   // Pull the next sequential serial when the modal mounts.
   useEffect(() => {
@@ -117,18 +121,26 @@ export default function GiftCardSaleModal({ onClose, onAdd }: Props) {
 
           <div>
             <label className="font-mono text-sm tracking-wider font-semibold text-gray-400 uppercase">Sold By</label>
-            <select
-              value={staffId}
-              onChange={(e) => { setStaffId(e.target.value); setError(null); }}
-              className="mt-1 w-full px-3 py-2.5 rounded-lg border border-gray-200 font-mono text-base bg-white focus:outline-none focus:border-pink-400"
-            >
-              <option value="">— Select staff —</option>
-              {staff.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}{m.isReceptionist ? ' (front desk)' : ''}
-                </option>
-              ))}
-            </select>
+            {receptionists.length === 0 ? (
+              <p className="mt-1 px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 font-mono text-sm">
+                No receptionist set up. Mark a staff member as a receptionist in Blueprint to sell gift cards.
+              </p>
+            ) : receptionists.length === 1 ? (
+              <div className="mt-1 px-3 py-2.5 rounded-lg border border-gray-200 bg-gray-50 font-mono text-base text-gray-700">
+                {receptionists[0].name}
+              </div>
+            ) : (
+              <select
+                value={staffId}
+                onChange={(e) => { setStaffId(e.target.value); setError(null); }}
+                className="mt-1 w-full px-3 py-2.5 rounded-lg border border-gray-200 font-mono text-base bg-white focus:outline-none focus:border-pink-400"
+              >
+                <option value="">— Select receptionist —</option>
+                {receptionists.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div>
@@ -153,7 +165,6 @@ export default function GiftCardSaleModal({ onClose, onAdd }: Props) {
           )}
         </div>
 
-        {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-2">
           <button
             onClick={onClose}

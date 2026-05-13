@@ -1,5 +1,5 @@
 # TurnEmApp — Project Context
-_Last updated: 2026-04-23_
+_Last updated: 2026-05-12_
 
 ## Stack
 - React + TypeScript + Vite (dual entry: index.html + staff.html)
@@ -12,6 +12,8 @@ _Last updated: 2026-04-23_
 - `src/state/reducer.ts` — all app actions
 - `src/components/queue/ManicuristCard.tsx` — main queue card
 - `src/components/staff/StaffPortalScreen.tsx` — staff-facing portal (polls DB every 3s)
+- `src/components/register/RegisterScreen.tsx` — register tab; loads tickets first then reconciles in a background effect (do NOT block paint on reconcile)
+- `src/lib/tickets.ts` — tickets data layer; `reconcileMissingTicketsForDate` uses an in-memory phone/name Map to avoid per-iteration Supabase round trips
 - `public/lunch-break.webp` — break animation shown on staff portal
 - `vercel.json` — SPA rewrite rules (must exclude static assets like .webp, .gif, .png)
 
@@ -21,6 +23,16 @@ _Last updated: 2026-04-23_
 - `withRetry` wrapper on all Supabase writes (3 retries, 2s delay)
 - `break_start_time` stored as bigint (milliseconds) in DB — send as Number(), not ISO string
 - Git has a stale index.lock issue; use `GIT_INDEX_FILE=/tmp/alt-index` workaround if needed
+- Register reconcile (sweep completed services → create/append tickets) runs in a background `useEffect`, not on the critical path. Don't move it back inline.
+
+## Register module (src/components/register/)
+- `RegisterScreen.tsx` — list view with sort (time/total/number/client/staff)
+- `TicketModal.tsx` — single-ticket open/close/void flow with line-item editor
+- `CloseShiftScreen.tsx` — 5-tab close-shift with open-ticket guard
+- `OpenShiftModal.tsx` — bills-only opening cash count
+- `GiftCardSaleModal.tsx` — gift cert sale; allocates serial from `nextGiftCardSerial`
+- `MoneyCountTable.tsx` — shared denomination grid (props: hideCoins, billsAscending, hideTotal)
+- `ReceptionistClockModal.tsx` — clock in/out picker, writes to local clockLog ledger
 
 ## Supabase Schema Notes
 - `manicurists.break_start_time` = bigint (milliseconds), NOT timestamptz

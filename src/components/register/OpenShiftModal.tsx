@@ -55,13 +55,24 @@ export default function OpenShiftModal({ onClose, onOpened }: Props) {
             Count the cash in the drawer by denomination. The total below becomes
             the opening balance.
           </p>
-          <MoneyCountTable value={count} onChange={setCount} />
+          <MoneyCountTable
+            value={count}
+            onChange={setCount}
+            hideCoins
+            billsAscending
+            hideTotal
+          />
           {error && <p className="font-mono text-xs text-red-500">{error}</p>}
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
-          <span className="font-mono text-xs text-gray-500">
-            Starting cash: <span className="font-bold text-gray-900">{formatMoneyCents(totalCents)}</span>
-          </span>
+          <div className="flex flex-col">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">
+              Starting cash
+            </span>
+            <span className="font-mono text-2xl font-bold text-emerald-600">
+              {formatMoneyCents(totalCents)}
+            </span>
+          </div>
           <div className="flex gap-2">
             <button onClick={onClose}
               className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50">

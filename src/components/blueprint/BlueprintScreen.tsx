@@ -1,8 +1,13 @@
 import { useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
-  Clock3, ChevronRight, GripVertical, KeyRound,
+  Clock3, ChevronRight, GripVertical, KeyRound, BarChart3,
+  DollarSign, XCircle, UserCheck,
 } from 'lucide-react';
+import ReceptionistHoursReport from './ReceptionistHoursReport';
+import SalesReport from './SalesReport';
+import CancellationReport from './CancellationReport';
+import EmployeeReport from './EmployeeReport';
 import { PinVerifyModal } from '../shared/AdminPinGate';
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
@@ -28,7 +33,11 @@ type BlueprintSection =
   | 'block-time'
   | 'security'
   | 'services'
-  | 'criteria';
+  | 'criteria'
+  | 'reports-receptionist'
+  | 'reports-sales'
+  | 'reports-cancellation'
+  | 'reports-employee';
 
 interface NavItem {
   id: BlueprintSection;
@@ -58,6 +67,15 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     items: [
       { id: 'services', label: 'Services', icon: Sparkles, description: 'Manage service types and pricing' },
       { id: 'criteria', label: 'Criteria', icon: Scale,    description: 'Turn assignment rules and priority' },
+    ],
+  },
+  {
+    heading: 'REPORTS',
+    items: [
+      { id: 'reports-sales',        label: 'Sales',              icon: DollarSign, description: 'Daily / weekly sales totals and payment mix' },
+      { id: 'reports-cancellation', label: 'Cancellations',      icon: XCircle,    description: 'Voided tickets, cancellations, no-shows' },
+      { id: 'reports-employee',     label: 'Employee',           icon: UserCheck,  description: 'Per-employee sales, services, tips, hours' },
+      { id: 'reports-receptionist', label: 'Receptionist Hours', icon: BarChart3,  description: 'Clock-in / clock-out log for receptionists' },
     ],
   },
 ];
@@ -297,6 +315,10 @@ export default function BlueprintScreen() {
       case 'security':         return <SecurityScreen />;
       case 'services':         return <ServicesScreen />;
       case 'criteria':         return <CriteriaScreen />;
+      case 'reports-sales':        return <SalesReport />;
+      case 'reports-cancellation': return <CancellationReport />;
+      case 'reports-employee':     return <EmployeeReport />;
+      case 'reports-receptionist': return <ReceptionistHoursReport />;
       default: return null;
     }
   }
@@ -334,7 +356,6 @@ export default function BlueprintScreen() {
           ))}
         </nav>
       </div>
-
       {/* ── Content ──────────────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
         {activeItem && (

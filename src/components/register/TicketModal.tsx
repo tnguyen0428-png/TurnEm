@@ -78,7 +78,17 @@ export default function TicketModal({
   const isVoided = ticket.status === 'voided';
 
   // ─── Header state ─────────────────────────────────────────────────────────
-  const [clientName, setClientName] = useState(ticket.clientName);
+  // Split the stored single-string client name into first/last on first render.
+  // We persist it back as `${first} ${last}`.trim() so the data layer is unchanged.
+  const [clientFirstName, setClientFirstName] = useState(() => {
+    const idx = ticket.clientName.indexOf(' ');
+    return idx === -1 ? ticket.clientName : ticket.clientName.slice(0, idx);
+  });
+  const [clientLastName, setClientLastName] = useState(() => {
+    const idx = ticket.clientName.indexOf(' ');
+    return idx === -1 ? '' : ticket.clientName.slice(idx + 1);
+  });
+  const clientName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim();
   const [clientPhone, setClientPhone] = useState(ticket.clientPhone);
   const [primaryManicuristId, setPrimaryManicuristId] = useState<string | null>(
     ticket.primaryManicuristId,
@@ -272,10 +282,20 @@ export default function TicketModal({
     }));
   }
 
+  // True if any discount (line-level OR ticket-level) is currently applied.
+  const hasAnyDiscount =
+    ticketDiscountCents > 0 ||
+    lines.some((l) => parseDollarsToCents(l.discountInput) > 0);
+
   async function doSave(): Promise<Ticket | null> {
     setError(null);
     if (lines.some((l) => !l.name.trim())) {
       setError('Every line needs a name.');
+      return null;
+    }
+    if (hasAnyDiscount && !note.trim()) {
+      setError('A note is required when a discount is applied. Add a note explaining the discount.');
+      setShowNote(true);
       return null;
     }
     setBusy('saving');
@@ -366,75 +386,87 @@ export default function TicketModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Show the note inline only when there's content (or when the user explicitly
+  // expands it). Keeps the default view compact so the whole ticket fits without
+  // scrolling.
+  const [showNote, setShowNote] = useState(() => Boolean(ticket.note));
+
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col animate-modal-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-3">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[96vh] flex flex-col animate-modal-in">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <div className="flex items-baseline gap-4">
+        <div className="px-5 py-2.5 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-baseline gap-3">
             <h2 className="font-bebas text-2xl tracking-widest text-gray-900">TICKET</h2>
-            <span className="font-mono text-sm text-gray-400">#{ticket.ticketNumber}</span>
-            <span className="font-mono text-sm text-gray-400">{ticket.businessDate}</span>
+            <span className="font-mono text-xs text-gray-400">#{ticket.ticketNumber}</span>
+            <span className="font-mono text-xs text-gray-400">{formatBusinessDate(ticket.businessDate)}</span>
             {ticket.status === 'closed' && (
-              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-mono text-sm font-bold tracking-wider">CLOSED</span>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-mono text-xs font-bold tracking-wider">CLOSED</span>
             )}
             {isVoided && (
-              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-mono text-sm font-bold tracking-wider">VOID</span>
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-mono text-xs font-bold tracking-wider">VOID</span>
             )}
             {isOpen && (
-              <span className="px-2 py-0.5 rounded-full bg-pink-100 text-pink-600 font-mono text-sm font-bold tracking-wider">OPEN</span>
+              <span className="px-2 py-0.5 rounded-full bg-pink-100 text-pink-600 font-mono text-xs font-bold tracking-wider">OPEN</span>
             )}
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
             <X size={18} />
           </button>
         </div>
 
-        {/* Body — two column on lg, single column on sm */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
+        {/* Body — two column on lg, single column on sm.
+            min-h-0 + the inner column's overflow rule lets only the line items
+            scroll if there are a lot of them, keeping totals/payments visible. */}
+        <div className="flex-1 min-h-0 px-5 py-3">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4 h-full">
             {/* Left column — header + items */}
-            <div className="flex flex-col gap-4">
-              {/* Client + manicurist */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="font-mono text-sm tracking-wider font-semibold text-gray-400 uppercase">Client</label>
+            <div className="flex flex-col gap-2 min-h-0">
+              {/* Client + manicurist — compact single row */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <Field label="First Name">
                   <input
-                    type="text" value={clientName} onChange={(e) => setClientName(e.target.value)}
+                    type="text" value={clientFirstName} onChange={(e) => setClientFirstName(e.target.value)}
                     disabled={!isOpen}
-                    className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
                     placeholder="Walk-in"
                   />
-                </div>
-                <div>
-                  <label className="font-mono text-sm tracking-wider font-semibold text-gray-400 uppercase">Phone</label>
+                </Field>
+                <Field label="Last Name">
+                  <input
+                    type="text" value={clientLastName} onChange={(e) => setClientLastName(e.target.value)}
+                    disabled={!isOpen}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
+                    placeholder="—"
+                  />
+                </Field>
+                <Field label="Phone">
                   <input
                     type="tel" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)}
                     disabled={!isOpen}
-                    className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
                     placeholder="(555) 555-5555"
                   />
-                </div>
-                <div>
-                  <label className="font-mono text-sm tracking-wider font-semibold text-gray-400 uppercase">Primary Staff</label>
+                </Field>
+                <Field label="Primary Staff">
                   <select
                     value={primaryManicuristId ?? ''}
                     onChange={(e) => setPrimaryManicuristId(e.target.value || null)}
                     disabled={!isOpen}
-                    className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
                   >
                     <option value="">—</option>
                     {manicurists.map((m) => (
                       <option key={m.id} value={m.id}>{m.name}</option>
                     ))}
                   </select>
-                </div>
+                </Field>
               </div>
 
-              {/* Line items grid */}
-              <div className="border border-gray-100 rounded-xl overflow-hidden">
-                <div className="grid grid-cols-[60px_1fr_140px_100px_100px_100px_36px] gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100 text-sm tracking-wider font-mono font-semibold text-gray-400 uppercase">
+              {/* Line items grid — scrolls inside if needed so the rest stays in view */}
+              <div className="border border-gray-100 rounded-xl overflow-hidden flex flex-col min-h-0">
+                <div className="grid grid-cols-[50px_1fr_130px_90px_90px_90px_30px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 text-[11px] tracking-wider font-mono font-semibold text-gray-400 uppercase">
                   <span className="text-center">Qty</span>
                   <span>Service</span>
                   <span>Staff</span>
@@ -443,84 +475,87 @@ export default function TicketModal({
                   <span className="text-right">Ext</span>
                   <span></span>
                 </div>
-                {lines.length === 0 ? (
-                  <div className="px-3 py-6 text-center font-mono text-sm text-gray-400">
-                    No line items yet.
-                  </div>
-                ) : (
-                  lines.map((line, idx) => {
-                    const ext = computeLineExt({
-                      unitPriceCents: parseDollarsToCents(line.priceInput),
-                      quantity: line.quantity,
-                      discountCents: parseDollarsToCents(line.discountInput),
-                    });
-                    return (
-                      <div
-                        key={idx}
-                        className="grid grid-cols-[60px_1fr_140px_100px_100px_100px_36px] gap-2 items-center px-3 py-2 border-b border-gray-50 last:border-b-0"
-                      >
-                        <input
-                          type="number" min={1} step={1} value={line.quantity}
-                          onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value || '1', 10)) })}
-                          disabled={!isOpen}
-                          className="px-2 py-1.5 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-center focus:outline-none disabled:bg-gray-50"
-                        />
-                        <input
-                          type="text" value={line.name}
-                          onChange={(e) => updateLine(idx, { name: e.target.value })}
-                          disabled={!isOpen}
-                          placeholder="Service name"
-                          className="px-2 py-1.5 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm focus:outline-none disabled:bg-gray-50"
-                        />
-                        <select
-                          value={line.staff1Id ?? ''}
-                          onChange={(e) => {
-                            const m = manicuristById(e.target.value || null);
-                            updateLine(idx, {
-                              staff1Id: m?.id ?? null,
-                              staff1Name: m?.name ?? '',
-                              staff1Color: m?.color ?? '#9ca3af',
-                            });
-                          }}
-                          disabled={!isOpen}
-                          className="px-2 py-1.5 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm focus:outline-none disabled:bg-gray-50"
+                <div className="flex-1 min-h-0 overflow-y-auto">
+                  {lines.length === 0 ? (
+                    <div className="px-3 py-4 text-center font-mono text-xs text-gray-400">
+                      No line items yet.
+                    </div>
+                  ) : (
+                    lines.map((line, idx) => {
+                      const ext = computeLineExt({
+                        unitPriceCents: parseDollarsToCents(line.priceInput),
+                        quantity: line.quantity,
+                        discountCents: parseDollarsToCents(line.discountInput),
+                      });
+                      return (
+                        <div
+                          key={idx}
+                          className="grid grid-cols-[50px_1fr_130px_90px_90px_90px_30px] gap-2 items-center px-3 py-1 border-b border-gray-50 last:border-b-0"
                         >
-                          <option value="">—</option>
-                          {manicurists.map((m) => (
-                            <option key={m.id} value={m.id}>{m.name}</option>
-                          ))}
-                        </select>
-                        <input
-                          type="text" inputMode="decimal" value={line.priceInput}
-                          onChange={(e) => updateLine(idx, { priceInput: e.target.value })}
-                          onBlur={(e) => updateLine(idx, { priceInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
-                          disabled={!isOpen}
-                          className="px-2 py-1.5 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-gray-50"
-                        />
-                        <input
-                          type="text" inputMode="decimal" value={line.discountInput}
-                          onChange={(e) => updateLine(idx, { discountInput: e.target.value })}
-                          onBlur={(e) => updateLine(idx, { discountInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
-                          disabled={!isOpen}
-                          className="px-2 py-1.5 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-gray-50"
-                        />
-                        <span className="px-2 py-1.5 font-mono text-sm font-semibold text-gray-900 text-right">
-                          {formatMoneyCents(ext)}
-                        </span>
-                        {isOpen ? (
-                          <button onClick={() => removeLine(idx)}
-                            className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors">
-                            <Trash2 size={14} />
-                          </button>
-                        ) : <span />}
-                      </div>
-                    );
-                  })
-                )}
+                          <input
+                            type="number" min={1} step={1} value={line.quantity}
+                            onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value || '1', 10)) })}
+                            disabled={!isOpen}
+                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-center focus:outline-none disabled:bg-gray-50"
+                          />
+                          <input
+                            type="text" value={line.name}
+                            onChange={(e) => updateLine(idx, { name: e.target.value })}
+                            disabled={!isOpen}
+                            placeholder="Service name"
+                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm focus:outline-none disabled:bg-gray-50"
+                          />
+                          <select
+                            value={line.staff1Id ?? ''}
+                            onChange={(e) => {
+                              const m = manicuristById(e.target.value || null);
+                              updateLine(idx, {
+                                staff1Id: m?.id ?? null,
+                                staff1Name: m?.name ?? '',
+                                staff1Color: m?.color ?? '#9ca3af',
+                              });
+                            }}
+                            disabled={!isOpen}
+                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm focus:outline-none disabled:bg-gray-50"
+                          >
+                            <option value="">—</option>
+                            {manicurists.map((m) => (
+                              <option key={m.id} value={m.id}>{m.name}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text" inputMode="decimal" value={line.priceInput}
+                            onChange={(e) => updateLine(idx, { priceInput: e.target.value })}
+                            onBlur={(e) => updateLine(idx, { priceInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
+                            disabled={!isOpen}
+                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-gray-50"
+                          />
+                          <input
+                            type="text" inputMode="decimal" value={line.discountInput}
+                            onChange={(e) => updateLine(idx, { discountInput: e.target.value })}
+                            onBlur={(e) => updateLine(idx, { discountInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
+                            disabled={!isOpen || !note.trim()}
+                            title={!note.trim() ? 'Add a note before applying a discount.' : undefined}
+                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                          />
+                          <span className="px-1.5 py-1 font-mono text-sm font-semibold text-gray-900 text-right">
+                            {formatMoneyCents(ext)}
+                          </span>
+                          {isOpen ? (
+                            <button onClick={() => removeLine(idx)}
+                              className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+                              <Trash2 size={14} />
+                            </button>
+                          ) : <span />}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
 
                 {/* Add line */}
                 {isOpen && (
-                  <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-center px-3 py-2.5 bg-gray-50/60 border-t border-gray-100">
+                  <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-center px-3 py-1.5 bg-gray-50/60 border-t border-gray-100">
                     <select
                       value="" onChange={(e) => e.target.value && addCatalogService(e.target.value)}
                       className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:border-gray-400"
@@ -531,37 +566,53 @@ export default function TicketModal({
                       ))}
                     </select>
                     <button onClick={addBlankCustomLine}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-white font-mono text-sm font-semibold transition-colors">
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-white font-mono text-xs font-semibold transition-colors">
                       <Plus size={14} /> CUSTOM
                     </button>
                     <button onClick={() => setShowGiftModal(true)}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-pink-200 bg-pink-50 text-pink-700 hover:bg-pink-100 hover:border-pink-300 font-mono text-sm font-semibold transition-colors">
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-pink-200 bg-pink-50 text-pink-700 hover:bg-pink-100 hover:border-pink-300 font-mono text-xs font-semibold transition-colors">
                       <Plus size={14} /> GIFT
                     </button>
                   </div>
                 )}
               </div>
 
-              {/* Note */}
-              <div>
-                <label className="font-mono text-sm tracking-wider font-semibold text-gray-400 uppercase">Note</label>
-                <textarea
-                  value={note} onChange={(e) => setNote(e.target.value)}
-                  disabled={!isOpen} rows={2}
-                  className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 resize-none disabled:bg-gray-50"
-                  placeholder="e.g. redeemed gift card #1234"
-                />
-              </div>
+              {/* Note — collapsed by default, expandable to keep the layout compact */}
+              {showNote ? (
+                <div className="flex items-start gap-2">
+                  <input
+                    type="text"
+                    value={note} onChange={(e) => setNote(e.target.value)}
+                    disabled={!isOpen}
+                    className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50"
+                    placeholder="Note…"
+                  />
+                  {isOpen && !note && (
+                    <button onClick={() => setShowNote(false)}
+                      className="px-2 py-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 font-mono text-xs">
+                      ×
+                    </button>
+                  )}
+                </div>
+              ) : (
+                isOpen && (
+                  <button onClick={() => setShowNote(true)}
+                    className="self-start px-2 py-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-50 font-mono text-xs">
+                    + Add note
+                  </button>
+                )
+              )}
             </div>
 
             {/* Right column — totals + payments */}
-            <div className="flex flex-col gap-3">
-              <div className="bg-gray-50 rounded-xl p-4 flex flex-col gap-2">
+            <div className="flex flex-col gap-2 min-h-0 overflow-y-auto">
+              <div className="bg-gray-50 rounded-xl p-3 flex flex-col gap-1.5">
                 <Row label="Subtotal" value={formatMoneyCents(subtotalCents)} />
                 <RowEdit label="Discount" value={ticketDiscountInput}
                   onChange={(v) => setTicketDiscountInput(v)}
                   onBlur={(v) => setTicketDiscountInput((parseDollarsToCents(v) / 100).toFixed(2))}
-                  disabled={!isOpen} />
+                  disabled={!isOpen || !note.trim()}
+                  title={!isOpen ? undefined : (!note.trim() ? 'Add a note before applying a discount.' : undefined)} />
                 <RowEdit label="Tax" value={taxInput}
                   onChange={(v) => setTaxInput(v)}
                   onBlur={(v) => setTaxInput((parseDollarsToCents(v) / 100).toFixed(2))}
@@ -570,7 +621,7 @@ export default function TicketModal({
                   onChange={(v) => setTipInput(v)}
                   onBlur={(v) => setTipInput((parseDollarsToCents(v) / 100).toFixed(2))}
                   disabled={!isOpen} />
-                <div className="border-t border-gray-200 my-1" />
+                <div className="border-t border-gray-200 my-0.5" />
                 <Row label="Total" value={formatMoneyCents(totalCents)} bold />
                 <Row
                   label="Payments"
@@ -587,19 +638,19 @@ export default function TicketModal({
               {/* Payments — open ticket lets you queue tenders; closed shows captured */}
               {isOpen ? (
                 <>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-1.5">
                     <PayBtn label="Cash" tone="cash" onClick={() => addPending('cash')} />
-                    <PayBtn label="Credit Card" tone="card" onClick={() => addPending('visa_mc')} />
+                    <PayBtn label="Card" tone="card" onClick={() => addPending('visa_mc')} />
                     <PayBtn label="Gift" tone="gift" onClick={() => addPending('gift')} />
                   </div>
                   {pending.length > 0 && (
                     <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
                       {pending.map((p, idx) => (
-                        <div key={idx} className="px-3 py-2 flex items-center gap-2">
-                          <span className="font-mono text-sm font-bold text-gray-500 w-20">
-                            {p.method === 'visa_mc' ? 'CREDIT CARD' : p.method.toUpperCase()}
+                        <div key={idx} className="px-2.5 py-1.5 flex items-center gap-1.5">
+                          <span className="font-mono text-[11px] font-bold text-gray-500 w-14">
+                            {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
                           </span>
-                          <span className="font-mono text-sm text-gray-400">$</span>
+                          <span className="font-mono text-xs text-gray-400">$</span>
                           <input
                             type="text" inputMode="decimal" value={p.amountInput}
                             onChange={(e) => patchPending(idx, { amountInput: e.target.value })}
@@ -613,8 +664,8 @@ export default function TicketModal({
                         </div>
                       ))}
                       {pending.some((p) => p.method === 'cash') && (
-                        <div className="px-3 py-2">
-                          <label className="font-mono text-sm tracking-wider text-gray-400 uppercase">Tendered (cash)</label>
+                        <div className="px-2.5 py-1.5">
+                          <label className="font-mono text-[10px] tracking-wider text-gray-400 uppercase">Tendered (cash)</label>
                           {pending.map((p, idx) =>
                             p.method !== 'cash' ? null : (
                               <input
@@ -622,7 +673,7 @@ export default function TicketModal({
                                 value={p.tenderedInput ?? ''}
                                 onChange={(e) => patchPending(idx, { tenderedInput: e.target.value })}
                                 onBlur={(e) => patchPending(idx, { tenderedInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
-                                className="mt-1 w-full px-2 py-1 rounded-md border border-gray-200 font-mono text-sm text-right focus:outline-none focus:border-gray-400"
+                                className="mt-0.5 w-full px-2 py-1 rounded-md border border-gray-200 font-mono text-sm text-right focus:outline-none focus:border-gray-400"
                                 placeholder="0.00"
                               />
                             ),
@@ -630,15 +681,15 @@ export default function TicketModal({
                         </div>
                       )}
                       {pending.some((p) => p.method === 'gift') && (
-                        <div className="px-3 py-2">
-                          <label className="font-mono text-sm tracking-wider text-gray-400 uppercase">Gift card code</label>
+                        <div className="px-2.5 py-1.5">
+                          <label className="font-mono text-[10px] tracking-wider text-gray-400 uppercase">Gift card code</label>
                           {pending.map((p, idx) =>
                             p.method !== 'gift' ? null : (
                               <input
                                 key={idx} type="text"
                                 value={p.giftCardCode ?? ''}
                                 onChange={(e) => patchPending(idx, { giftCardCode: e.target.value })}
-                                className="mt-1 w-full px-2 py-1 rounded-md border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400"
+                                className="mt-0.5 w-full px-2 py-1 rounded-md border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400"
                                 placeholder="GC-####"
                               />
                             ),
@@ -651,12 +702,12 @@ export default function TicketModal({
               ) : (
                 <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
                   {ticket.payments.length === 0 ? (
-                    <div className="px-3 py-3 font-mono text-sm text-gray-400 text-center">No payments captured.</div>
+                    <div className="px-3 py-2 font-mono text-xs text-gray-400 text-center">No payments captured.</div>
                   ) : (
                     ticket.payments.map((p) => (
-                      <div key={p.id} className="px-3 py-2 flex items-center justify-between">
-                        <span className="font-mono text-sm font-bold text-gray-500">
-                          {p.method === 'visa_mc' ? 'CREDIT CARD' : p.method.toUpperCase()}
+                      <div key={p.id} className="px-2.5 py-1.5 flex items-center justify-between">
+                        <span className="font-mono text-xs font-bold text-gray-500">
+                          {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
                         </span>
                         <span className="font-mono text-sm text-gray-900">{formatMoneyCents(p.amountCents)}</span>
                       </div>
@@ -668,14 +719,12 @@ export default function TicketModal({
           </div>
         </div>
 
-        {/* Footer — simplified action row.
-            Open ticket: [Discounts] [Delete Line] [Cust History] [Book Appt] | [Void] [Process]
-            Closed/voided ticket: [Cust History] [Book Appt] | [Close] */}
-        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
-          {error && <p className="font-mono text-sm text-red-500 w-full sm:w-auto">{error}</p>}
+        {/* Footer — simplified action row. */}
+        <div className="px-5 py-2.5 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+          {error && <p className="font-mono text-xs text-red-500 w-full sm:w-auto">{error}</p>}
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <FooterBtn
-              label="CUST HISTORY"
+              label="HISTORY"
               onClick={() => onShowCustomerHistory?.(clientPhone, clientName)}
               disabled={!onShowCustomerHistory || busy !== 'idle'}
             />
@@ -688,18 +737,18 @@ export default function TicketModal({
               <>
                 <span className="w-px h-6 bg-gray-200 mx-1" />
                 <button onClick={handleVoid} disabled={busy !== 'idle'}
-                  className="px-3 py-2 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 font-mono text-xs font-bold disabled:opacity-50">
+                  className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 font-mono text-xs font-bold disabled:opacity-50">
                   {busy === 'voiding' ? 'VOIDING…' : 'VOID'}
                 </button>
                 <button onClick={handleProcess} disabled={busy !== 'idle'}
-                  className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50">
+                  className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50">
                   {busy === 'processing' ? 'PROCESSING…' : 'PROCESS'}
                 </button>
               </>
             )}
             {!isOpen && (
               <button onClick={onClose}
-                className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800">
+                className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800">
                 CLOSE
               </button>
             )}
@@ -716,37 +765,70 @@ export default function TicketModal({
   );
 }
 
+// ── helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Format a YYYY-MM-DD business-date string as "Month Day, Year"
+ * (e.g. "2026-05-12" → "May 12, 2026"). Falls back to the raw input
+ * if the string doesn't look like a date.
+ */
+function formatBusinessDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10) - 1;
+  const day = parseInt(m[3], 10);
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  if (month < 0 || month > 11) return iso;
+  return `${months[month]} ${day}, ${year}`;
+}
+
 // ── small row primitives for the totals column ────────────────────────────
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <label className="font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">{label}</label>
+      {children}
+    </div>
+  );
+}
 
 function Row({ label, value, bold, highlight }: { label: string; value: string; bold?: boolean; highlight?: boolean }) {
   return (
     <div className="flex items-center justify-between">
-      <span className={`font-mono text-sm ${bold ? 'font-bold text-gray-900' : 'text-gray-500'}`}>{label}</span>
+      <span className={`font-mono text-xs ${bold ? 'font-bold text-gray-900' : 'text-gray-500'}`}>{label}</span>
       <span className={`font-mono text-sm ${bold ? 'font-bold' : ''} ${highlight ? 'text-pink-600' : 'text-gray-900'}`}>{value}</span>
     </div>
   );
 }
 
 function RowEdit({
-  label, value, onChange, onBlur, disabled,
+  label, value, onChange, onBlur, disabled, title,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   onBlur: (v: string) => void;
   disabled?: boolean;
+  /** Native tooltip shown on hover — used to explain why a row is disabled. */
+  title?: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="font-mono text-sm text-gray-500">{label}</span>
+    <div className="flex items-center justify-between gap-2" title={title}>
+      <span className="font-mono text-xs text-gray-500">{label}</span>
       <div className="flex items-center gap-1">
-        <span className="font-mono text-sm text-gray-400">$</span>
+        <span className="font-mono text-xs text-gray-400">$</span>
         <input
           type="text" inputMode="decimal" value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={(e) => onBlur(e.target.value)}
           disabled={disabled}
-          className="w-20 px-2 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-transparent bg-white"
+          title={title}
+          className="w-20 px-2 py-0.5 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-transparent bg-white disabled:text-gray-400 disabled:cursor-not-allowed"
         />
       </div>
     </div>
@@ -773,7 +855,7 @@ function PayBtn({
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-2.5 rounded-lg border ${toneClasses} font-bebas text-base tracking-widest transition-colors`}
+      className={`px-2 py-2 rounded-lg border ${toneClasses} font-bebas text-base tracking-widest transition-colors`}
     >
       {label}
     </button>
