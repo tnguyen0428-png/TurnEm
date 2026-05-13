@@ -5,6 +5,7 @@
 // breakdown table.
 
 import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Shift, Ticket } from '../../types';
 import { fetchTicketsForRange } from '../../lib/tickets';
 import { fetchShiftsForRange } from '../../lib/shifts';
@@ -33,6 +34,7 @@ export default function SalesReport() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null);
   const { state } = useApp();
 
   useEffect(() => {
@@ -305,6 +307,128 @@ export default function SalesReport() {
         )}
       </div>
 
+      {/* Ticket detail — every processed (closed) ticket in the range. Click a
+          row to expand its line items + payment breakdown so the day's
+          archive is reviewable from one place after close-out. */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">TICKETS</h3>
+          <span className="font-mono text-[10px] text-gray-400">
+            {closed.length} processed · {formatMoney(summary.grossCents)} total
+          </span>
+        </div>
+        {closed.length === 0 ? (
+          <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">
+            {loading ? 'Loading…' : 'No processed tickets in this range.'}
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-[70px_110px_70px_1fr_1fr_80px_80px_90px_100px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+              <span>Ticket</span>
+              <span>Date</span>
+              <span>Time</span>
+              <span>Client</span>
+              <span>Primary Staff</span>
+              <span className="text-right">Items</span>
+              <span className="text-right">Tip</span>
+              <span className="text-right">Discount</span>
+              <span className="text-right">Total</span>
+            </div>
+            {[...closed]
+              .sort((a, b) => (b.closedAt ?? b.openedAt) - (a.closedAt ?? a.openedAt))
+              .map((t) => {
+                const expanded = expandedTicketId === t.id;
+                const lineDiscount = t.items.reduce((s, it) => s + (it.discountCents || 0), 0);
+                const totalDiscount = (t.discountCents || 0) + lineDiscount;
+                const whenMs = t.closedAt ?? t.openedAt;
+                return (
+                  <div key={t.id} className="border-b border-gray-50 last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedTicketId(expanded ? null : t.id)}
+                      className="w-full grid grid-cols-[70px_110px_70px_1fr_1fr_80px_80px_90px_100px] gap-2 px-4 py-2.5 items-center hover:bg-gray-50 transition-colors text-left"
+                    >
+                      <span className="font-mono text-sm font-bold text-gray-800 flex items-center gap-1">
+                        {expanded
+                          ? <ChevronDown size={12} className="text-gray-400" />
+                          : <ChevronRight size={12} className="text-gray-400" />}
+                        #{t.ticketNumber}
+                      </span>
+                      <span className="font-mono text-xs text-gray-700">{formatLongDate(t.businessDate)}</span>
+                      <span className="font-mono text-xs text-gray-500">{formatTime(whenMs)}</span>
+                      <span className="font-mono text-sm font-semibold text-gray-900 truncate">{t.clientName || 'Walk-in'}</span>
+                      <span className="font-mono text-sm text-gray-700 truncate">{t.primaryManicuristName || '—'}</span>
+                      <span className="font-mono text-sm text-gray-700 text-right">{t.items.length}</span>
+                      <span className="font-mono text-sm text-gray-700 text-right">{t.tipCents > 0 ? formatMoney(t.tipCents) : '—'}</span>
+                      <span className="font-mono text-sm text-red-600 text-right">{totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '—'}</span>
+                      <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoney(t.totalCents)}</span>
+                    </button>
+                    {expanded && (
+                      <div className="bg-gray-50/60 px-4 pt-2 pb-3 flex flex-col gap-2">
+                        {/* Line items */}
+                        <div className="rounded-lg bg-white border border-gray-100 overflow-hidden">
+                          <div className="grid grid-cols-[40px_1fr_1fr_70px_90px_90px_100px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+                            <span className="text-right">Qty</span>
+                            <span>Service</span>
+                            <span>Staff</span>
+                            <span className="text-right">Price</span>
+                            <span className="text-right">Disc.</span>
+                            <span className="text-right">Ext.</span>
+                            <span className="text-right">Kind</span>
+                          </div>
+                          {t.items.length === 0 ? (
+                            <p className="font-mono text-xs text-gray-400 px-3 py-2 text-center">No line items.</p>
+                          ) : (
+                            t.items.map((it) => (
+                              <div
+                                key={it.id}
+                                className="grid grid-cols-[40px_1fr_1fr_70px_90px_90px_100px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center"
+                              >
+                                <span className="font-mono text-xs text-gray-700 text-right">{it.quantity}</span>
+                                <span className="font-mono text-xs text-gray-800 truncate">{it.name}</span>
+                                <span className="font-mono text-xs text-gray-700 truncate">{it.staff1Name || '—'}</span>
+                                <span className="font-mono text-xs text-gray-700 text-right">{formatMoney(it.unitPriceCents)}</span>
+                                <span className="font-mono text-xs text-red-600 text-right">{it.discountCents > 0 ? `-${formatMoney(it.discountCents)}` : '—'}</span>
+                                <span className="font-mono text-xs font-semibold text-gray-900 text-right">{formatMoney(it.extPriceCents)}</span>
+                                <span className="font-mono text-[10px] tracking-wider text-gray-400 text-right uppercase">{it.kind}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        {/* Totals + payments */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-lg bg-white border border-gray-100 px-3 py-2 flex flex-col gap-0.5 text-xs font-mono">
+                            <SummaryLine label="Subtotal" value={formatMoney(t.subtotalCents)} />
+                            {totalDiscount > 0 && <SummaryLine label="Discount" value={`-${formatMoney(totalDiscount)}`} />}
+                            {t.taxCents > 0 && <SummaryLine label="Tax" value={formatMoney(t.taxCents)} />}
+                            {t.tipCents > 0 && <SummaryLine label="Tip" value={formatMoney(t.tipCents)} />}
+                            <SummaryLine label="Total" value={formatMoney(t.totalCents)} bold />
+                          </div>
+                          <div className="rounded-lg bg-white border border-gray-100 px-3 py-2 flex flex-col gap-1">
+                            <span className="font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">Payments</span>
+                            {t.payments.length === 0 ? (
+                              <span className="font-mono text-xs text-gray-400">No payments captured.</span>
+                            ) : (
+                              t.payments.map((p) => (
+                                <div key={p.id} className="flex items-center justify-between">
+                                  <span className="font-mono text-xs text-gray-700 uppercase">
+                                    {p.method === 'visa_mc' ? 'Credit Card' : p.method}
+                                  </span>
+                                  <span className="font-mono text-xs font-semibold text-gray-900">{formatMoney(p.amountCents)}</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        )}
+      </div>
+
       {/* Shifts — who opened/closed each drawer session in this range */}
       <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100">
@@ -418,6 +542,15 @@ function Kpi({
       <div className={`font-mono text-2xl font-bold mt-1 ${accent === 'emerald' ? 'text-emerald-600' : 'text-gray-900'}`}>
         {loading ? '…' : value}
       </div>
+    </div>
+  );
+}
+
+function SummaryLine({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className={`font-mono text-xs ${bold ? 'text-gray-700 font-bold' : 'text-gray-500'}`}>{label}</span>
+      <span className={`font-mono text-xs ${bold ? 'text-gray-900 font-bold' : 'text-gray-900'}`}>{value}</span>
     </div>
   );
 }
