@@ -446,10 +446,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, appointments: [...state.appointments, action.appointment] };
 
     case 'UPDATE_APPOINTMENT':
+      // Every UPDATE bumps lastEditedAt. lastEditedByReceptionistId is set
+      // by callers that already gathered the receptionist id via the PIN
+      // gate; we pass it through verbatim. If the caller didn't supply it
+      // (legacy code paths) the field stays as-is.
       return {
         ...state,
         appointments: state.appointments.map((a) =>
-          a.id === action.id ? { ...a, ...action.updates } : a
+          a.id === action.id
+            ? { ...a, ...action.updates, lastEditedAt: Date.now() }
+            : a
         ),
       };
 

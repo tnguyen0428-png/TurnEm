@@ -237,6 +237,11 @@ export interface Appointment {
   /** Receptionist (manicurist row, is_receptionist=true) who PIN-gated the
    *  booking. Null for legacy appts created before this field existed. */
   bookedByReceptionistId?: string | null;
+  /** Last receptionist who PIN-gated an edit to this appointment. Null if
+   *  the appt has never been edited since creation. */
+  lastEditedByReceptionistId?: string | null;
+  /** ms epoch of the most recent edit, paired with lastEditedByReceptionistId. */
+  lastEditedAt?: number | null;
 }
 
 export interface SalonService {
@@ -281,6 +286,9 @@ export interface AppointmentDraft {
    *  saved Appointment.bookedByReceptionistId so the audit trail starts at
    *  the moment the receptionist took control, not at save time. */
   bookedByReceptionistId?: string | null;
+  /** Receptionist who PIN-gated open-of-edit. Stamped onto the appointment's
+   *  lastEditedByReceptionistId at save. */
+  editingReceptionistId?: string | null;
 }
 
 // One row per (manicurist, weekday). Absence of a row for a (manicurist,

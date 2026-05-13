@@ -196,6 +196,10 @@ function mapDbAppointment(row: Record<string, unknown>): Appointment {
     sameTime: (row.same_time as boolean) || false,
     partyId: (row.party_id as string) || null,
     bookedByReceptionistId: (row.booked_by_receptionist_id as string) || null,
+    lastEditedByReceptionistId: (row.last_edited_by_receptionist_id as string) || null,
+    lastEditedAt: row.last_edited_at
+      ? new Date(row.last_edited_at as string).getTime()
+      : null,
   };
 }
 
@@ -1611,6 +1615,8 @@ function appointmentToRow(a: Appointment) {
     same_time: a.sameTime || false,
     party_id: a.partyId || null,
     booked_by_receptionist_id: a.bookedByReceptionistId || null,
+    last_edited_by_receptionist_id: a.lastEditedByReceptionistId || null,
+    last_edited_at: a.lastEditedAt ? new Date(a.lastEditedAt).toISOString() : null,
     created_at: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
   };
 }

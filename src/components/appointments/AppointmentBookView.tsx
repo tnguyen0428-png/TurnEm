@@ -689,33 +689,49 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       bodyRef.current.scrollTop = nowTopPx != null ? Math.max(0, nowTopPx - 120) : 0;
   }, [selectedDate]); // eslint-disable-line
 
-  // Pending open: receptionist double-clicked a slot; we hold the draft
-  // parameters here until they pass the PIN gate. The actual modal-open
-  // happens in onConfirm so the audit trail starts at the receptionist
-  // taking control, not at save time.
-  const [pendingOpen, setPendingOpen] = useState<null | {
-    mId: string | null;
-    slotIdx: number;
-  }>(null);
+  // Pending open: receptionist double-clicked either an empty slot (kind='add')
+  // or an existing appt block (kind='edit'). We hold the draft parameters
+  // here until they pass the PIN gate. The actual modal-open happens in
+  // onConfirm so the audit trail starts at the receptionist taking control,
+  // not at save time.
+  type PendingOpen =
+    | { kind: 'add'; mId: string | null; slotIdx: number }
+    | { kind: 'edit'; appt: Appointment };
+  const [pendingOpen, setPendingOpen] = useState<PendingOpen | null>(null);
 
   function openAddModal(mId: string | null, slotIdx: number) {
-    setPendingOpen({ mId, slotIdx });
+    setPendingOpen({ kind: 'add', mId, slotIdx });
   }
 
   function commitOpenModal(receptionistId: string) {
     if (!pendingOpen) return;
-    const { mId, slotIdx } = pendingOpen;
-    dispatch({
-      type: 'SET_APPOINTMENT_DRAFT',
-      draft: {
-        date: selectedDate,
-        time: slotToTime(slotIdx),
-        manicuristId: mId,
-        bookedByReceptionistId: receptionistId,
-      },
-    });
-    dispatch({ type: 'SET_MODAL', modal: 'addAppointment' });
+    if (pendingOpen.kind === 'add') {
+      const { mId, slotIdx } = pendingOpen;
+      dispatch({
+        type: 'SET_APPOINTMENT_DRAFT',
+        draft: {
+          date: selectedDate,
+          time: slotToTime(slotIdx),
+          manicuristId: mId,
+          bookedByReceptionistId: receptionistId,
+        },
+      });
+      dispatch({ type: 'SET_MODAL', modal: 'addAppointment' });
+    } else {
+      // Edit: stash the receptionist id on the draft so the modal can
+      // stamp it onto lastEditedByReceptionistId at save.
+      dispatch({
+        type: 'SET_APPOINTMENT_DRAFT',
+        draft: { editingReceptionistId: receptionistId },
+      });
+      dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: pendingOpen.appt.id });
+      dispatch({ type: 'SET_MODAL', modal: 'editAppointment' });
+    }
     setPendingOpen(null);
+  }
+
+  function openEditModalGated(appt: Appointment) {
+    setPendingOpen({ kind: 'edit', appt });
   }
 
   function openEditModal(appt: Appointment) {
@@ -818,7 +834,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 // While a drag is in progress, let drop events pass through other blocks to the slot grid underneath
                 pointerEvents: dragInfo && !isDragging ? 'none' : undefined,
               }}
-              onDoubleClick={() => !isDragging && openEditModal(appt)}>
+              onDoubleClick={() => !isDragging && openEditModalGated(appt)}>
 
               <div className="px-1.5 py-1 h-full flex flex-col overflow-hidden gap-0.5">
                 <div className="flex items-center gap-1 min-w-0">
@@ -1017,10 +1033,15 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       {pendingOpen && (
         <ReceptionistPinGate
           open={!!pendingOpen}
-          title="BOOK APPOINTMENT"
-          subtitle="Enter your PIN to open a new booking."
+          title={pendingOpen.kind === 'add' ? 'BOOK APPOINTMENT' : 'EDIT APPOINTMENT'}
+          subtitle={
+            pendingOpen.kind === 'add'
+              ? 'Enter your PIN to open a new booking.'
+              : `Enter your PIN to edit ${pendingOpen.appt.clientName || 'this appointment'}.`
+          }
           confirmLabel="OPEN"
           tone="primary"
+          pinOnly
           receptionists={state.manicurists.filter((m) => m.isReceptionist)}
           onCancel={() => setPendingOpen(null)}
           onConfirm={(receptionistId) => commitOpenModal(receptionistId)}

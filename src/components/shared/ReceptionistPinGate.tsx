@@ -27,6 +27,9 @@ interface Props {
   /** Tone of the confirm button. 'danger' = red, 'primary' = gray-900. */
   tone?: 'danger' | 'primary';
   receptionists: Manicurist[];
+  /** When true, hide the receptionist dropdown and identify the user
+   *  purely by their PIN. The first matching receptionist wins. */
+  pinOnly?: boolean;
   onCancel: () => void;
   onConfirm: (receptionistId: string, reason: string) => void;
 }
@@ -40,6 +43,7 @@ export default function ReceptionistPinGate({
   confirmLabel,
   tone = 'primary',
   receptionists,
+  pinOnly = false,
   onCancel,
   onConfirm,
 }: Props) {
@@ -75,6 +79,19 @@ export default function ReceptionistPinGate({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (pinOnly) {
+      // Identify receptionist purely by PIN. First match wins; this works
+      // because PINs are personal credentials (unique per receptionist).
+      const match = receptionists.find((r) => r.pinCode && r.pinCode === pin);
+      if (!match) {
+        setError('Incorrect PIN.');
+        setPin('');
+        setTimeout(() => pinRef.current?.focus(), 0);
+        return;
+      }
+      onConfirm(match.id, reason.trim());
+      return;
+    }
     const selected = receptionists.find((r) => r.id === receptionistId) ?? null;
     if (!selected) {
       setError('Pick a receptionist first.');
@@ -128,19 +145,21 @@ export default function ReceptionistPinGate({
               />
             </label>
           )}
-          <label className="flex flex-col gap-1">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Receptionist</span>
-            <select
-              value={receptionistId}
-              onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
-              className="px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
-            >
-              <option value="">Select…</option>
-              {receptionists.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          </label>
+          {!pinOnly && (
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Receptionist</span>
+              <select
+                value={receptionistId}
+                onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
+                className="px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
+              >
+                <option value="">Select…</option>
+                {receptionists.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="flex flex-col gap-1">
             <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">PIN</span>
             <input
@@ -165,7 +184,7 @@ export default function ReceptionistPinGate({
             </button>
             <button
               type="submit"
-              disabled={!receptionistId || pin.length === 0}
+              disabled={pinOnly ? pin.length === 0 : (!receptionistId || pin.length === 0)}
               className={`px-4 py-1.5 rounded-lg font-mono text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 tone === 'danger'
                   ? 'bg-red-600 text-white hover:bg-red-700'

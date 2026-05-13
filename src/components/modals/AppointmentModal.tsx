@@ -268,6 +268,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     }
 
     if (mode === 'edit' && editing) {
+      const editingReceptionistId = state.appointmentDraft?.editingReceptionistId ?? null;
       dispatch({
         type: 'UPDATE_APPOINTMENT',
         id: editing.id,
@@ -283,6 +284,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           notes: notes.trim(),
           sameTime,
           partyId,
+          lastEditedByReceptionistId: editingReceptionistId,
         },
       });
     } else {
@@ -354,13 +356,35 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       width="max-w-2xl"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
-        {mode === 'edit' && editing?.bookedByReceptionistId && (
-          <p className="font-mono text-[10px] tracking-wider text-gray-400 uppercase">
-            Booked by{' '}
-            <span className="font-bold text-gray-600">
-              {state.manicurists.find((m) => m.id === editing.bookedByReceptionistId)?.name ?? 'unknown'}
-            </span>
-          </p>
+        {mode === 'edit' && editing && (
+          <div className="font-mono text-[10px] tracking-wider text-gray-400 uppercase space-y-0.5">
+            {editing.bookedByReceptionistId && (
+              <p>
+                Booked by{' '}
+                <span className="font-bold text-gray-600">
+                  {state.manicurists.find((m) => m.id === editing.bookedByReceptionistId)?.name ?? 'unknown'}
+                </span>
+                {editing.createdAt
+                  ? ' · ' + new Intl.DateTimeFormat('en-US', {
+                      month: 'short', day: 'numeric', year: 'numeric',
+                      hour: 'numeric', minute: '2-digit',
+                    }).format(new Date(editing.createdAt))
+                  : ''}
+              </p>
+            )}
+            {editing.lastEditedAt && editing.lastEditedByReceptionistId && (
+              <p>
+                Last edited by{' '}
+                <span className="font-bold text-amber-700">
+                  {state.manicurists.find((m) => m.id === editing.lastEditedByReceptionistId)?.name ?? 'unknown'}
+                </span>
+                {' · ' + new Intl.DateTimeFormat('en-US', {
+                  month: 'short', day: 'numeric', year: 'numeric',
+                  hour: 'numeric', minute: '2-digit',
+                }).format(new Date(editing.lastEditedAt))}
+              </p>
+            )}
+          </div>
         )}
 
         {matchedCustomer ? (
