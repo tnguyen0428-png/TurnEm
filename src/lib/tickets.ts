@@ -65,6 +65,10 @@ interface DbTicketItem {
   kind: TicketItem['kind'];
   name: string;
   service_id: string | null;
+  /** Specific queue entry id that produced this line (child id for split
+   *  visits, own id for non-split). Null for manually-added lines from the
+   *  ticket modal. */
+  queue_entry_id: string | null;
   staff1_id: string | null;
   staff1_name: string;
   staff1_color: string;
@@ -113,6 +117,7 @@ function fromDbItem(row: DbTicketItem): TicketItem {
     discountCents: row.discount_cents,
     extPriceCents: row.ext_price_cents,
     sortOrder: row.sort_order,
+    queueEntryId: row.queue_entry_id ?? null,
   };
 }
 
@@ -686,6 +691,8 @@ export interface CreateTicketAtCheckinInput {
     staff1Color: string;
     unitPriceCents: number;
     quantity: number;
+    /** Source queue entry id (child id for split visits). */
+    queueEntryId?: string | null;
   }>;
   businessDate?: string; // YYYY-MM-DD; defaults to today LA
 }
@@ -935,6 +942,11 @@ export async function appendItemsToTicket(
     staff1Color: string;
     unitPriceCents: number;
     quantity: number;
+    /** Source queue entry. When present and already on the ticket, the
+     *  line is skipped on dedupe — no matter what options.allowDuplicates
+     *  says. Different siblings of a split visit pass different ids, so
+     *  three manicures by the same staff land as three lines. */
+    queueEntryId?: string | null;
   }>,
   options: { allowDuplicates?: boolean } = {},
 ): Promise<Ticket | null> {
@@ -956,25 +968,43 @@ export async function appendItemsToTicket(
 
   const { data: existingItemRows, error: iErr } = await supabase
     .from('ticket_items')
-    .select('service_id, name, sort_order')
+    .select('service_id, name, sort_order, queue_entry_id')
     .eq('ticket_id', ticketId);
   if (iErr) {
     console.warn('[tickets] appendItemsToTicket fetch items:', iErr.message);
     return null;
   }
-  const existing = (existingItemRows ?? []) as Array<{ service_id: string | null; name: string; sort_order: number }>;
+  const existing = (existingItemRows ?? []) as Array<{
+    service_id: string | null;
+    name: string;
+    sort_order: number;
+    queue_entry_id: string | null;
+  }>;
   const startSort = existing.reduce((m, r) => Math.max(m, r.sort_order ?? 0), 0) + 1;
 
-  // De-dupe only when the caller is the SPLIT_AND_ASSIGN sibling path —
-  // those calls may legitimately re-submit the same service array. When
-  // appending from reconcile / safety-net / cross-ticket merge, every item
-  // represents a real performed service and we should land all of them
-  // even if the same service was performed twice for the client.
-  let toInsert = items;
+  // Entry-id first dedupe: any item whose queue_entry_id is already on the
+  // ticket is a re-fire of a sync we already processed — skip. This rule
+  // applies regardless of options.allowDuplicates because it's about NOT
+  // double-inserting the same source row, not about distinct work.
+  //
+  // For items without a queue_entry_id (manual ticket-modal adds, legacy
+  // backfilled flows), fall back to the older service-id / name dedupe so
+  // we don't regress the existing behavior. allowDuplicates still bypasses
+  // that fallback for callers that explicitly want every item to land.
+  const seenEntryIds = new Set(
+    existing.filter((e) => e.queue_entry_id).map((e) => e.queue_entry_id as string),
+  );
+  let toInsert = items.filter((it) => {
+    if (it.queueEntryId && seenEntryIds.has(it.queueEntryId)) return false;
+    return true;
+  });
   if (!options.allowDuplicates) {
     const seenServiceIds = new Set(existing.filter((e) => e.service_id).map((e) => e.service_id as string));
     const seenLowerNames = new Set(existing.filter((e) => !e.service_id).map((e) => (e.name ?? '').trim().toLowerCase()));
-    toInsert = items.filter((it) => {
+    toInsert = toInsert.filter((it) => {
+      // Items WITH a queue_entry_id that's NOT already on the ticket are
+      // distinct work — never collapse them by service name.
+      if (it.queueEntryId) return true;
       if (it.serviceId) return !seenServiceIds.has(it.serviceId);
       return !seenLowerNames.has((it.name ?? '').trim().toLowerCase());
     });
@@ -994,6 +1024,7 @@ export async function appendItemsToTicket(
     discount_cents: 0,
     ext_price_cents: Math.max(0, it.unitPriceCents * it.quantity),
     sort_order: startSort + idx,
+    queue_entry_id: it.queueEntryId ?? null,
   }));
   const { error: insErr } = await supabase.from('ticket_items').insert(itemRows);
   if (insErr) {
@@ -1093,6 +1124,10 @@ export async function createTicketAtCheckin(input: CreateTicketAtCheckinInput): 
       discount_cents: 0,
       ext_price_cents: Math.max(0, it.unitPriceCents * it.quantity),
       sort_order: idx,
+      // Default each line's source entry id to the ticket's queueEntryId.
+      // Callers that pass a specific child id per item (split visits)
+      // override this on a per-item basis.
+      queue_entry_id: it.queueEntryId ?? input.queueEntryId ?? null,
     }));
     const { error: iErr } = await supabase.from('ticket_items').insert(itemRows);
     if (iErr) {

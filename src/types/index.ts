@@ -132,6 +132,11 @@ export interface TicketItem {
   discountCents: number;        // per-line discount, positive
   extPriceCents: number;        // unit_price * qty - discount
   sortOrder: number;
+  /** Source queue entry id for service lines auto-created from the queue
+   *  or completed-services flow. Null for manually-added lines. Used by
+   *  appendItemsToTicket to dedupe re-syncs without collapsing legitimate
+   *  multi-instance services. */
+  queueEntryId?: string | null;
 }
 
 export interface Payment {

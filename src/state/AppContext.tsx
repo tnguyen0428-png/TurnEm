@@ -1355,6 +1355,9 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
           staff1Color: lineM?.color ?? '#9ca3af',
           unitPriceCents: Math.round((svc?.price ?? 0) * 100),
           quantity: 1,
+          // Per-line entry tag so siblings (3 manicures from same staff)
+          // each land as their own line and re-syncs are silently deduped.
+          queueEntryId: entry.id,
         };
       });
 
@@ -1512,28 +1515,34 @@ async function syncCompleted(
       if (!inFlightAutoCreates.has(visitId)) {
         try {
           const existing = await fetchTicketByQueueEntry(visitId);
-          if (!existing) {
-            inFlightAutoCreates.add(visitId);
-            const items = (c.services && c.services.length > 0 ? c.services : [''])
-              .filter((name) => name.trim().length > 0)
-              .map((svcName) => {
-                const svc = salonServices.find((s) => s.name === svcName);
-                return {
-                  name: svcName,
-                  serviceId: svc?.id ?? null,
-                  staff1Id: c.manicuristId,
-                  staff1Name: c.manicuristName,
-                  staff1Color: c.manicuristColor,
-                  unitPriceCents: Math.round((svc?.price ?? 0) * 100),
-                  quantity: 1,
-                };
-              });
-            // Only do anything if we have at least one service line.
-            if (items.length > 0) {
-              // Consolidation: if the same client already has an open
-              // ticket today, append these services to it instead of
-              // creating a duplicate. This keeps mani + pedi on one
-              // ticket for easy checkout.
+          // Build the items for this completed entry. Each line gets the
+          // entry's id so subsequent re-syncs are silently deduped.
+          const items = (c.services && c.services.length > 0 ? c.services : [''])
+            .filter((name) => name.trim().length > 0)
+            .map((svcName) => {
+              const svc = salonServices.find((s) => s.name === svcName);
+              return {
+                name: svcName,
+                serviceId: svc?.id ?? null,
+                staff1Id: c.manicuristId,
+                staff1Name: c.manicuristName,
+                staff1Color: c.manicuristColor,
+                unitPriceCents: Math.round((svc?.price ?? 0) * 100),
+                quantity: 1,
+                queueEntryId: c.id,
+              };
+            });
+          if (items.length > 0) {
+            if (existing) {
+              // Ticket already exists for this visit. Make sure this
+              // completed entry's services are on it. appendItemsToTicket
+              // dedupes by queue_entry_id so this is a no-op if syncQueue
+              // already added the line during the "just assigned" pass.
+              await appendItemsToTicket(existing.id, items, { allowDuplicates: true });
+            } else {
+              inFlightAutoCreates.add(visitId);
+              // No ticket yet. Either consolidate onto the same client's
+              // open ticket or create a new one.
               const businessDate = getLocalDateStr(new Date(c.completedAt));
               const sameClient = await findOpenTicketForClient(c.clientName, '', businessDate);
               if (sameClient) {
