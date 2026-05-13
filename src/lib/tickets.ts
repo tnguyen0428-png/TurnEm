@@ -1137,4 +1137,186 @@ export interface UpdateOpenTicketInput {
 /**
  * Update an open ticket. If `items` is passed we replace the items wholesale
  * (delete-and-reinsert) — simpler than diffing for this volume. Recomputes
- * subtotal and total from the items + ticket-level discou
+ * subtotal and total from the items + ticket-level discount + tax + tip.
+ */
+export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ticket | null> {
+  const headerPatch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (input.clientName !== undefined) headerPatch.client_name = input.clientName || 'Walk-in';
+  if (input.clientPhone !== undefined) headerPatch.client_phone = input.clientPhone;
+  if (input.clientEmail !== undefined) headerPatch.client_email = input.clientEmail;
+  if (input.primaryManicuristId !== undefined) headerPatch.primary_manicurist_id = input.primaryManicuristId;
+  if (input.primaryManicuristName !== undefined) headerPatch.primary_manicurist_name = input.primaryManicuristName;
+  if (input.primaryManicuristColor !== undefined) headerPatch.primary_manicurist_color = input.primaryManicuristColor;
+  if (input.note !== undefined) headerPatch.note = input.note;
+  if (input.ticketDiscountCents !== undefined) headerPatch.discount_cents = input.ticketDiscountCents;
+  if (input.tipCents !== undefined) headerPatch.tip_cents = input.tipCents;
+  if (input.taxCents !== undefined) headerPatch.tax_cents = input.taxCents;
+
+  // Replace items if provided.
+  if (input.items) {
+    const { error: dErr } = await supabase.from('ticket_items').delete().eq('ticket_id', input.ticketId);
+    if (dErr) { console.error('[tickets] updateOpenTicket delete items:', dErr.message); return null; }
+    if (input.items.length > 0) {
+      const rows = input.items.map((it, idx) => ({
+        ticket_id: input.ticketId,
+        kind: it.kind,
+        name: it.name,
+        service_id: it.serviceId,
+        staff1_id: it.staff1Id,
+        staff1_name: it.staff1Name,
+        staff1_color: it.staff1Color,
+        staff2_id: it.staff2Id,
+        staff2_name: it.staff2Name,
+        staff2_color: it.staff2Color,
+        unit_price_cents: it.unitPriceCents,
+        quantity: it.quantity,
+        discount_cents: it.discountCents,
+        ext_price_cents: computeLineExt(it),
+        sort_order: idx,
+      }));
+      const { error: iErr } = await supabase.from('ticket_items').insert(rows);
+      if (iErr) { console.error('[tickets] updateOpenTicket insert items:', iErr.message); return null; }
+    }
+  }
+
+  // Recompute totals from current items if items changed, otherwise read from DB.
+  let subtotalCents = 0;
+  if (input.items) {
+    subtotalCents = input.items.reduce((s, it) => s + computeLineExt(it), 0);
+  } else {
+    const { data } = await supabase
+      .from('ticket_items')
+      .select('unit_price_cents, quantity, discount_cents')
+      .eq('ticket_id', input.ticketId);
+    subtotalCents = (data ?? []).reduce(
+      (s, it) =>
+        s +
+        Math.max(
+          0,
+          (it as { unit_price_cents: number; quantity: number; discount_cents: number }).unit_price_cents *
+            (it as { quantity: number }).quantity -
+            (it as { discount_cents: number }).discount_cents,
+        ),
+      0,
+    );
+  }
+
+  const ticketDiscount = input.ticketDiscountCents ?? null;
+  const tax = input.taxCents ?? null;
+  const tip = input.tipCents ?? null;
+
+  // Read current values for any field not provided so total is consistent.
+  if (ticketDiscount === null || tax === null || tip === null) {
+    const { data: existing } = await supabase
+      .from('tickets')
+      .select('discount_cents, tax_cents, tip_cents')
+      .eq('id', input.ticketId)
+      .maybeSingle();
+    const e = existing as { discount_cents: number; tax_cents: number; tip_cents: number } | null;
+    headerPatch.subtotal_cents = subtotalCents;
+    headerPatch.total_cents = Math.max(
+      0,
+      subtotalCents -
+        (ticketDiscount ?? e?.discount_cents ?? 0) +
+        (tax ?? e?.tax_cents ?? 0) +
+        (tip ?? e?.tip_cents ?? 0),
+    );
+  } else {
+    headerPatch.subtotal_cents = subtotalCents;
+    headerPatch.total_cents = Math.max(0, subtotalCents - ticketDiscount + tax + tip);
+  }
+
+  const { error: uErr } = await supabase.from('tickets').update(headerPatch).eq('id', input.ticketId);
+  if (uErr) { console.error('[tickets] updateOpenTicket header:', uErr.message); return null; }
+
+  return fetchTicket(input.ticketId);
+}
+
+// ── close ticket (process payment) ───────────────────────────────────────────
+
+export interface ClosingPaymentInput {
+  method: Payment['method'];
+  amountCents: number;
+  tenderedCents?: number;
+  changeCents?: number;
+  giftCardCode?: string;
+}
+
+export interface CloseTicketInput {
+  ticketId: string;
+  shiftId: string | null;
+  payments: ClosingPaymentInput[];
+}
+
+/**
+ * Mark an open ticket closed: insert payment rows, set status='closed',
+ * record closed_at and shift_id, refresh paid_cents. The ticket is locked
+ * for edits after this returns successfully.
+ */
+export async function closeTicket(input: CloseTicketInput): Promise<Ticket | null> {
+  if (input.payments.length === 0) {
+    console.error('[tickets] closeTicket: no payments provided');
+    return null;
+  }
+
+  // 1. Insert payment rows.
+  const paymentRows = input.payments.map((p) => ({
+    ticket_id: input.ticketId,
+    shift_id: input.shiftId,
+    method: p.method,
+    amount_cents: p.amountCents,
+    tendered_cents: p.tenderedCents ?? null,
+    change_cents: p.changeCents ?? null,
+    gift_card_code: p.giftCardCode ?? '',
+  }));
+  const { error: pErr } = await supabase.from('payments').insert(paymentRows);
+  if (pErr) {
+    console.error('[tickets] closeTicket payments insert:', pErr.message);
+    return null;
+  }
+
+  // 2. Compute paid_cents and flip status to closed.
+  const paidCents = input.payments.reduce((s, p) => s + p.amountCents, 0);
+  const { error: tErr } = await supabase
+    .from('tickets')
+    .update({
+      status: 'closed',
+      closed_at: new Date().toISOString(),
+      shift_id: input.shiftId,
+      paid_cents: paidCents,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', input.ticketId)
+    .eq('status', 'open');
+  if (tErr) {
+    console.error('[tickets] closeTicket ticket update:', tErr.message);
+    return null;
+  }
+
+  return fetchTicket(input.ticketId);
+}
+
+// void ticket --------------------------------------------------------------
+
+/**
+ * Mark an open ticket as voided. Idempotent at the status layer: a second
+ * call where status is already 'voided' is a no-op. Manager-gated in the UI;
+ * no database role check here yet.
+ */
+export async function voidTicket(ticketId: string, reason: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('tickets')
+    .update({
+      status: 'voided',
+      void_reason: reason,
+      closed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', ticketId)
+    .eq('status', 'open');
+  if (error) {
+    console.error('[tickets] voidTicket:', error.message);
+    return false;
+  }
+  return true;
+}

@@ -1790,4 +1790,61 @@ async function syncStaffSchedules(current: StaffScheduleEntry[], prev: StaffSche
   const removed = prev.filter((s) => !currentIds.has(s.id));
   if (removed.length > 0) {
     const { error } = await withRetry(() => supabase.from('staff_schedules').delete().in('id', removed.map((s) => s.id)));
-    if (error) { console.error('[s
+    if (error) { console.error('[syncStaffSchedules] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((s) => [s.id, s]));
+  const changed: ReturnType<typeof staffScheduleToRow>[] = [];
+  for (const s of current) {
+    const previous = prevById.get(s.id);
+    if (previous && staffScheduleUnchanged(previous, s)) continue;
+    changed.push(staffScheduleToRow(s));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('staff_schedules').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncStaffSchedules] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function staffTimeOffToRow(t: StaffTimeOff) {
+  return {
+    id: t.id,
+    manicurist_id: t.manicuristId,
+    start_date: t.startDate,
+    end_date: t.endDate,
+    reason: t.reason,
+  };
+}
+
+function staffTimeOffUnchanged(a: StaffTimeOff, b: StaffTimeOff): boolean {
+  if (a === b) return true;
+  return (
+    a.manicuristId === b.manicuristId &&
+    a.startDate === b.startDate &&
+    a.endDate === b.endDate &&
+    a.reason === b.reason
+  );
+}
+
+async function syncStaffTimeOff(current: StaffTimeOff[], prev: StaffTimeOff[], onError: (msg: string) => void) {
+  const currentIds = new Set(current.map((t) => t.id));
+  const removed = prev.filter((t) => !currentIds.has(t.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('staff_time_off').delete().in('id', removed.map((t) => t.id)));
+    if (error) { console.error('[syncStaffTimeOff] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((t) => [t.id, t]));
+  const changed: ReturnType<typeof staffTimeOffToRow>[] = [];
+  for (const t of current) {
+    const previous = prevById.get(t.id);
+    if (previous && staffTimeOffUnchanged(previous, t)) continue;
+    changed.push(staffTimeOffToRow(t));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('staff_time_off').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncStaffTimeOff] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used within AppProvider');
+  return ctx;
+}
