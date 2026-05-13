@@ -3,7 +3,7 @@
 //
 // Range options:
 //   - DAILY : pick a single business date (defaults to today)
-//   - WEEKLY: pick a Mon–Sun week (defaults to the current week)
+//   - WEEKLY: pick a Sun–Sat week (defaults to the current week)
 //   - CUSTOM: pick from/to dates
 //
 // All ranges produce an LA-local YYYY-MM-DD `from` and `to` pair so callers
@@ -33,9 +33,8 @@ function addDays(iso: string, days: number): string {
 }
 function startOfWeekIso(iso: string): string {
   const d = new Date(iso + 'T12:00:00');
-  const dow = d.getDay(); // 0 = Sun. Use Mon as week start.
-  const offset = (dow + 6) % 7;
-  d.setDate(d.getDate() - offset);
+  const dow = d.getDay(); // 0 = Sun. Sunday-start week — back up dow days.
+  d.setDate(d.getDate() - dow);
   return getLocalDateStr(d);
 }
 function endOfWeekIso(iso: string): string {
