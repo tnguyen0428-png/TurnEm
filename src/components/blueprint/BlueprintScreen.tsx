@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
-  Clock3, ChevronRight, GripVertical, KeyRound, BarChart3,
+  Clock3, ChevronRight, GripVertical, KeyRound,
   DollarSign, XCircle, UserCheck,
 } from 'lucide-react';
-import ReceptionistHoursReport from './ReceptionistHoursReport';
 import SalesReport from './SalesReport';
 import CancellationReport from './CancellationReport';
-import EmployeeReport from './EmployeeReport';
+import StaffReport from './StaffReport';
 import { PinVerifyModal } from '../shared/AdminPinGate';
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
@@ -34,10 +33,9 @@ type BlueprintSection =
   | 'security'
   | 'services'
   | 'criteria'
-  | 'reports-receptionist'
   | 'reports-sales'
   | 'reports-cancellation'
-  | 'reports-employee';
+  | 'reports-staff';
 
 interface NavItem {
   id: BlueprintSection;
@@ -74,8 +72,7 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     items: [
       { id: 'reports-sales',        label: 'Sales',              icon: DollarSign, description: 'Daily / weekly sales totals and payment mix' },
       { id: 'reports-cancellation', label: 'Cancellations & Void', icon: XCircle,    description: 'Voided tickets, cancelled appointments, no-shows' },
-      { id: 'reports-employee',     label: 'Employee',           icon: UserCheck,  description: 'Per-employee sales, services, tips, hours' },
-      { id: 'reports-receptionist', label: 'Receptionist Hours', icon: BarChart3,  description: 'Clock-in / clock-out log for receptionists' },
+      { id: 'reports-staff',        label: 'Staff',              icon: UserCheck,  description: 'Manicurist sales + receptionist hours' },
     ],
   },
 ];
@@ -317,8 +314,7 @@ export default function BlueprintScreen() {
       case 'criteria':         return <CriteriaScreen />;
       case 'reports-sales':        return <SalesReport />;
       case 'reports-cancellation': return <CancellationReport />;
-      case 'reports-employee':     return <EmployeeReport />;
-      case 'reports-receptionist': return <ReceptionistHoursReport />;
+      case 'reports-staff':        return <StaffReport />;
       default: return null;
     }
   }

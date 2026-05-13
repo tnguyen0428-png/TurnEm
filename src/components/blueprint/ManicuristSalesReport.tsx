@@ -1,6 +1,6 @@
-// EmployeeReport — Blueprint → Reports → Employee
+// ManicuristSalesReport — Blueprint → Reports → Staff → Manicurists
 //
-// Per-employee productivity for the selected range. Pulls from closed
+// Per-manicurist productivity for the selected range. Pulls from closed
 // tickets (services performed + revenue credited), tips (allocated by
 // share of staff1 lines on the ticket), and the local clockLog.
 //
@@ -17,7 +17,7 @@ import {
   ReportRangeHeader, useReportRange, formatMoney,
 } from './reportShared';
 
-interface EmployeeRow {
+interface StaffRow {
   staffId: string;
   staffName: string;
   serviceCount: number;       // # ticket lines credited to this staff
@@ -37,7 +37,7 @@ function lineExt(it: TicketItem | { unitPriceCents: number; quantity: number; di
   });
 }
 
-export default function EmployeeReport() {
+export default function ManicuristSalesReport() {
   const { state } = useApp();
   const [range, setRange] = useReportRange();
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -57,9 +57,15 @@ export default function EmployeeReport() {
   const closed = useMemo(() => tickets.filter((t) => t.status === 'closed'), [tickets]);
 
   // Build per-employee aggregates.
-  const rows = useMemo<EmployeeRow[]>(() => {
-    const map = new Map<string, EmployeeRow>();
-    function get(id: string | null, name: string): EmployeeRow {
+  const rows = useMemo<StaffRow[]>(() => {
+    // Build a set of receptionist staff ids so we can exclude their lines
+    // from the manicurist productivity table. Receptionists get their own
+    // hours-focused view in the sibling Receptionist sub-tab.
+    const receptionistIds = new Set(
+      state.manicurists.filter((m) => m.isReceptionist).map((m) => m.id),
+    );
+    const map = new Map<string, StaffRow>();
+    function get(id: string | null, name: string): StaffRow {
       const key = id ?? `__no_id__:${name}`;
       let r = map.get(key);
       if (!r) {
@@ -85,6 +91,9 @@ export default function EmployeeReport() {
       // Compute total extended for tip allocation.
       const totalExt = t.items.reduce((s, it) => s + lineExt(it), 0);
       for (const it of t.items) {
+        // Skip receptionist staff — they don't perform manicure services
+        // and their lines (e.g. retail) belong in a different report later.
+        if (it.staff1Id && receptionistIds.has(it.staff1Id)) continue;
         const ext = lineExt(it);
         const row = get(it.staff1Id, it.staff1Name);
         row.serviceCount += 1;
@@ -108,6 +117,7 @@ export default function EmployeeReport() {
     const sessions = sessionsFromEvents(events);
     for (const s of sessions) {
       const m = state.manicurists.find((mm) => mm.id === s.staffId);
+      if (m?.isReceptionist) continue; // receptionists handled in sibling tab
       const row = get(s.staffId, m?.name || s.staffName);
       if (s.durationMs != null) row.hoursMs = (row.hoursMs ?? 0) + s.durationMs;
       else row.openSessions += 1;
@@ -125,15 +135,15 @@ export default function EmployeeReport() {
     const totalGross = rows.reduce((s, r) => s + r.grossCents, 0);
     const totalTips = rows.reduce((s, r) => s + r.tipCents, 0);
     const totalHoursMs = rows.reduce((s, r) => s + (r.hoursMs ?? 0), 0);
-    return { totalGross, totalTips, totalHoursMs, employees: rows.length };
+    return { totalGross, totalTips, totalHoursMs, manicurists: rows.length };
   }, [rows]);
 
   return (
     <div className="p-6 overflow-y-auto h-full space-y-5">
-      <ReportRangeHeader title="EMPLOYEES" range={range} onRangeChange={setRange} />
+      <ReportRangeHeader title="MANICURISTS" range={range} onRangeChange={setRange} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi label="Employees Active" value={summary.employees.toString()} loading={loading} />
+        <Kpi label="Manicurists Active" value={summary.manicurists.toString()} loading={loading} />
         <Kpi label="Total Sales" value={formatMoney(summary.totalGross)} accent="emerald" loading={loading} />
         <Kpi label="Total Tips" value={formatMoney(summary.totalTips)} loading={loading} />
         <Kpi label="Hours Logged" value={formatHours(summary.totalHoursMs)} loading={loading} />
@@ -141,17 +151,17 @@ export default function EmployeeReport() {
 
       <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
-          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">PER EMPLOYEE</h3>
+          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">PER MANICURIST</h3>
           <span className="font-mono text-[10px] text-gray-400">Ranked by total credited</span>
         </div>
         {rows.length === 0 ? (
           <div className="px-4 py-10 text-center font-mono text-xs text-gray-400">
-            {loading ? 'Loading…' : 'No employee activity in this range.'}
+            {loading ? 'Loading…' : 'No manicurist activity in this range.'}
           </div>
         ) : (
           <div>
             <div className="grid grid-cols-[1fr_80px_80px_120px_100px_100px_120px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
-              <span>Employee</span>
+              <span>Manicurist</span>
               <span className="text-right">Tickets</span>
               <span className="text-right">Services</span>
               <span className="text-right">Sales</span>

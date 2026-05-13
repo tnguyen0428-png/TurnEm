@@ -51,6 +51,15 @@ export default function SalesReport() {
   // progress and voided tickets are tracked in the Cancellation report.
   const closed = useMemo(() => tickets.filter((t) => t.status === 'closed'), [tickets]);
 
+  // Per-ticket discount total = ticket-level discount + sum of line-level
+  // discounts. Captures both "20% off the manicure" (line) and "loyalty
+  // $5 off the whole ticket" (header).
+  function ticketDiscountTotalCents(t: Ticket): number {
+    let lineDiscount = 0;
+    for (const it of t.items) lineDiscount += it.discountCents || 0;
+    return (t.discountCents || 0) + lineDiscount;
+  }
+
   const summary = useMemo(() => {
     let count = 0;
     let grossCents = 0;
@@ -62,9 +71,16 @@ export default function SalesReport() {
       grossCents += t.totalCents;
       tipCents += t.tipCents;
       taxCents += t.taxCents;
-      discountCents += t.discountCents;
+      discountCents += ticketDiscountTotalCents(t);
     }
     return { count, grossCents, tipCents, taxCents, discountCents };
+  }, [closed]);
+
+  const discountTickets = useMemo(() => {
+    return closed
+      .map((t) => ({ ...t, totalDiscountCents: ticketDiscountTotalCents(t) }))
+      .filter((t) => t.totalDiscountCents > 0)
+      .sort((a, b) => b.totalDiscountCents - a.totalDiscountCents);
   }, [closed]);
 
   const byPaymentMethod = useMemo(() => {
@@ -123,6 +139,42 @@ export default function SalesReport() {
                   {p.method === 'visa_mc' ? 'Credit Card' : p.method}
                 </span>
                 <span className="font-mono text-sm font-bold text-gray-900">{formatMoney(p.cents)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Discounts — every ticket where money was taken off (line or ticket-level) */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">DISCOUNTS</h3>
+          <span className="font-mono text-[10px] text-gray-400">
+            {discountTickets.length} ticket{discountTickets.length === 1 ? '' : 's'} · {formatMoney(summary.discountCents)} total
+          </span>
+        </div>
+        {discountTickets.length === 0 ? (
+          <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">
+            {loading ? 'Loading…' : 'No discounts applied in this range.'}
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-[80px_110px_1fr_1fr_110px_110px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+              <span>Ticket</span>
+              <span>Date</span>
+              <span>Client</span>
+              <span>Primary Staff</span>
+              <span className="text-right">Discount</span>
+              <span className="text-right">Net Total</span>
+            </div>
+            {discountTickets.map((t) => (
+              <div key={t.id} className="grid grid-cols-[80px_110px_1fr_1fr_110px_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
+                <span className="font-mono text-sm font-bold text-gray-800">#{t.ticketNumber}</span>
+                <span className="font-mono text-xs text-gray-700">{formatLongDate(t.businessDate)}</span>
+                <span className="font-mono text-sm font-semibold text-gray-900 truncate">{t.clientName || 'Walk-in'}</span>
+                <span className="font-mono text-sm text-gray-700 truncate">{t.primaryManicuristName || '—'}</span>
+                <span className="font-mono text-sm text-red-600 text-right">-{formatMoney(t.totalDiscountCents)}</span>
+                <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoney(t.totalCents)}</span>
               </div>
             ))}
           </div>
