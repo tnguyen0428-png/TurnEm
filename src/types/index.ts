@@ -234,6 +234,9 @@ export interface Appointment {
   createdAt: number;
   sameTime: boolean;          // visual flag: client wants same time as another booking
   partyId: string | null;     // group id linking party-group bookings
+  /** Receptionist (manicurist row, is_receptionist=true) who PIN-gated the
+   *  booking. Null for legacy appts created before this field existed. */
+  bookedByReceptionistId?: string | null;
 }
 
 export interface SalonService {

@@ -200,6 +200,14 @@ export default function AppointmentsScreen() {
                               {appt.clientPhone && <span className="flex items-center gap-1 font-mono text-[10px] text-gray-400"><Phone size={10} />{appt.clientPhone}</span>}
                             </div>
                             {appt.notes && <p className="font-mono text-[11px] text-gray-400 mt-1.5 truncate">{appt.notes}</p>}
+                            {appt.bookedByReceptionistId && (
+                              <p className="font-mono text-[10px] text-gray-400 mt-1">
+                                Booked by{' '}
+                                <span className="font-bold text-gray-500">
+                                  {state.manicurists.find((m) => m.id === appt.bookedByReceptionistId)?.name ?? 'unknown'}
+                                </span>
+                              </p>
+                            )}
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
                             {appt.status === 'scheduled' && (

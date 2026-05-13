@@ -3,6 +3,7 @@ import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
 import { upsertCustomerFromIntake, toTitleCase, formatPhoneDashed } from '../../lib/customers';
+import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { getTodayLA } from '../../utils/time';
 import type { ServiceType, ServiceRequest, Appointment } from '../../types';
@@ -31,6 +32,17 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const today = getTodayLA();
   const draft = mode === 'add' ? state.appointmentDraft : null;
 
+  const [showBookGate, setShowBookGate] = useState(false);
+  // Holds the parsed-and-validated form payload while the PIN gate is open.
+  // We capture once on submit, then complete the dispatch from the gate's
+  // onConfirm so the form state stays untouched if the user cancels.
+  const [pendingBooking, setPendingBooking] = useState<null | {
+    name: string;
+    services: string[];
+    serviceRequests: unknown[];
+    appointmentManicuristId: string | null;
+    partyId: string | null;
+  }>(null);
   const [clientFirstName, setClientFirstName] = useState('');
   const [clientLastName, setClientLastName] = useState('');
   // Combined name used everywhere else in this modal (save payload, display).
@@ -236,34 +248,56 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         },
       });
     } else {
-      const appt: Appointment = {
-        id: crypto.randomUUID(),
-        clientName: name,
-        clientPhone: clientPhone.trim(),
-        service: services[0],
-        services,
-        serviceRequests,
-        manicuristId: appointmentManicuristId,
-        date,
-        time,
-        notes: notes.trim(),
-        status: 'scheduled',
-        createdAt: Date.now(),
-        sameTime,
-        partyId,
-      };
-      dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
+      // New booking — defer dispatch until the receptionist PIN is verified.
+      setPendingBooking({ name, services, serviceRequests, appointmentManicuristId, partyId });
+      setShowBookGate(true);
+      return;
     }
 
-    // Fire-and-forget customer profile upsert. Whether we just created or
-    // updated the appointment, the customer's info should sync to Blueprint
-    // → Customers so receptionists never have to manually add a profile.
+    // Edit path: dispatch already ran above. Sync the customer profile and
+    // close the modal. New bookings flow through the PIN gate instead.
     void upsertCustomerFromIntake({
       firstName: clientFirstName,
       lastName: clientLastName,
       phone: clientPhone,
     });
 
+    handleClose();
+  }
+
+  /**
+   * Final commit for a NEW booking once the receptionist has authenticated
+   * via the PIN gate. `receptionistId` becomes the appointment's
+   * bookedByReceptionistId so reports can attribute the booking later.
+   */
+  function commitNewBooking(receptionistId: string) {
+    if (!pendingBooking) return;
+    const { name, services, serviceRequests, appointmentManicuristId, partyId } = pendingBooking;
+    const appt: Appointment = {
+      id: crypto.randomUUID(),
+      clientName: name,
+      clientPhone: clientPhone.trim(),
+      service: services[0],
+      services: services as Appointment['services'],
+      serviceRequests: serviceRequests as Appointment['serviceRequests'],
+      manicuristId: appointmentManicuristId,
+      date,
+      time,
+      notes: notes.trim(),
+      status: 'scheduled',
+      createdAt: Date.now(),
+      sameTime,
+      partyId,
+      bookedByReceptionistId: receptionistId,
+    };
+    dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
+    void upsertCustomerFromIntake({
+      firstName: clientFirstName,
+      lastName: clientLastName,
+      phone: clientPhone,
+    });
+    setShowBookGate(false);
+    setPendingBooking(null);
     handleClose();
   }
 
@@ -280,6 +314,14 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       width="max-w-2xl"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {mode === 'edit' && editing?.bookedByReceptionistId && (
+          <p className="font-mono text-[10px] tracking-wider text-gray-400 uppercase">
+            Booked by{' '}
+            <span className="font-bold text-gray-600">
+              {state.manicurists.find((m) => m.id === editing.bookedByReceptionistId)?.name ?? 'unknown'}
+            </span>
+          </p>
+        )}
 
         {/* Client info */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -562,6 +604,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           {mode === 'edit' ? 'SAVE CHANGES' : 'BOOK APPOINTMENT'}
         </button>
       </form>
+    {showBookGate && (
+      <ReceptionistPinGate
+        open={showBookGate}
+        title="BOOK APPOINTMENT"
+        subtitle={`Confirming booking for ${(clientFirstName + ' ' + clientLastName).trim() || 'Walk-in'}.`}
+        confirmLabel="BOOK"
+        tone="primary"
+        receptionists={state.manicurists.filter((m) => m.isReceptionist)}
+        onCancel={() => { setShowBookGate(false); setPendingBooking(null); }}
+        onConfirm={(receptionistId) => commitNewBooking(receptionistId)}
+      />
+    )}
     </Modal>
   );
 }
