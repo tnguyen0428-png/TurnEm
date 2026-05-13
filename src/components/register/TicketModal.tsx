@@ -32,6 +32,7 @@ import {
 import { fetchOpenShift } from '../../lib/shifts';
 import GiftCardSaleModal from './GiftCardSaleModal';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
+import { SERVICE_CATEGORIES } from '../../constants/services';
 import type { PaymentMethod, Ticket } from '../../types';
 
 interface Props {
@@ -154,6 +155,19 @@ export default function TicketModal({
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [state.salonServices],
   );
+  // Category → Service picker state, mirroring the queue Add Client form
+  // so receptionists land on the same two-step flow whether they're
+  // checking in or checking out.
+  const [pickerCategory, setPickerCategory] = useState('');
+  const [pickerServiceId, setPickerServiceId] = useState('');
+  const availableCategories = useMemo(() => {
+    const set = new Set(sortedServices.map((s) => s.category).filter(Boolean));
+    return SERVICE_CATEGORIES.filter((c) => set.has(c));
+  }, [sortedServices]);
+  const servicesInCategory = useMemo(() => {
+    if (!pickerCategory) return [];
+    return sortedServices.filter((s) => s.category === pickerCategory);
+  }, [sortedServices, pickerCategory]);
   const manicurists = useMemo(
     () => [...state.manicurists].sort((a, b) => a.name.localeCompare(b.name)),
     [state.manicurists],
@@ -579,13 +593,34 @@ export default function TicketModal({
 
                 {/* Add line */}
                 {isOpen && (
-                  <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-center px-3 py-1.5 bg-gray-50/60 border-t border-gray-100">
+                  <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-center px-3 py-1.5 bg-gray-50/60 border-t border-gray-100">
                     <select
-                      value="" onChange={(e) => e.target.value && addCatalogService(e.target.value)}
+                      value={pickerCategory}
+                      onChange={(e) => {
+                        setPickerCategory(e.target.value);
+                        setPickerServiceId('');
+                      }}
                       className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:border-gray-400"
                     >
-                      <option value="">+ Add service from menu…</option>
-                      {sortedServices.map((s) => (
+                      <option value="">Category…</option>
+                      {availableCategories.map((cat) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={pickerServiceId}
+                      disabled={!pickerCategory}
+                      onChange={(e) => {
+                        const svcId = e.target.value;
+                        if (!svcId) return;
+                        addCatalogService(svcId);
+                        setPickerCategory('');
+                        setPickerServiceId('');
+                      }}
+                      className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Service…</option>
+                      {servicesInCategory.map((s) => (
                         <option key={s.id} value={s.id}>{s.name} — ${s.price.toFixed(2)}</option>
                       ))}
                     </select>
