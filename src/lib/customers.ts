@@ -52,6 +52,28 @@ export function displayCustomerName(c: Pick<Customer, 'firstName' | 'lastName'>)
   return [f, l].filter(Boolean).join(' ') || '(no name)';
 }
 
+/**
+ * Title-case a name regardless of caps-lock input: "TONY" / "tony" / "tOnY"
+ * all become "Tony". Treats spaces, hyphens, and apostrophes as word
+ * boundaries so "mary-anne o'brien" → "Mary-Anne O'Brien".
+ */
+export function toTitleCase(raw: string): string {
+  const s = (raw ?? '').trim().toLowerCase();
+  if (!s) return '';
+  return s.replace(/(^|[\s\-'])(\p{L})/gu, (_m, sep, ch) => sep + ch.toUpperCase());
+}
+
+/**
+ * Format a phone number as xxx-xxx-xxxx when 10 digits are present.
+ * Anything else is returned as-is (preserves a partial entry the
+ * receptionist may want to finish later).
+ */
+export function formatPhoneDashed(raw: string): string {
+  const d = normalizePhone(raw);
+  if (d.length !== 10) return (raw ?? '').trim();
+  return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
 export async function fetchCustomers(): Promise<Customer[]> {
   const { data, error } = await supabase
     .from('customers')
@@ -85,9 +107,9 @@ export async function createCustomer(input: CustomerInput): Promise<Customer | n
   const { data, error } = await supabase
     .from('customers')
     .insert({
-      first_name: input.firstName.trim(),
-      last_name: input.lastName.trim(),
-      phone: input.phone.trim(),
+      first_name: toTitleCase(input.firstName),
+      last_name: toTitleCase(input.lastName),
+      phone: formatPhoneDashed(input.phone),
       email: input.email.trim(),
       notes: input.notes,
       popup_note: input.popupNote,
@@ -102,9 +124,9 @@ export async function updateCustomer(id: string, input: CustomerInput): Promise<
   const { data, error } = await supabase
     .from('customers')
     .update({
-      first_name: input.firstName.trim(),
-      last_name: input.lastName.trim(),
-      phone: input.phone.trim(),
+      first_name: toTitleCase(input.firstName),
+      last_name: toTitleCase(input.lastName),
+      phone: formatPhoneDashed(input.phone),
       email: input.email.trim(),
       notes: input.notes,
       popup_note: input.popupNote,
@@ -294,11 +316,13 @@ export async function upsertCustomerFromIntake(input: {
 
     if (existing) {
       // Only patch fields the existing record is missing — never overwrite.
+      // Apply the same normalization rules (title case, dashed phone) on the
+      // way in so a fresh intake fills a blank profile in the canonical form.
       const patch: Record<string, unknown> = {};
-      if (!existing.phone && phoneNorm) patch.phone = (input.phone ?? '').trim();
+      if (!existing.phone && phoneNorm) patch.phone = formatPhoneDashed(input.phone ?? '');
       if (!existing.email && input.email) patch.email = input.email.trim();
-      if (!existing.firstName && first) patch.first_name = first;
-      if (!existing.lastName && last) patch.last_name = last;
+      if (!existing.firstName && first) patch.first_name = toTitleCase(first);
+      if (!existing.lastName && last) patch.last_name = toTitleCase(last);
       if (Object.keys(patch).length === 0) return existing.id;
       patch.updated_at = new Date().toISOString();
       const { error } = await supabase.from('customers').update(patch).eq('id', existing.id);
@@ -310,9 +334,9 @@ export async function upsertCustomerFromIntake(input: {
     const { data, error } = await supabase
       .from('customers')
       .insert({
-        first_name: first,
-        last_name: last,
-        phone: (input.phone ?? '').trim(),
+        first_name: toTitleCase(first),
+        last_name: toTitleCase(last),
+        phone: formatPhoneDashed(input.phone ?? ''),
         email: (input.email ?? '').trim(),
         notes: '',
         popup_note: '',
