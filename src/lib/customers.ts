@@ -354,3 +354,28 @@ export async function upsertCustomerFromIntake(input: {
   }
 }
 
+/**
+ * Live search across customers used by intake forms to surface an existing
+ * profile while the receptionist types. Match priority:
+ *   - phone digits substring (cheapest, most discriminating)
+ *   - first_name OR last_name ILIKE substring
+ * Returns up to `limit` rows ordered by recent updates so frequent visitors
+ * float to the top.
+ */
+export async function searchCustomers(query: string, limit = 8): Promise<Customer[]> {
+  const q = (query ?? '').trim();
+  if (!q) return [];
+  const phoneDigits = normalizePhone(q);
+  let req = supabase.from('customers').select('*').limit(limit);
+  if (phoneDigits.length >= 3) {
+    // Phone match — column stores xxx-xxx-xxxx so a substring of just the
+    // digits won't match. Allow either form by also OR'ing the ilike chain.
+    req = req.or(`phone.ilike.%${phoneDigits}%,phone.ilike.%${q}%,first_name.ilike.%${q}%,last_name.ilike.%${q}%`);
+  } else {
+    req = req.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%`);
+  }
+  const { data, error } = await req.order('updated_at', { ascending: false });
+  if (error) { console.warn('[customers] searchCustomers:', error.message); return []; }
+  return (data ?? []).map((r) => fromDb(r as DbCustomer));
+}
+

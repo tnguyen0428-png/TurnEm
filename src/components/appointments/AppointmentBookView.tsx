@@ -718,7 +718,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 borderTop:    isHour ? '2px solid #6b7280' : 'none',
                 borderBottom: isHour ? '1px solid #e5e7eb' : type === 'half' ? '1px solid #d1d5db' : '1px solid #e5e7eb',
               }}
-              onClick={() => !dragInfo && openAddModal(mId, i)}
+              onDoubleClick={() => !dragInfo && openAddModal(mId, i)}
               onDragOver={(e) => onSlotDragOver(e, mId, i)}
               onDrop={(e) => onSlotDrop(e, mId, i)}>
               {!dragInfo && <div className="absolute top-0.5 right-1 opacity-0 group-hover:opacity-100"><Plus size={9} className="text-pink-300" /></div>}
@@ -793,7 +793,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 // While a drag is in progress, let drop events pass through other blocks to the slot grid underneath
                 pointerEvents: dragInfo && !isDragging ? 'none' : undefined,
               }}
-              onClick={() => !isDragging && openEditModal(appt)}>
+              onDoubleClick={() => !isDragging && openEditModal(appt)}>
 
               <div className="px-1.5 py-1 h-full flex flex-col overflow-hidden gap-0.5">
                 <div className="flex items-center gap-1 min-w-0">
