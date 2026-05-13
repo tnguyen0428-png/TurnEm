@@ -193,6 +193,77 @@ export default function SalesReport() {
     <div className="p-6 overflow-y-auto h-full space-y-5">
       <ReportRangeHeader title="SALES" range={range} onRangeChange={setRange} />
 
+      {/* Shifts — who opened/closed each drawer session in this range */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100">
+          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">SHIFTS</h3>
+        </div>
+        {shifts.length === 0 ? (
+          <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">
+            {loading ? 'Loading…' : 'No shifts opened in this range.'}
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+              <span>Date</span>
+              <span>Opened</span>
+              <span>Opened by</span>
+              <span>Closed</span>
+              <span>Closed by</span>
+              <span className="text-right">Variance</span>
+              <span className="text-right">Status</span>
+            </div>
+            {shifts.map((s) => {
+              const openedName = s.openedByReceptionistId
+                ? manicuristNameById.get(s.openedByReceptionistId) ?? '(removed)'
+                : '—';
+              const closedName = s.closedByReceptionistId
+                ? manicuristNameById.get(s.closedByReceptionistId) ?? '(removed)'
+                : '—';
+              const variance = s.varianceCents ?? null;
+              return (
+                <div
+                  key={s.id}
+                  className="grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
+                >
+                  <span className="font-mono text-sm text-gray-800">{formatLongDate(s.businessDate)}</span>
+                  <span className="font-mono text-sm text-gray-700">
+                    {new Date(s.openedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  </span>
+                  <span className="font-mono text-sm text-gray-800 truncate" title={openedName}>{openedName}</span>
+                  <span className="font-mono text-sm text-gray-700">
+                    {s.closedAt
+                      ? new Date(s.closedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                      : '—'}
+                  </span>
+                  <span className="font-mono text-sm text-gray-800 truncate" title={closedName}>{closedName}</span>
+                  <span
+                    className={`font-mono text-sm text-right ${
+                      variance === null
+                        ? 'text-gray-400'
+                        : variance === 0
+                          ? 'text-gray-700'
+                          : variance > 0
+                            ? 'text-emerald-600'
+                            : 'text-red-600'
+                    }`}
+                  >
+                    {variance === null ? '—' : formatMoney(variance)}
+                  </span>
+                  <span
+                    className={`font-mono text-[10px] font-bold tracking-wider text-right uppercase ${
+                      s.status === 'open' ? 'text-emerald-600' : 'text-gray-500'
+                    }`}
+                  >
+                    {s.status}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi label="Gross Sales" value={formatMoney(summary.grossCents)} accent="emerald" loading={loading} />
@@ -436,76 +507,6 @@ export default function SalesReport() {
         )}
       </div>
 
-      {/* Shifts — who opened/closed each drawer session in this range */}
-      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-100">
-          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">SHIFTS</h3>
-        </div>
-        {shifts.length === 0 ? (
-          <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">
-            {loading ? 'Loading…' : 'No shifts opened in this range.'}
-          </div>
-        ) : (
-          <div>
-            <div className="grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
-              <span>Date</span>
-              <span>Opened</span>
-              <span>Opened by</span>
-              <span>Closed</span>
-              <span>Closed by</span>
-              <span className="text-right">Variance</span>
-              <span className="text-right">Status</span>
-            </div>
-            {shifts.map((s) => {
-              const openedName = s.openedByReceptionistId
-                ? manicuristNameById.get(s.openedByReceptionistId) ?? '(removed)'
-                : '—';
-              const closedName = s.closedByReceptionistId
-                ? manicuristNameById.get(s.closedByReceptionistId) ?? '(removed)'
-                : '—';
-              const variance = s.varianceCents ?? null;
-              return (
-                <div
-                  key={s.id}
-                  className="grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
-                >
-                  <span className="font-mono text-sm text-gray-800">{formatLongDate(s.businessDate)}</span>
-                  <span className="font-mono text-sm text-gray-700">
-                    {new Date(s.openedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-                  </span>
-                  <span className="font-mono text-sm text-gray-800 truncate" title={openedName}>{openedName}</span>
-                  <span className="font-mono text-sm text-gray-700">
-                    {s.closedAt
-                      ? new Date(s.closedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-                      : '—'}
-                  </span>
-                  <span className="font-mono text-sm text-gray-800 truncate" title={closedName}>{closedName}</span>
-                  <span
-                    className={`font-mono text-sm text-right ${
-                      variance === null
-                        ? 'text-gray-400'
-                        : variance === 0
-                          ? 'text-gray-700'
-                          : variance > 0
-                            ? 'text-emerald-600'
-                            : 'text-red-600'
-                    }`}
-                  >
-                    {variance === null ? '—' : formatMoney(variance)}
-                  </span>
-                  <span
-                    className={`font-mono text-[10px] font-bold tracking-wider text-right uppercase ${
-                      s.status === 'open' ? 'text-emerald-600' : 'text-gray-500'
-                    }`}
-                  >
-                    {s.status}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
       {/* Per-day breakdown — useful for weekly/custom views */}
       {(range.kind === 'weekly' || range.kind === 'custom') && (
