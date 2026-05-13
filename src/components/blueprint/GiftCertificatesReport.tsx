@@ -11,13 +11,14 @@
 // Empty query shows everything.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Gift } from 'lucide-react';
+import { Search } from 'lucide-react';
 import {
   fetchGiftCertificates,
   normalizeSerial,
   type GiftCertificate,
 } from '../../lib/giftCertificates';
 import { formatMoneyCents } from '../../lib/tickets';
+import { ReportRangeHeader, useReportRange } from './reportShared';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—';
@@ -28,6 +29,7 @@ function formatDate(iso: string | null): string {
 }
 
 export default function GiftCertificatesReport() {
+  const [range, setRange] = useReportRange();
   const [certs, setCerts] = useState<GiftCertificate[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -45,7 +47,10 @@ export default function GiftCertificatesReport() {
     return () => { cancelled = true; };
   }, []);
 
-  const filtered = useMemo(() => {
+  // Query filter only — text search across serial / dates / customers. Range
+  // filter is applied separately to open and used lists because each list
+  // cares about a different date (purchase vs redemption).
+  const queryFiltered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return certs;
     const qNorm = normalizeSerial(q);
@@ -60,8 +65,25 @@ export default function GiftCertificatesReport() {
     });
   }, [certs, query]);
 
-  const open = useMemo(() => filtered.filter((c) => c.redeemedAtMs == null), [filtered]);
-  const used = useMemo(() => filtered.filter((c) => c.redeemedAtMs != null), [filtered]);
+  // OPEN list: certs sold in the date range that haven't been redeemed yet.
+  const open = useMemo(
+    () => queryFiltered.filter(
+      (c) => c.redeemedAtMs == null
+        && c.purchaseDate >= range.from
+        && c.purchaseDate <= range.to,
+    ),
+    [queryFiltered, range.from, range.to],
+  );
+
+  // USED list: certs redeemed in the date range, regardless of when sold.
+  const used = useMemo(
+    () => queryFiltered.filter(
+      (c) => c.redeemedDate != null
+        && c.redeemedDate >= range.from
+        && c.redeemedDate <= range.to,
+    ),
+    [queryFiltered, range.from, range.to],
+  );
 
   const summary = useMemo(() => {
     const openValue = open.reduce((s, c) => s + c.valueCents, 0);
@@ -71,18 +93,15 @@ export default function GiftCertificatesReport() {
 
   return (
     <div className="p-6 overflow-y-auto h-full space-y-5">
-      <div className="flex items-end justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <Gift size={22} className="text-pink-500" />
-          <h2 className="font-bebas text-2xl tracking-[3px] text-gray-900">GIFT CERTIFICATES</h2>
-        </div>
-        <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 min-w-[260px]">
+      <ReportRangeHeader title="GIFT CERTIFICATES" range={range} onRangeChange={setRange} />
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 min-w-[280px]">
           <Search size={14} className="text-gray-400" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search serial, date, or customer…"
+            placeholder="Search serial or customer…"
             className="flex-1 font-mono text-xs bg-transparent focus:outline-none"
           />
           {query && (
@@ -94,6 +113,9 @@ export default function GiftCertificatesReport() {
             </button>
           )}
         </label>
+        <span className="font-mono text-[10px] text-gray-400 tracking-wider">
+          OPEN filtered by purchase date · USED filtered by redemption date
+        </span>
       </div>
 
       {/* KPI row */}
