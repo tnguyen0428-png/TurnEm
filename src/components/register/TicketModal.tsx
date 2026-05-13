@@ -407,9 +407,6 @@ export default function TicketModal({
           <div className="flex items-baseline gap-3">
             <h2 className="font-bebas text-2xl tracking-widest text-gray-900">CHECK OUT TICKET</h2>
             <span className="font-mono text-xs text-gray-400">#{ticket.ticketNumber}</span>
-            <span className="font-mono text-sm font-bold text-red-600" title="Services on this ticket">
-              {lines.filter((l) => l.kind === 'service').length}
-            </span>
             <span className="font-mono text-xs text-gray-400">{formatBusinessDate(ticket.businessDate)}</span>
             {ticket.status === 'closed' && (
               <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-mono text-xs font-bold tracking-wider">CLOSED</span>
@@ -512,7 +509,7 @@ export default function TicketModal({
                           className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_30px] gap-2 items-center px-3 py-1 border-b border-gray-50 last:border-b-0"
                         >
                           {badgeNumber !== null ? (
-                            <span className="justify-self-center w-9 h-9 rounded-full border-2 border-red-500 text-red-600 font-mono text-lg font-bold flex items-center justify-center">
+                            <span className="justify-self-center w-7 h-7 rounded-full border-2 border-red-500 text-red-600 font-mono text-base font-bold flex items-center justify-center">
                               {badgeNumber}
                             </span>
                           ) : (
@@ -858,7 +855,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Row({ label, value, bold, highlight }: { label: string; value: string; bold?: boolean; highlight?: boolean }) {
   return (
     <div className="flex items-center justify-between">
-      <span className={`font-mono text-xs ${bold ? 'font-bold text-gray-900' : 'text-gray-500'}`}>{label}</span>
+      <span className={`font-mono text-sm ${bold ? 'font-bold text-gray-900' : 'text-gray-500'}`}>{label}</span>
       <span className={`font-mono text-sm ${bold ? 'font-bold' : ''} ${highlight ? 'text-pink-600' : 'text-gray-900'}`}>{value}</span>
     </div>
   );
@@ -877,7 +874,7 @@ function RowEdit({
 }) {
   return (
     <div className="flex items-center justify-between gap-2" title={title}>
-      <span className="font-mono text-xs text-gray-500">{label}</span>
+      <span className="font-mono text-sm text-gray-500">{label}</span>
       <div className="flex items-center gap-1">
         <span className="font-mono text-xs text-gray-400">$</span>
         <input
