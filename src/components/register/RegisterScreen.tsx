@@ -338,7 +338,7 @@ function TicketList({
 
   return (
     <div>
-      <div className="grid grid-cols-[80px_80px_1fr_140px_120px_100px] gap-2 px-4 py-2 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+      <div className="grid grid-cols-[60px_70px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_100px] gap-3 px-4 py-2 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
         <SortHdr label="#"      keyId="number" sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
         <SortHdr label="Time"   keyId="time"   sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
         <SortHdr label="Client" keyId="client" sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
@@ -350,28 +350,43 @@ function TicketList({
         <button
           key={t.id}
           onClick={() => onClick(t)}
-          className="w-full grid grid-cols-[80px_80px_1fr_140px_120px_100px] gap-2 px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/50 transition-colors text-left items-center"
+          className="w-full grid grid-cols-[60px_70px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_100px] gap-3 px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/50 transition-colors text-left items-center"
         >
           <span className="font-mono text-sm font-bold text-gray-900">#{t.ticketNumber}</span>
           <span className="font-mono text-xs text-gray-500">{formatTimeShort(t.openedAt)}</span>
           <span className="font-mono text-sm font-semibold text-gray-900 truncate">{t.clientName}</span>
-          <span className="flex items-center gap-1.5 font-mono text-xs text-gray-700">
-            {t.primaryManicuristName ? (
-              <>
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: t.primaryManicuristColor }} />
-                <span className="truncate">{t.primaryManicuristName}</span>
-              </>
-            ) : (
-              <span className="text-gray-300">—</span>
-            )}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs text-gray-700 min-w-0">
+            {(() => {
+              // Distinct (id, name, color) tuples across every service line.
+              const seen = new Set<string>();
+              const list: { id: string; name: string; color: string }[] = [];
+              for (const it of t.items) {
+                if (it.kind !== 'service') continue;
+                const key = (it.staff1Id ?? '') + '|' + (it.staff1Name ?? '');
+                if (seen.has(key) || !it.staff1Name) continue;
+                seen.add(key);
+                list.push({ id: it.staff1Id ?? '', name: it.staff1Name, color: it.staff1Color });
+              }
+              // Fall back to the ticket's primary staff if no service lines.
+              if (list.length === 0 && t.primaryManicuristName) {
+                list.push({ id: t.primaryManicuristId ?? '', name: t.primaryManicuristName, color: t.primaryManicuristColor });
+              }
+              if (list.length === 0) return <span className="text-gray-300">—</span>;
+              return list.map((s, i) => (
+                <span key={s.id || s.name + i} className="inline-flex items-center gap-1 min-w-0">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
+                  <span className="truncate">{s.name}</span>
+                </span>
+              ));
+            })()}
           </span>
-          <span className="font-mono text-[10px] text-gray-500 truncate flex items-center gap-1.5">
+          <span className="font-mono text-[10px] text-gray-500 flex items-start gap-1.5 min-w-0">
             {t.items.length > 0 ? (
               <>
-                <span className="font-mono text-xs font-bold text-red-600 flex-shrink-0">
+                <span className="font-mono text-xs font-bold text-red-600 flex-shrink-0 mt-px">
                   {t.items.filter((i) => i.kind === 'service').length}
                 </span>
-                <span className="truncate">{t.items.map((i) => i.name).join(', ')}</span>
+                <span className="text-gray-600 leading-snug break-words">{t.items.map((i) => i.name).join(', ')}</span>
               </>
             ) : (
               <span>—</span>
