@@ -1,21 +1,8 @@
 // CloseShiftScreen — SalonBiz-mirrored Close Shift surface.
-//
-// Five tabs:
-//   - Payments Summary    : per-tender row with starting / # pays / total /
-//                           change out / drawer ± / you have / errors
-//   - Reconcile Cash      : count the drawer by denomination, variance + note
-//   - Cash Transactions   : every cash payment for this shift
-//   - Payment Transactions: every payment, filterable by method
-//   - Ticket List         : every ticket closed against this shift
-//
-// Open-ticket guard:
-//   On mount we look for any tickets with status='open' on the shift's
-//   business date. If any are open the close button is disabled and the
-//   user sees a banner: "Please close ticket before closing day."
-//   Once the open count hits zero the prompt flips to "Ready to close."
+// (Editable payments + Sales Validation popup + confirm-close step)
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, RefreshCw, X } from 'lucide-react';
 import {
   closeShift,
   computeShiftBalance,
@@ -25,6 +12,8 @@ import {
   formatMoneyCents,
   fetchTicketsForDate,
   fetchTicketsForShift,
+  parseDollarsToCents,
+  updatePayment,
 } from '../../lib/tickets';
 import type { Manicurist, Payment, PaymentMethod, Shift, Ticket } from '../../types';
 import MoneyCountTable, {
@@ -34,7 +23,6 @@ import MoneyCountTable, {
 
 interface Props {
   shift: Shift;
-  /** Roster of receptionists who can PIN-gate the close. */
   receptionists: Manicurist[];
   onClose: () => void;
   onClosed: () => void;
@@ -43,9 +31,15 @@ interface Props {
 type Tab = 'summary' | 'reconcile' | 'cash' | 'card' | 'gift' | 'tickets';
 
 export default function CloseShiftScreen({ shift, receptionists, onClose, onClosed }: Props) {
+  const isClosedShift = shift.status !== 'open';
+  const [unlocked, setUnlocked] = useState(false);
+  const isReadOnly = isClosedShift && !unlocked;
+
   const [tab, setTab] = useState<Tab>('summary');
   const [lines, setLines] = useState<ShiftBalanceLine[]>([]);
-  const [expectedCashCents, setExpectedCashCents] = useState(0);
+  const [expectedCashCents, setExpectedCashCents] = useState(
+    isClosedShift ? (shift.expectedCashCents ?? 0) : 0,
+  );
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [openTickets, setOpenTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,29 +54,37 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
     ]);
     if (balance) {
       setLines(balance.lines);
-      setExpectedCashCents(balance.expectedCashCents);
+      setExpectedCashCents(isClosedShift ? (shift.expectedCashCents ?? balance.expectedCashCents) : balance.expectedCashCents);
     }
     setTickets(shiftTickets);
     setOpenTickets(dateTickets.filter((t) => t.status === 'open'));
     setLoading(false);
-  }, [shift.id, shift.businessDate]);
+  }, [shift.id, shift.businessDate, isClosedShift, shift.expectedCashCents]);
 
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
 
-  // ─── Closing denomination count ───────────────────────────────────────────
-  const [closingCount, setClosingCount] = useState<DenominationCount>({});
+  const [closingCount, setClosingCount] = useState<DenominationCount>(
+    isClosedShift ? (shift.closingCount ?? {}) : {},
+  );
   const declaredCents = totalFromCount(closingCount);
   const varianceCents = declaredCents - expectedCashCents;
-  const [varianceNote, setVarianceNote] = useState('');
+  const [varianceNote, setVarianceNote] = useState(
+    isClosedShift ? (shift.varianceNote ?? '') : '',
+  );
 
-  // ─── Close-shift action ───────────────────────────────────────────────────
   const [busy, setBusy] = useState(false);
   const [receptionistId, setReceptionistId] = useState<string>('');
   const [pin, setPin] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const hasOpenTickets = openTickets.length > 0;
 
-  async function handleCloseShift() {
+  // Three-step close:
+  //   main       → editable shift summary (tabs incl. editable transactions)
+  //   validation → SalonBiz-style Sales Validation popup
+  //   confirm    → final "Do you want to close shift?" dialog
+  const [step, setStep] = useState<'main' | 'validation' | 'confirm'>('main');
+
+  function handleContinueToClose() {
     setError(null);
     if (hasOpenTickets) {
       setError('Please close all open tickets before closing the shift.');
@@ -105,6 +107,17 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
       setError('Incorrect PIN.');
       return;
     }
+    setStep('validation');
+  }
+
+  async function handleConfirmClose() {
+    setError(null);
+    const selected = receptionists.find((r) => r.id === receptionistId) ?? null;
+    if (!selected) {
+      setError('Pick a receptionist to attribute the close to.');
+      setStep('main');
+      return;
+    }
     setBusy(true);
     const closed = await closeShift({
       shiftId: shift.id,
@@ -117,10 +130,41 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
     setBusy(false);
     if (!closed) {
       setError('Could not close shift — try again.');
+      setStep('main');
       return;
     }
     onClosed();
   }
+
+  // Receipts breakdown — drives the Sales Validation popup totals.
+  const breakdown = useMemo(() => {
+    let services = 0;
+    let retail = 0;
+    let giftCert = 0;
+    let lineDiscounts = 0;
+    let tips = 0;
+    let tax = 0;
+    let ticketDiscounts = 0;
+    for (const t of tickets) {
+      if (t.status === 'voided') continue;
+      for (const it of t.items) {
+        const lineCents = it.unitPriceCents * it.quantity;
+        const discount = it.discountCents ?? 0;
+        if (it.kind === 'service') services += lineCents;
+        else if (it.kind === 'retail') retail += lineCents;
+        else if (it.kind === 'gift_card_sale') giftCert += lineCents;
+        else if (it.kind === 'discount') lineDiscounts += lineCents;
+        lineDiscounts += discount;
+      }
+      tips += t.tipCents ?? 0;
+      tax += t.taxCents ?? 0;
+      ticketDiscounts += t.discountCents ?? 0;
+    }
+    const series = 0; // not tracked (SalonBiz field — reserved for service packages)
+    const subTotal = services + retail + giftCert + series - lineDiscounts - ticketDiscounts;
+    const totalReceipts = subTotal + tips + tax;
+    return { services, retail, giftCert, series, subTotal, tips, tax, totalReceipts };
+  }, [tickets]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -128,13 +172,9 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // All payments across this shift's closed tickets — used by Cash &
-  // Payment Transactions tabs.
   const allPayments = useMemo<EnrichedPayment[]>(() => {
     const out: EnrichedPayment[] = [];
     for (const t of tickets) {
-      // Use the primary staff for "Staff" column; if multiple service lines
-      // exist with different staff, fall back to the first item's staff.
       const staffName =
         t.primaryManicuristName ||
         t.items.find((it) => it.staff1Name)?.staff1Name ||
@@ -157,21 +197,47 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[95vh] flex flex-col animate-modal-in">
         <div className="px-6 py-3 border-b border-gray-100 flex items-center justify-between">
           <div>
-            <h2 className="font-bebas text-2xl tracking-widest text-gray-900">CLOSE SHIFT</h2>
+            <h2 className="font-bebas text-2xl tracking-widest text-gray-900">
+              {isReadOnly ? 'SHIFT SUMMARY' : 'CLOSE SHIFT'}
+            </h2>
             <p className="font-mono text-xs text-gray-400 mt-0.5">
               Drawer #{shift.drawerNumber} — opened {new Date(shift.openedAt).toLocaleString()}
               {shift.openedByReceptionistId ? (
                 <>
                   {' '}by{' '}
                   <span className="font-bold text-gray-600">
-                    {receptionists.find((r) => r.id === shift.openedByReceptionistId)?.name
-                      ?? 'unknown'}
+                    {receptionists.find((r) => r.id === shift.openedByReceptionistId)?.name ?? 'unknown'}
                   </span>
+                </>
+              ) : null}
+              {isReadOnly && shift.closedAt ? (
+                <>
+                  {' '}· closed {new Date(shift.closedAt).toLocaleString()}
+                  {shift.closedByReceptionistId ? (
+                    <>
+                      {' '}by{' '}
+                      <span className="font-bold text-gray-600">
+                        {receptionists.find((r) => r.id === shift.closedByReceptionistId)?.name ?? 'unknown'}
+                      </span>
+                    </>
+                  ) : null}
                 </>
               ) : null}
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {isClosedShift && !unlocked && (
+              <button onClick={() => setUnlocked(true)}
+                title="Unlock inputs and re-close with new values"
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 font-mono text-[10px] font-bold tracking-wider">
+                EDIT
+              </button>
+            )}
+            {isClosedShift && unlocked && (
+              <span className="px-2 py-1 rounded-md bg-amber-100 text-amber-800 font-mono text-[10px] font-bold tracking-wider">
+                EDITING
+              </span>
+            )}
             <button onClick={() => setRefreshKey((k) => k + 1)}
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 font-mono text-[10px] font-semibold tracking-wider">
               <RefreshCw size={11} /> REFRESH
@@ -183,8 +249,7 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
           </div>
         </div>
 
-        {/* Open-ticket banner / ready banner */}
-        {!loading && (
+        {!loading && !isReadOnly && (
           hasOpenTickets ? (
             <OpenTicketsBanner tickets={openTickets} />
           ) : (
@@ -215,21 +280,28 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
               varianceCents={varianceCents}
               varianceNote={varianceNote}
               setVarianceNote={setVarianceNote}
+              readOnly={isReadOnly}
             />
           ) : tab === 'cash' ? (
             <PaymentTransactionsTab
               payments={allPayments.filter((p) => p.method === 'cash')}
               title="Cash transactions"
+              readOnly={isReadOnly}
+              onUpdated={() => setRefreshKey((k) => k + 1)}
             />
           ) : tab === 'card' ? (
             <PaymentTransactionsTab
               payments={allPayments.filter((p) => p.method === 'visa_mc')}
               title="Credit card transactions"
+              readOnly={isReadOnly}
+              onUpdated={() => setRefreshKey((k) => k + 1)}
             />
           ) : tab === 'gift' ? (
             <PaymentTransactionsTab
               payments={allPayments.filter((p) => p.method === 'gift')}
               title="Gift transactions"
+              readOnly={isReadOnly}
+              onUpdated={() => setRefreshKey((k) => k + 1)}
             />
           ) : (
             <TicketListTab tickets={tickets} />
@@ -237,60 +309,88 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
         </div>
 
         <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
-          {error && <p className="font-mono text-xs text-red-500 w-full">{error}</p>}
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="flex items-center gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Closing as</span>
-              <select
-                value={receptionistId}
-                onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
-                className="px-2 py-1.5 rounded-lg border border-gray-200 font-mono text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
-              >
-                <option value="">Select…</option>
-                {receptionists.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-            </label>
-            <input
-              type="password"
-              inputMode="numeric"
-              autoComplete="off"
-              value={pin}
-              onChange={(e) => { setPin(e.target.value); setError(null); }}
-              placeholder="PIN"
-              className="px-2 py-1.5 w-24 rounded-lg border border-gray-200 font-mono text-xs tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
-            />
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <button onClick={onClose}
-              className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50">
-              CANCEL
-            </button>
-            <button
-              onClick={handleCloseShift}
-              disabled={busy || hasOpenTickets || !receptionistId || pin.length === 0}
-              title={hasOpenTickets ? 'Close all open tickets first' : undefined}
-              className={`px-4 py-2 rounded-lg font-mono text-xs font-bold transition-colors ${
-                hasOpenTickets
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed'
-              }`}
-            >
-              {busy
-                ? 'CLOSING…'
-                : hasOpenTickets
-                  ? `${openTickets.length} TICKET${openTickets.length === 1 ? '' : 'S'} OPEN`
-                  : 'CONTINUE TO CLOSE'}
-            </button>
-          </div>
+          {error && !isReadOnly && <p className="font-mono text-xs text-red-500 w-full">{error}</p>}
+          {isReadOnly ? (
+            <div className="ml-auto flex items-center gap-2">
+              <button onClick={onClose}
+                className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800">
+                CLOSE
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="flex items-center gap-2">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Closing as</span>
+                  <select
+                    value={receptionistId}
+                    onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
+                    className="px-2 py-1.5 rounded-lg border border-gray-200 font-mono text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
+                  >
+                    <option value="">Select…</option>
+                    {receptionists.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={pin}
+                  onChange={(e) => { setPin(e.target.value); setError(null); }}
+                  placeholder="PIN"
+                  className="px-2 py-1.5 w-24 rounded-lg border border-gray-200 font-mono text-xs tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
+                />
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <button onClick={onClose}
+                  className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50">
+                  CANCEL
+                </button>
+                <button
+                  onClick={handleContinueToClose}
+                  disabled={busy || hasOpenTickets || !receptionistId || pin.length === 0}
+                  title={hasOpenTickets ? 'Close all open tickets first' : undefined}
+                  className={`px-4 py-2 rounded-lg font-mono text-xs font-bold transition-colors ${
+                    hasOpenTickets
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  {hasOpenTickets
+                    ? `${openTickets.length} TICKET${openTickets.length === 1 ? '' : 'S'} OPEN`
+                    : 'CONTINUE TO CLOSE'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
+
+      {step === 'validation' && (
+        <SalesValidationPopup
+          shift={shift}
+          breakdown={breakdown}
+          lines={lines}
+          expectedCashCents={expectedCashCents}
+          declaredCents={declaredCents}
+          varianceCents={varianceCents}
+          onBack={() => { setStep('main'); setError(null); }}
+          onContinue={() => setStep('confirm')}
+        />
+      )}
+
+      {step === 'confirm' && (
+        <ConfirmCloseDialog
+          busy={busy}
+          onCancel={() => { if (!busy) setStep('validation'); }}
+          onConfirm={() => void handleConfirmClose()}
+        />
+      )}
     </div>
   );
 }
-
-// ── Banners ────────────────────────────────────────────────────────────────
 
 function OpenTicketsBanner({ tickets }: { tickets: Ticket[] }) {
   return (
@@ -324,8 +424,6 @@ function ReadyBanner() {
   );
 }
 
-// ── Tabs ───────────────────────────────────────────────────────────────────
-
 function TabBtn({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
     <button
@@ -340,8 +438,6 @@ function TabBtn({ active, children, onClick }: { active: boolean; children: Reac
 }
 
 function PaymentsSummary({ lines, declaredCents }: { lines: ShiftBalanceLine[]; declaredCents: number }) {
-  // Match the SalonBiz layout: simple table, zeros instead of dashes,
-  // single Errors column populated only for cash (variance vs counted).
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
       <div className="grid grid-cols-[90px_repeat(7,_1fr)] gap-1 px-3 py-2 bg-gray-100 border-b border-gray-200 font-mono text-[10px] tracking-wider font-semibold text-gray-500 uppercase">
@@ -393,7 +489,7 @@ function PaymentsSummary({ lines, declaredCents }: { lines: ShiftBalanceLine[]; 
 
 function ReconcileCash({
   expectedCashCents, count, setCount, declaredCents, varianceCents,
-  varianceNote, setVarianceNote,
+  varianceNote, setVarianceNote, readOnly = false,
 }: {
   expectedCashCents: number;
   count: DenominationCount;
@@ -402,6 +498,7 @@ function ReconcileCash({
   varianceCents: number;
   varianceNote: string;
   setVarianceNote: (v: string) => void;
+  readOnly?: boolean;
 }) {
   const isOver = varianceCents > 0;
   const isShort = varianceCents < 0;
@@ -409,19 +506,27 @@ function ReconcileCash({
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
       <div className="flex flex-col gap-4">
         <p className="font-mono text-xs text-gray-500">
-          Count the actual cash in the drawer by denomination. Variance = counted − expected.
+          {readOnly
+            ? 'Closing denomination count recorded at end of shift.'
+            : 'Count the actual cash in the drawer by denomination. Variance = counted − expected.'}
         </p>
-        <MoneyCountTable value={count} onChange={setCount} hideCoins billsAscending />
+        <MoneyCountTable value={count} onChange={setCount} disabled={readOnly} hideCoins billsAscending />
         <div>
           <label className="font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
-            Variance Note {varianceCents !== 0 && <span className="text-red-500">*required</span>}
+            Variance Note {!readOnly && varianceCents !== 0 && <span className="text-red-500">*required</span>}
           </label>
-          <textarea
-            value={varianceNote} onChange={(e) => setVarianceNote(e.target.value)}
-            rows={3}
-            className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 resize-none"
-            placeholder="e.g. tip-out paid in cash; missed pay-out entry"
-          />
+          {readOnly ? (
+            <p className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 font-mono text-sm text-gray-700 min-h-[72px] whitespace-pre-wrap">
+              {varianceNote.trim() ? varianceNote : <span className="text-gray-400">— none —</span>}
+            </p>
+          ) : (
+            <textarea
+              value={varianceNote} onChange={(e) => setVarianceNote(e.target.value)}
+              rows={3}
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 resize-none"
+              placeholder="e.g. tip-out paid in cash; missed pay-out entry"
+            />
+          )}
         </div>
       </div>
       <div className="bg-gray-50 rounded-xl p-5 flex flex-col gap-3 self-start">
@@ -454,11 +559,12 @@ interface EnrichedPayment extends Payment {
 type SortBy = 'customer' | 'amount' | 'ticket';
 
 function PaymentTransactionsTab({
-  payments,
-  title,
+  payments, title, readOnly = true, onUpdated,
 }: {
   payments: EnrichedPayment[];
   title: string;
+  readOnly?: boolean;
+  onUpdated?: () => void;
 }) {
   const [sortBy, setSortBy] = useState<SortBy>('customer');
 
@@ -477,6 +583,9 @@ function PaymentTransactionsTab({
       <div className="flex items-center gap-3 flex-wrap">
         <p className="font-bebas text-base tracking-widest text-gray-900">{title.toUpperCase()}</p>
         <span className="font-mono text-[10px] text-gray-400">{filtered.length} entries</span>
+        {!readOnly && (
+          <span className="font-mono text-[10px] text-pink-600 font-semibold">CLICK AMOUNT TO EDIT</span>
+        )}
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <label className="flex items-center gap-2">
             <span className="font-mono text-[10px] font-bold text-gray-400 tracking-wider">SORT</span>
@@ -507,18 +616,7 @@ function PaymentTransactionsTab({
           </div>
         ) : (
           filtered.map((p) => (
-            <div key={p.id}
-              className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center">
-              <span className="font-mono text-sm text-gray-900 truncate">{p.clientName}</span>
-              <span className="font-mono text-sm font-semibold text-gray-900 text-right">
-                {formatMoneyCents(p.amountCents)}
-              </span>
-              <span>
-                <MethodPill method={p.method} />
-              </span>
-              <span className="font-mono text-sm text-gray-700 text-right">#{p.ticketNumber}</span>
-              <span className="font-mono text-sm text-gray-700 truncate">{p.staffName || '—'}</span>
-            </div>
+            <PaymentRow key={p.id} payment={p} readOnly={readOnly} onUpdated={onUpdated} />
           ))
         )}
         <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 bg-gray-50 border-t border-gray-100 items-center">
@@ -527,6 +625,82 @@ function PaymentTransactionsTab({
           <span /><span /><span />
         </div>
       </div>
+    </div>
+  );
+}
+
+function PaymentRow({
+  payment, readOnly, onUpdated,
+}: {
+  payment: EnrichedPayment;
+  readOnly: boolean;
+  onUpdated?: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [input, setInput] = useState((payment.amountCents / 100).toFixed(2));
+  const [saving, setSaving] = useState(false);
+
+  function startEdit() {
+    if (readOnly || saving) return;
+    setInput((payment.amountCents / 100).toFixed(2));
+    setEditing(true);
+  }
+
+  async function commit() {
+    const nextCents = parseDollarsToCents(input);
+    if (nextCents === payment.amountCents) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    const ok = await updatePayment(payment.id, nextCents);
+    setSaving(false);
+    setEditing(false);
+    if (ok) onUpdated?.();
+  }
+
+  function cancel() {
+    setInput((payment.amountCents / 100).toFixed(2));
+    setEditing(false);
+  }
+
+  return (
+    <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center">
+      <span className="font-mono text-sm text-gray-900 truncate">{payment.clientName}</span>
+      {editing ? (
+        <input
+          autoFocus
+          type="text"
+          inputMode="decimal"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onBlur={() => void commit()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            if (e.key === 'Escape') cancel();
+          }}
+          className="px-2 py-1 rounded-md border border-pink-300 bg-white font-mono text-sm font-semibold text-gray-900 text-right focus:outline-none focus:ring-2 focus:ring-pink-300 w-full"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={startEdit}
+          disabled={readOnly}
+          className={`font-mono text-sm font-semibold text-right tabular-nums ${
+            readOnly
+              ? 'text-gray-900 cursor-default'
+              : 'text-gray-900 hover:bg-pink-50 hover:ring-1 hover:ring-pink-200 rounded-md px-1 cursor-text'
+          } ${saving ? 'opacity-50' : ''}`}
+          title={readOnly ? undefined : 'Click to edit'}
+        >
+          {formatMoneyCents(payment.amountCents)}
+        </button>
+      )}
+      <span>
+        <MethodPill method={payment.method} />
+      </span>
+      <span className="font-mono text-sm text-gray-700 text-right">#{payment.ticketNumber}</span>
+      <span className="font-mono text-sm text-gray-700 truncate">{payment.staffName || '—'}</span>
     </div>
   );
 }
@@ -608,6 +782,352 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between">
       <span className="font-mono text-xs text-gray-500">{label}</span>
       <span className="font-mono text-base font-bold text-gray-900">{value}</span>
+    </div>
+  );
+}
+
+// ── Sales Validation popup (SalonBiz-style "Close Day" review) ───────────────
+//
+// Shown after the editable Shift Summary; mirrors the SalonBiz layout with
+// four sub-tabs: Payment Summary, Sales Validation, Bank Deposit,
+// Reports & Overnight. The Sales Validation tab is the focal view —
+// Receipts on the left, Payments on the right, Error centered below.
+
+interface Breakdown {
+  services: number;
+  retail: number;
+  giftCert: number;
+  series: number;
+  subTotal: number;
+  tips: number;
+  tax: number;
+  totalReceipts: number;
+}
+
+type ValidationTab = 'payments' | 'validation' | 'reports';
+
+function SalesValidationPopup({
+  shift, breakdown, lines, expectedCashCents, declaredCents, varianceCents,
+  onBack, onContinue,
+}: {
+  shift: Shift;
+  breakdown: Breakdown;
+  lines: ShiftBalanceLine[];
+  expectedCashCents: number;
+  declaredCents: number;
+  varianceCents: number;
+  onBack: () => void;
+  onContinue: () => void;
+}) {
+  const [vtab, setVtab] = useState<ValidationTab>('payments');
+
+  // Payments by method. SalonBiz tracks Check separately; our schema doesn't
+  // (yet), so Check shows $0 — placeholder kept so the layout matches the
+  // screenshot the user referenced.
+  const payByMethod = useMemo(() => {
+    const m: Record<'cash' | 'visa_mc' | 'gift', number> = { cash: 0, visa_mc: 0, gift: 0 };
+    for (const l of lines) m[l.method] = l.paymentAmountCents;
+    return m;
+  }, [lines]);
+  const checkCents = 0;
+  const totalPayments = payByMethod.cash + checkCents + payByMethod.gift + payByMethod.visa_mc;
+
+  const cashLine = lines.find((l) => l.method === 'cash');
+  const startingPlusDrawer = (cashLine?.startingBalanceCents ?? 0) + (cashLine?.drawerEntriesCents ?? 0);
+  const totalYouHave = totalPayments + startingPlusDrawer - (cashLine?.changeOutCents ?? 0);
+  // Cash that physically goes in the bank envelope = cash collected during
+  // the day minus the starting bank that stays in the drawer for tomorrow.
+  // Equivalent to: (drawer cash at close) - starting balance.
+  const envelopeCashCents =
+    payByMethod.cash
+    - (cashLine?.changeOutCents ?? 0)
+    + (cashLine?.drawerEntriesCents ?? 0);
+  // Validation error: Total Payments should equal Total Receipts (cash math
+  // matches sales math). Non-zero flags a missing payment or a mis-entered
+  // amount.
+  const errorCents = totalPayments - breakdown.totalReceipts;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col animate-modal-in">
+        <div className="px-6 py-3 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-bebas text-2xl tracking-widest text-gray-900">CLOSE DAY</h2>
+          <button onClick={onBack}
+            className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+            title="Back to Shift Summary">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="px-6 pt-2 border-b border-gray-100 flex items-center gap-1 flex-wrap">
+          <TabBtn active={vtab === 'payments'}   onClick={() => setVtab('payments')}>PAYMENT SUMMARY</TabBtn>
+          <TabBtn active={vtab === 'validation'} onClick={() => setVtab('validation')}>SALES VALIDATION</TabBtn>
+          <TabBtn active={vtab === 'reports'}    onClick={() => setVtab('reports')}>REPORTS &amp; OVERNIGHT</TabBtn>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {vtab === 'validation' ? (
+            <SalesValidationTab
+              breakdown={breakdown}
+              payByMethod={payByMethod}
+              totalPayments={totalPayments}
+              totalYouHave={totalYouHave}
+              startingPlusDrawer={startingPlusDrawer}
+              startingCashCents={cashLine?.startingBalanceCents ?? 0}
+              envelopeCashCents={envelopeCashCents}
+              errorCents={errorCents}
+            />
+          ) : vtab === 'payments' ? (
+            <PaymentSummaryTab
+              lines={lines}
+              expectedCashCents={expectedCashCents}
+              declaredCents={declaredCents}
+              varianceCents={varianceCents}
+            />
+          ) : (
+            <ReportsOvernightTab shift={shift} totalReceiptsCents={breakdown.totalReceipts} />
+          )}
+        </div>
+
+        <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between gap-3">
+          <button onClick={onBack}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50">
+            <ChevronLeft size={14} /> BACK TO SUMMARY
+          </button>
+          <div className="ml-auto flex items-center gap-3">
+            {errorCents !== 0 && (
+              <span className="font-mono text-[11px] font-bold text-red-600">
+                ERROR {formatMoneyCents(errorCents)} — verify before closing
+              </span>
+            )}
+            <button
+              onClick={() => {
+                // Walk the tabs in order; the last tab triggers the final
+                // confirm-close dialog.
+                if (vtab === 'payments') setVtab('validation');
+                else if (vtab === 'validation') setVtab('reports');
+                else onContinue();
+              }}
+              className="px-6 py-2 rounded-full bg-pink-500 text-white font-mono text-xs font-bold hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm">
+              {vtab === 'reports' ? 'CONFIRM CLOSING' : 'CONTINUE'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SalesValidationTab({
+  breakdown, payByMethod, totalPayments,
+  totalYouHave, startingPlusDrawer, startingCashCents, envelopeCashCents, errorCents,
+}: {
+  breakdown: Breakdown;
+  payByMethod: Record<'cash' | 'visa_mc' | 'gift', number>;
+  totalPayments: number;
+  totalYouHave: number;
+  startingPlusDrawer: number;
+  startingCashCents: number;
+  envelopeCashCents: number;
+  errorCents: number;
+}) {
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="rounded-xl border border-gray-200 overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+            <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Receipts</span>
+          </div>
+          <div className="px-4 py-3 space-y-2">
+            <SummaryRow label="Services"   value={breakdown.services} />
+            <SummaryRow label="Gift Cert." value={breakdown.giftCert} />
+            <div className="border-t border-gray-200 my-2" />
+            <SummaryRow label="Sub Total"  value={breakdown.subTotal} bold />
+            <SummaryRow label="Tips"       value={breakdown.tips} />
+            <SummaryRow label="Tax"        value={breakdown.tax} />
+            <div className="border-t border-gray-200 my-2" />
+            <SummaryRow label="Total Receipts" value={breakdown.totalReceipts} bold accent />
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 grid grid-cols-2">
+            <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Payment Type</span>
+            <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase text-right">Amount</span>
+          </div>
+          <div className="px-4 py-3 space-y-2">
+            <SummaryRow label="Cash"    value={payByMethod.cash} />
+            <SummaryRow label="Gift"    value={payByMethod.gift} />
+            <SummaryRow label="Visa/MC" value={payByMethod.visa_mc} />
+            <div className="border-t border-gray-200 my-2" />
+            <SummaryRow label="Total You Have" value={totalYouHave} bold />
+            <SummaryRow label="Less Starting Cash & Drawer Entries" value={startingPlusDrawer} />
+            <div className="border-t border-gray-200 my-2" />
+            <SummaryRow label="Total Payments" value={totalPayments} bold accent />
+            <div className="mt-2 flex items-center justify-between rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
+              <div className="flex flex-col">
+                <span className="font-mono text-sm font-bold text-emerald-800">Cash in Envelope</span>
+                <span className="font-mono text-[10px] text-emerald-700">
+                  (less starting cash {formatMoneyCents(startingCashCents)})
+                </span>
+              </div>
+              <span className="font-mono text-lg font-bold text-emerald-700 tabular-nums">
+                {formatMoneyCents(envelopeCashCents)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-center gap-3 pt-1">
+        <span className="font-mono text-xs tracking-wider font-bold text-gray-500 uppercase">Error</span>
+        <span className={`font-mono text-lg font-bold tabular-nums ${
+          errorCents === 0 ? 'text-gray-700' : 'text-red-600'
+        }`}>
+          {formatMoneyCents(errorCents)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PaymentSummaryTab({
+  lines, expectedCashCents, declaredCents, varianceCents,
+}: {
+  lines: ShiftBalanceLine[];
+  expectedCashCents: number;
+  declaredCents: number;
+  varianceCents: number;
+}) {
+  return (
+    <div className="space-y-4">
+      <PaymentsSummary lines={lines} declaredCents={declaredCents} />
+      <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 grid grid-cols-3 gap-4 text-center">
+        <div>
+          <p className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Expected Cash</p>
+          <p className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(expectedCashCents)}</p>
+        </div>
+        <div>
+          <p className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Counted Cash</p>
+          <p className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(declaredCents)}</p>
+        </div>
+        <div>
+          <p className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Variance</p>
+          <p className={`font-mono text-base font-bold tabular-nums ${
+            varianceCents === 0 ? 'text-gray-900' : varianceCents > 0 ? 'text-emerald-600' : 'text-red-600'
+          }`}>
+            {(varianceCents > 0 ? '+' : '') + formatMoneyCents(varianceCents)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function ReportsOvernightTab({
+  shift, totalReceiptsCents,
+}: {
+  shift: Shift;
+  totalReceiptsCents: number;
+}) {
+  // Format the business date like "Wednesday, May 13, 2026".
+  const prettyDate = useMemo(() => {
+    const [y, m, d] = shift.businessDate.split('-').map(Number);
+    if (!y || !m || !d) return shift.businessDate;
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString(undefined, {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    });
+  }, [shift.businessDate]);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+          <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">End-of-Day Reports</span>
+        </div>
+        <div className="px-4 py-3 space-y-3">
+          <div className="text-center py-2">
+            <p className="font-bebas text-2xl tracking-widest text-pink-600">
+              {prettyDate}
+            </p>
+          </div>
+          <p className="font-mono text-xs text-gray-600">
+            After closing, end-of-day reports will be available in the Blueprint
+            section (Sales, Staff, Manicurist Sales, Gift Certificates,
+            Receptionist Hours).
+          </p>
+          <div className="rounded-lg bg-gray-50 px-3 py-2 max-w-xs mx-auto text-center">
+            <p className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Total Receipts</p>
+            <p className="font-mono text-sm font-bold text-gray-900 tabular-nums">{formatMoneyCents(totalReceiptsCents)}</p>
+          </div>
+        </div>
+      </div>
+      <p className="font-mono text-[11px] text-gray-400 text-center">
+        Overnight processing runs automatically once the shift closes.
+      </p>
+    </div>
+  );
+}
+
+function SummaryRow({
+  label, value, bold = false, accent = false,
+}: {
+  label: string;
+  value: number;
+  bold?: boolean;
+  accent?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className={`font-mono text-sm ${bold ? 'font-bold text-gray-900' : 'text-gray-700'}`}>{label}</span>
+      <span className={`font-mono ${bold ? 'text-base font-bold' : 'text-sm'} ${accent ? 'text-pink-600' : 'text-gray-900'} tabular-nums`}>
+        {formatMoneyCents(value)}
+      </span>
+    </div>
+  );
+}
+
+// ── Final confirm dialog ─────────────────────────────────────────────────────
+
+function ConfirmCloseDialog({
+  busy, onCancel, onConfirm,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col animate-modal-in">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+          <AlertTriangle size={20} className="text-amber-500" />
+          <h2 className="font-bebas text-xl tracking-widest text-gray-900">CLOSE SHIFT?</h2>
+        </div>
+        <div className="px-6 py-5">
+          <p className="font-mono text-sm text-gray-800">
+            Do you want to close shift?
+          </p>
+          <p className="font-mono text-[11px] text-gray-500 mt-2 leading-relaxed">
+            Once closed, the drawer is sealed for the day. Payments and tickets
+            on this shift become read-only (an admin can still unlock and
+            re-close to make corrections).
+          </p>
+        </div>
+        <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
+          <button onClick={onCancel}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50 disabled:opacity-50">
+            NO
+          </button>
+          <button onClick={onConfirm}
+            disabled={busy}
+            className="px-5 py-2 rounded-lg bg-red-600 text-white font-mono text-xs font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            {busy ? 'CLOSING…' : 'YES, CLOSE SHIFT'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

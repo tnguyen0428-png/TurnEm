@@ -1433,3 +1433,69 @@ export async function reallocateTurnsForStaffChanges(
   }
 }
 
+// update payment ----------------------------------------------------------
+
+/**
+ * Adjust a recorded payment's amount before shift close. Used by the
+ * Cash/Card/Gift transaction tabs on the Close Shift surface so receptionists
+ * can fix mis-entered amounts without voiding and re-tendering.
+ *
+ * For cash payments, `tenderedCents` is left intact (it represents what the
+ * customer physically handed over) and `changeCents` is recomputed as
+ * max(0, tendered - amount) so the drawer math stays consistent.
+ *
+ * After updating the row, the parent ticket's `paid_cents` is re-derived
+ * from the sum of every non-refund payment so totals don't drift.
+ */
+export async function updatePayment(
+  paymentId: string,
+  newAmountCents: number,
+): Promise<boolean> {
+  // 1. Read the existing row to know which ticket + tendered amount apply.
+  const { data: existing, error: rErr } = await supabase
+    .from('payments')
+    .select('id, ticket_id, method, tendered_cents')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (rErr || !existing) {
+    console.error('[tickets] updatePayment read:', rErr?.message ?? 'not found');
+    return false;
+  }
+  const row = existing as { id: string; ticket_id: string; method: 'cash' | 'visa_mc' | 'gift'; tendered_cents: number | null };
+
+  // 2. Update the payment row.
+  const patch: Record<string, number | null> = { amount_cents: newAmountCents };
+  if (row.method === 'cash' && row.tendered_cents != null) {
+    patch.change_cents = Math.max(0, row.tendered_cents - newAmountCents);
+  }
+  const { error: uErr } = await supabase.from('payments').update(patch).eq('id', paymentId);
+  if (uErr) {
+    console.error('[tickets] updatePayment update:', uErr.message);
+    return false;
+  }
+
+  // 3. Re-derive paid_cents on the parent ticket from every non-refund row
+  //    so totals don't drift after the amount change.
+  const { data: allPays, error: aErr } = await supabase
+    .from('payments')
+    .select('amount_cents, refund_of')
+    .eq('ticket_id', row.ticket_id);
+  if (aErr) {
+    console.error('[tickets] updatePayment re-sum:', aErr.message);
+    return false;
+  }
+  const paidCents = ((allPays ?? []) as Array<{ amount_cents: number; refund_of: string | null }>)
+    .filter((p) => p.refund_of == null)
+    .reduce((s, p) => s + (p.amount_cents ?? 0), 0);
+
+  const { error: tErr } = await supabase
+    .from('tickets')
+    .update({ paid_cents: paidCents })
+    .eq('id', row.ticket_id);
+  if (tErr) {
+    console.error('[tickets] updatePayment ticket paid_cents:', tErr.message);
+    return false;
+  }
+
+  return true;
+}
