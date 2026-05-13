@@ -342,11 +342,18 @@ export default function SalesReport() {
                 const totalDiscount = (t.discountCents || 0) + lineDiscount;
                 const whenMs = t.closedAt ?? t.openedAt;
                 return (
-                  <div key={t.id} className="border-b border-gray-50 last:border-b-0">
+                  <div
+                    key={t.id}
+                    className={`border-b border-gray-50 last:border-b-0 transition-colors ${
+                      expanded ? 'bg-pink-50/50 ring-1 ring-pink-200 rounded-lg my-1 shadow-sm' : ''
+                    }`}
+                  >
                     <button
                       type="button"
                       onClick={() => setExpandedTicketId(expanded ? null : t.id)}
-                      className="w-full grid grid-cols-[70px_110px_70px_1fr_1fr_80px_80px_90px_100px] gap-2 px-4 py-2.5 items-center hover:bg-gray-50 transition-colors text-left"
+                      className={`w-full grid grid-cols-[70px_110px_70px_1fr_1fr_80px_80px_90px_100px] gap-2 px-4 py-2.5 items-center transition-colors text-left ${
+                        expanded ? 'bg-pink-100/60' : 'hover:bg-gray-50'
+                      }`}
                     >
                       <span className="font-mono text-sm font-bold text-gray-800 flex items-center gap-1">
                         {expanded
@@ -364,9 +371,9 @@ export default function SalesReport() {
                       <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoney(t.totalCents)}</span>
                     </button>
                     {expanded && (
-                      <div className="bg-gray-50/60 px-4 pt-2 pb-3 flex flex-col gap-2">
+                      <div className="bg-pink-50/40 border-l-4 border-pink-300 px-4 pt-3 pb-3 flex flex-col gap-2">
                         {/* Line items */}
-                        <div className="rounded-lg bg-white border border-gray-100 overflow-hidden">
+                        <div className="rounded-lg bg-white border border-pink-100 overflow-hidden shadow-sm">
                           <div className="grid grid-cols-[40px_1fr_1fr_70px_90px_90px_100px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
                             <span className="text-right">Qty</span>
                             <span>Service</span>
@@ -397,14 +404,14 @@ export default function SalesReport() {
                         </div>
                         {/* Totals + payments */}
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="rounded-lg bg-white border border-gray-100 px-3 py-2 flex flex-col gap-0.5 text-xs font-mono">
+                          <div className="rounded-lg bg-white border border-pink-100 px-3 py-2 flex flex-col gap-0.5 text-xs font-mono shadow-sm">
                             <SummaryLine label="Subtotal" value={formatMoney(t.subtotalCents)} />
                             {totalDiscount > 0 && <SummaryLine label="Discount" value={`-${formatMoney(totalDiscount)}`} />}
                             {t.taxCents > 0 && <SummaryLine label="Tax" value={formatMoney(t.taxCents)} />}
                             {t.tipCents > 0 && <SummaryLine label="Tip" value={formatMoney(t.tipCents)} />}
                             <SummaryLine label="Total" value={formatMoney(t.totalCents)} bold />
                           </div>
-                          <div className="rounded-lg bg-white border border-gray-100 px-3 py-2 flex flex-col gap-1">
+                          <div className="rounded-lg bg-white border border-pink-100 px-3 py-2 flex flex-col gap-1 shadow-sm">
                             <span className="font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">Payments</span>
                             {t.payments.length === 0 ? (
                               <span className="font-mono text-xs text-gray-400">No payments captured.</span>
