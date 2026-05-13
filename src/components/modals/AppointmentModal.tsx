@@ -50,12 +50,17 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     staffName: string;
     receptionistName: string;
   }>(null);
-  const [clientFirstName, setClientFirstName] = useState('');
-  const [clientLastName, setClientLastName] = useState('');
+  // Pre-fill name + phone from the appointment draft. Used when the
+  // BOOK APPT button on the ticket modal opens this flow — the customer's
+  // info from the ticket carries over so the receptionist doesn't have to
+  // retype it.
+  const _draftName = state.appointmentDraft;
+  const [clientFirstName, setClientFirstName] = useState(_draftName?.clientFirstName ?? '');
+  const [clientLastName, setClientLastName] = useState(_draftName?.clientLastName ?? '');
   // Combined name used everywhere else in this modal (save payload, display).
   // The two inputs stay the single source of truth.
   const clientName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim();
-  const [clientPhone, setClientPhone] = useState('');
+  const [clientPhone, setClientPhone] = useState(_draftName?.clientPhone ?? '');
 
   // Debounced live search for existing customer profiles.
   useEffect(() => {

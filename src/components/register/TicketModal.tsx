@@ -39,9 +39,7 @@ interface Props {
   onClose: () => void;
   onChanged?: (saved: Ticket) => void;
   /** Open the customer-history view for the current client phone. */
-  onShowCustomerHistory?: (clientPhone: string, clientName: string) => void;
   /** Open the appointment booking flow for the current client. */
-  onBookAppointment?: (clientPhone: string, clientName: string) => void;
 }
 
 interface DraftLine {
@@ -71,10 +69,11 @@ export default function TicketModal({
   ticket,
   onClose,
   onChanged,
-  onShowCustomerHistory,
-  onBookAppointment,
 }: Props) {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
+  // History panel state — opens a side modal showing this customer's
+  // past tickets. Wired by the HISTORY footer button.
+  const [showHistory, setShowHistory] = useState(false);
   const isOpen = ticket.status === 'open';
   const isVoided = ticket.status === 'voided';
   // VOID requires a receptionist PIN — the modal renders inline once this is true.
@@ -406,8 +405,11 @@ export default function TicketModal({
         {/* Header */}
         <div className="px-5 py-2.5 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-baseline gap-3">
-            <h2 className="font-bebas text-2xl tracking-widest text-gray-900">TICKET</h2>
+            <h2 className="font-bebas text-2xl tracking-widest text-gray-900">CHECK OUT TICKET</h2>
             <span className="font-mono text-xs text-gray-400">#{ticket.ticketNumber}</span>
+            <span className="font-mono text-sm font-bold text-red-600" title="Services on this ticket">
+              {lines.filter((l) => l.kind === 'service').length}
+            </span>
             <span className="font-mono text-xs text-gray-400">{formatBusinessDate(ticket.businessDate)}</span>
             {ticket.status === 'closed' && (
               <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-mono text-xs font-bold tracking-wider">CLOSED</span>
@@ -631,19 +633,11 @@ export default function TicketModal({
                   disabled={!isOpen} />
                 <div className="border-t border-gray-200 my-0.5" />
                 <Row label="Total" value={formatMoneyCents(totalCents)} bold />
-                <Row
-                  label="Payments"
-                  value={formatMoneyCents(isOpen ? pendingPaidCents : ticket.paidCents)}
-                />
-                <Row
-                  label="Due"
-                  value={formatMoneyCents(dueCents)}
-                  bold
-                  highlight={isOpen && dueCents !== 0}
-                />
               </div>
 
-              {/* Payments — open ticket lets you queue tenders; closed shows captured */}
+              {/* Payment method buttons — pulled up so the cashier can pick a
+                  tender immediately after seeing Total. Each click adds a
+                  pending row below, defaulting to the remaining due. */}
               {isOpen ? (
                 <>
                   <div className="grid grid-cols-3 gap-1.5">
@@ -671,23 +665,6 @@ export default function TicketModal({
                           </button>
                         </div>
                       ))}
-                      {pending.some((p) => p.method === 'cash') && (
-                        <div className="px-2.5 py-1.5">
-                          <label className="font-mono text-[10px] tracking-wider text-gray-400 uppercase">Tendered (cash)</label>
-                          {pending.map((p, idx) =>
-                            p.method !== 'cash' ? null : (
-                              <input
-                                key={idx} type="text" inputMode="decimal"
-                                value={p.tenderedInput ?? ''}
-                                onChange={(e) => patchPending(idx, { tenderedInput: e.target.value })}
-                                onBlur={(e) => patchPending(idx, { tenderedInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
-                                className="mt-0.5 w-full px-2 py-1 rounded-md border border-gray-200 font-mono text-sm text-right focus:outline-none focus:border-gray-400"
-                                placeholder="0.00"
-                              />
-                            ),
-                          )}
-                        </div>
-                      )}
                       {pending.some((p) => p.method === 'gift') && (
                         <div className="px-2.5 py-1.5">
                           <label className="font-mono text-[10px] tracking-wider text-gray-400 uppercase">Gift card code</label>
@@ -706,22 +683,40 @@ export default function TicketModal({
                       )}
                     </div>
                   )}
+                  <div className="bg-gray-50 rounded-xl p-3 flex flex-col gap-1.5">
+                    <Row
+                      label="Amount Paid"
+                      value={formatMoneyCents(pendingPaidCents)}
+                      bold
+                    />
+                    <Row
+                      label="Due"
+                      value={formatMoneyCents(dueCents)}
+                      bold
+                      highlight={dueCents !== 0}
+                    />
+                  </div>
                 </>
               ) : (
-                <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
-                  {ticket.payments.length === 0 ? (
-                    <div className="px-3 py-2 font-mono text-xs text-gray-400 text-center">No payments captured.</div>
-                  ) : (
-                    ticket.payments.map((p) => (
-                      <div key={p.id} className="px-2.5 py-1.5 flex items-center justify-between">
-                        <span className="font-mono text-xs font-bold text-gray-500">
-                          {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
-                        </span>
-                        <span className="font-mono text-sm text-gray-900">{formatMoneyCents(p.amountCents)}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <>
+                  <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                    {ticket.payments.length === 0 ? (
+                      <div className="px-3 py-2 font-mono text-xs text-gray-400 text-center">No payments captured.</div>
+                    ) : (
+                      ticket.payments.map((p) => (
+                        <div key={p.id} className="px-2.5 py-1.5 flex items-center justify-between">
+                          <span className="font-mono text-xs font-bold text-gray-500">
+                            {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
+                          </span>
+                          <span className="font-mono text-sm text-gray-900">{formatMoneyCents(p.amountCents)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-3 flex flex-col gap-1.5">
+                    <Row label="Amount Paid" value={formatMoneyCents(ticket.paidCents)} bold />
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -733,13 +728,32 @@ export default function TicketModal({
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <FooterBtn
               label="HISTORY"
-              onClick={() => onShowCustomerHistory?.(clientPhone, clientName)}
-              disabled={!onShowCustomerHistory || busy !== 'idle'}
+              onClick={() => setShowHistory(true)}
+              disabled={busy !== 'idle'}
             />
             <FooterBtn
               label="BOOK APPT"
-              onClick={() => onBookAppointment?.(clientPhone, clientName)}
-              disabled={!onBookAppointment || busy !== 'idle'}
+              onClick={() => {
+                // Pre-fill the appointment draft with this customer's info,
+                // then open the appointment modal. The AppointmentModal will
+                // run its own customer-match flow on top so any existing
+                // profile shows up automatically.
+                const parts = clientName.trim().split(/\s+/);
+                const first = parts.shift() ?? '';
+                const last = parts.join(' ');
+                dispatch({
+                  type: 'SET_APPOINTMENT_DRAFT',
+                  draft: {
+                    date: ticket.businessDate,
+                    clientFirstName: first,
+                    clientLastName: last,
+                    clientPhone,
+                  },
+                });
+                dispatch({ type: 'SET_MODAL', modal: 'addAppointment' });
+                onClose();
+              }}
+              disabled={busy !== 'idle'}
             />
             {isOpen && (
               <>
@@ -763,6 +777,13 @@ export default function TicketModal({
           </div>
         </div>
       </div>
+      {showHistory && (
+        <CustomerHistoryModal
+          clientName={clientName}
+          clientPhone={clientPhone}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
       {showGiftModal && (
         <GiftCardSaleModal
           onClose={() => setShowGiftModal(false)}
@@ -905,5 +926,133 @@ function FooterBtn({
     >
       {label}
     </button>
+  );
+}
+
+
+// ── Customer history modal ─────────────────────────────────────────────────
+//
+// Quick-look at the past closed tickets for the matched client. Fetched on
+// demand from the tickets table, matching on phone (digits only) first then
+// case-insensitive name fallback.
+
+function CustomerHistoryModal({
+  clientName,
+  clientPhone,
+  onClose,
+}: {
+  clientName: string;
+  clientPhone: string;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<
+    Array<{
+      id: string;
+      ticketNumber: number;
+      businessDate: string;
+      closedAt: string | null;
+      totalCents: number;
+      status: string;
+      primaryStaff: string;
+      services: string;
+    }>
+  >([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const phoneDigits = (clientPhone ?? '').replace(/\D/g, '');
+      const nameLower = (clientName ?? '').trim().toLowerCase();
+      if (!phoneDigits && !nameLower) {
+        setRows([]); setLoading(false); return;
+      }
+      const { supabase } = await import('../../lib/supabase');
+      // Pull the newest 200 tickets; filter locally.
+      const { data, error } = await supabase
+        .from('tickets')
+        .select('id, ticket_number, business_date, closed_at, total_cents, status, primary_manicurist_name, client_name, client_phone, items:ticket_items(name, kind)')
+        .order('opened_at', { ascending: false })
+        .limit(200);
+      if (cancelled) return;
+      if (error) { console.warn('[CustomerHistory] fetch failed:', error.message); setRows([]); setLoading(false); return; }
+      type Row = {
+        id: string; ticket_number: number; business_date: string;
+        closed_at: string | null; total_cents: number; status: string;
+        primary_manicurist_name: string; client_name: string; client_phone: string;
+        items?: Array<{ name: string; kind: string }>;
+      };
+      const filtered = ((data ?? []) as Row[]).filter((t) => {
+        const p = (t.client_phone ?? '').replace(/\D/g, '');
+        if (phoneDigits && p === phoneDigits) return true;
+        if (nameLower && (t.client_name ?? '').trim().toLowerCase() === nameLower) return true;
+        return false;
+      });
+      const out = filtered.map((t) => ({
+        id: t.id,
+        ticketNumber: t.ticket_number,
+        businessDate: t.business_date,
+        closedAt: t.closed_at,
+        totalCents: t.total_cents,
+        status: t.status,
+        primaryStaff: t.primary_manicurist_name || '—',
+        services: (t.items ?? [])
+          .filter((it) => it.kind === 'service')
+          .map((it) => it.name)
+          .join(', ') || '—',
+      }));
+      setRows(out);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [clientName, clientPhone]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-bebas text-xl tracking-widest text-gray-900">CUSTOMER HISTORY</h3>
+            <p className="font-mono text-xs text-gray-500 mt-0.5">{clientName || 'Walk-in'}{clientPhone ? ` · ${clientPhone}` : ''}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {rows.length === 0 ? (
+            <div className="px-5 py-10 text-center font-mono text-xs text-gray-400">
+              {loading ? 'Loading…' : 'No previous tickets on file.'}
+            </div>
+          ) : (
+            <div>
+              <div className="grid grid-cols-[70px_110px_1fr_1fr_90px_90px] gap-2 px-5 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+                <span>Ticket</span>
+                <span>Date</span>
+                <span>Staff</span>
+                <span>Services</span>
+                <span className="text-right">Total</span>
+                <span className="text-right">Status</span>
+              </div>
+              {rows.map((r) => (
+                <div key={r.id} className="grid grid-cols-[70px_110px_1fr_1fr_90px_90px] gap-2 px-5 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
+                  <span className="font-mono text-sm font-bold text-gray-800">#{r.ticketNumber}</span>
+                  <span className="font-mono text-xs text-gray-700">{r.businessDate}</span>
+                  <span className="font-mono text-xs text-gray-800 truncate">{r.primaryStaff}</span>
+                  <span className="font-mono text-xs text-gray-700 truncate" title={r.services}>{r.services}</span>
+                  <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoneyCents(r.totalCents)}</span>
+                  <span className={`font-mono text-[10px] tracking-wider font-bold uppercase text-right ${
+                    r.status === 'closed' ? 'text-gray-600' : r.status === 'voided' ? 'text-amber-600' : 'text-emerald-600'
+                  }`}>{r.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

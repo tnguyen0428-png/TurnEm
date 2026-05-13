@@ -294,6 +294,11 @@ export interface AppointmentDraft {
   /** Receptionist who PIN-gated open-of-edit. Stamped onto the appointment's
    *  lastEditedByReceptionistId at save. */
   editingReceptionistId?: string | null;
+  /** Pre-fill client info when opening the appointment modal from another
+   *  flow (e.g. the BOOK APPT button on the ticket modal). */
+  clientFirstName?: string;
+  clientLastName?: string;
+  clientPhone?: string;
 }
 
 // One row per (manicurist, weekday). Absence of a row for a (manicurist,
