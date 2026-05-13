@@ -178,6 +178,9 @@ export interface Ticket {
   status: TicketStatus;
   note: string;
   voidReason: string;
+  // Receptionist (manicurist row, is_receptionist=true) who PIN-gated and
+  // voided the ticket. Null until the void path runs.
+  voidedByReceptionistId: string | null;
 
   openedAt: number;             // ms epoch
   closedAt: number | null;      // ms epoch

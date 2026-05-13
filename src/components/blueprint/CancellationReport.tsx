@@ -22,6 +22,7 @@ interface Row {
   clientName: string;
   reason: string;
   amountCents: number;      // total lost (tickets only — 0 for appointments)
+  byReceptionistName: string; // who voided/cancelled it, or '—' if unknown
 }
 
 export default function CancellationReport() {
@@ -40,12 +41,23 @@ export default function CancellationReport() {
     return () => { cancelled = true; };
   }, [range.from, range.to]);
 
+  // Receptionist id → display name lookup for the "Voided by" column.
+  const receptionistNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of state.manicurists) m.set(r.id, r.name);
+    return m;
+  }, [state.manicurists]);
+
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
 
     // Voided tickets
     for (const t of tickets) {
       if (t.status !== 'voided') continue;
+      const byId = t.voidedByReceptionistId;
+      const byName = byId
+        ? receptionistNameById.get(byId) ?? '(removed)'
+        : '—';
       out.push({
         id: `t:${t.id}`,
         date: t.businessDate,
@@ -55,6 +67,7 @@ export default function CancellationReport() {
         clientName: t.clientName || 'Walk-in',
         reason: t.voidReason || '',
         amountCents: t.totalCents,
+        byReceptionistName: byName,
       });
     }
 
@@ -75,11 +88,12 @@ export default function CancellationReport() {
         clientName: a.clientName || 'Walk-in',
         reason: a.notes || '',
         amountCents: 0,
+        byReceptionistName: '—',
       });
     }
 
     return out.sort((a, b) => b.whenMs - a.whenMs);
-  }, [tickets, state.appointments, range.from, range.to]);
+  }, [tickets, state.appointments, range.from, range.to, receptionistNameById]);
 
   const summary = useMemo(() => {
     let voided = 0;
@@ -96,7 +110,7 @@ export default function CancellationReport() {
 
   return (
     <div className="p-6 overflow-y-auto h-full space-y-5">
-      <ReportRangeHeader title="CANCELLATIONS" range={range} onRangeChange={setRange} />
+      <ReportRangeHeader title="CANCELLATIONS & VOID" range={range} onRangeChange={setRange} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi label="Voided Tickets" value={summary.voided.toString()} accent="amber" loading={loading} />
@@ -116,22 +130,29 @@ export default function CancellationReport() {
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-[140px_80px_100px_1fr_1fr_100px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+            <div className="grid grid-cols-[120px_70px_90px_1fr_120px_1fr_90px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
               <span>Date</span>
               <span>Time</span>
               <span>Status</span>
               <span>Client</span>
+              <span>Voided by</span>
               <span>Reason</span>
               <span className="text-right">Amount</span>
             </div>
             {rows.map((r) => (
-              <div key={r.id} className="grid grid-cols-[140px_80px_100px_1fr_1fr_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
+              <div key={r.id} className="grid grid-cols-[120px_70px_90px_1fr_120px_1fr_90px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
                 <span className="font-mono text-xs text-gray-700">{formatLongDate(r.date)}</span>
                 <span className="font-mono text-xs text-gray-500">{formatTime(r.whenMs)}</span>
                 <span>
                   <StatusPill status={r.status} />
                 </span>
                 <span className="font-mono text-sm font-semibold text-gray-900 truncate">{r.clientName}</span>
+                <span
+                  className="font-mono text-xs text-gray-700 truncate"
+                  title={r.byReceptionistName}
+                >
+                  {r.byReceptionistName}
+                </span>
                 <span className="font-mono text-xs text-gray-500 truncate">{r.reason || '—'}</span>
                 <span className="font-mono text-sm text-gray-900 text-right">
                   {r.amountCents > 0 ? formatMoney(r.amountCents) : '—'}

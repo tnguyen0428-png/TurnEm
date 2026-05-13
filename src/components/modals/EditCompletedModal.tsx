@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Ban, RotateCcw, X } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
+import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import type { CompletedEntry, ServiceType } from '../../types';
 
@@ -106,7 +107,12 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
     onClose();
   }
 
+  const [showVoidGate, setShowVoidGate] = useState(false);
   function handleToggleVoid() {
+    setShowVoidGate(true);
+  }
+  function handleVoidConfirmed() {
+    setShowVoidGate(false);
     dispatch({ type: 'TOGGLE_VOID_COMPLETED', id: entry.id });
     onClose();
   }
@@ -295,6 +301,17 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
           </div>
         </div>
       </div>
+    
+      <ReceptionistPinGate
+        open={showVoidGate}
+        title={entry.voided ? 'UN-VOID SERVICE' : 'VOID SERVICE'}
+        subtitle={`${entry.voided ? 'Restoring' : 'Voiding'} ${entry.clientName}'s service.`}
+        confirmLabel={entry.voided ? 'UN-VOID' : 'VOID'}
+        tone={entry.voided ? 'primary' : 'danger'}
+        receptionists={state.manicurists.filter((m) => m.isReceptionist)}
+        onCancel={() => setShowVoidGate(false)}
+        onConfirm={handleVoidConfirmed}
+      />
     </Modal>
   );
 }

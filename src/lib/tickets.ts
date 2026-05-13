@@ -53,6 +53,7 @@ interface DbTicket {
   status: Ticket['status'];
   note: string;
   void_reason: string;
+  voided_by_receptionist_id: string | null;
   opened_at: string;
   closed_at: string | null;
   updated_at: string;
@@ -158,6 +159,7 @@ function fromDbTicket(row: DbTicket, items: DbTicketItem[], payments: DbPayment[
     status: row.status,
     note: row.note,
     voidReason: row.void_reason,
+    voidedByReceptionistId: row.voided_by_receptionist_id ?? null,
     openedAt: new Date(row.opened_at).getTime(),
     closedAt: row.closed_at ? new Date(row.closed_at).getTime() : null,
     updatedAt: new Date(row.updated_at).getTime(),
@@ -1303,7 +1305,11 @@ export async function closeTicket(input: CloseTicketInput): Promise<Ticket | nul
  * call where status is already 'voided' is a no-op. Manager-gated in the UI;
  * no database role check here yet.
  */
-export async function voidTicket(ticketId: string, reason: string): Promise<boolean> {
+export async function voidTicket(
+  ticketId: string,
+  reason: string,
+  receptionistId?: string | null,
+): Promise<boolean> {
   const { error } = await supabase
     .from('tickets')
     .update({
@@ -1311,6 +1317,7 @@ export async function voidTicket(ticketId: string, reason: string): Promise<bool
       void_reason: reason,
       closed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      voided_by_receptionist_id: receptionistId ?? null,
     })
     .eq('id', ticketId)
     .eq('status', 'open');

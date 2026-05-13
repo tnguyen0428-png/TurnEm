@@ -31,6 +31,7 @@ import {
 } from '../../lib/tickets';
 import { fetchOpenShift } from '../../lib/shifts';
 import GiftCardSaleModal from './GiftCardSaleModal';
+import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import type { PaymentMethod, Ticket } from '../../types';
 
 interface Props {
@@ -76,6 +77,8 @@ export default function TicketModal({
   const { state } = useApp();
   const isOpen = ticket.status === 'open';
   const isVoided = ticket.status === 'voided';
+  // VOID requires a receptionist PIN — the modal renders inline once this is true.
+  const [showVoidGate, setShowVoidGate] = useState(false);
 
   // ─── Header state ─────────────────────────────────────────────────────────
   // Split the stored single-string client name into first/last on first render.
@@ -368,11 +371,16 @@ export default function TicketModal({
   }
 
   // ─── Void ─────────────────────────────────────────────────────────────────
-  async function handleVoid() {
-    if (!confirm('Void this ticket? This cannot be undone.')) return;
-    const reason = prompt('Reason for voiding (optional):') ?? '';
+  // The button just flips the gate flag open. The PIN gate captures the
+  // receptionist + reason and calls handleVoidConfirmed below; we never
+  // hit the DB until the PIN matches a real receptionist.
+  function handleVoid() {
+    setShowVoidGate(true);
+  }
+  async function handleVoidConfirmed(receptionistId: string, reason: string) {
+    setShowVoidGate(false);
     setBusy('voiding');
-    const ok = await voidTicket(ticket.id, reason);
+    const ok = await voidTicket(ticket.id, reason, receptionistId);
     setBusy('idle');
     if (ok) onClose();
   }
@@ -761,6 +769,18 @@ export default function TicketModal({
           onAdd={(serial, valueCents, staff) => addGiftLine(serial, valueCents, staff)}
         />
       )}
+      <ReceptionistPinGate
+        open={showVoidGate}
+        title="VOID TICKET"
+        subtitle={`Voiding Ticket #${ticket.ticketNumber}. This can't be undone.`}
+        showReason
+        reasonPlaceholder="Reason (optional)"
+        confirmLabel="VOID"
+        tone="danger"
+        receptionists={state.manicurists.filter((m) => m.isReceptionist)}
+        onCancel={() => setShowVoidGate(false)}
+        onConfirm={handleVoidConfirmed}
+      />
     </div>
   );
 }

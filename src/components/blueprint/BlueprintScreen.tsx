@@ -73,7 +73,7 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     heading: 'REPORTS',
     items: [
       { id: 'reports-sales',        label: 'Sales',              icon: DollarSign, description: 'Daily / weekly sales totals and payment mix' },
-      { id: 'reports-cancellation', label: 'Cancellations',      icon: XCircle,    description: 'Voided tickets, cancellations, no-shows' },
+      { id: 'reports-cancellation', label: 'Cancellations & Void', icon: XCircle,    description: 'Voided tickets, cancelled appointments, no-shows' },
       { id: 'reports-employee',     label: 'Employee',           icon: UserCheck,  description: 'Per-employee sales, services, tips, hours' },
       { id: 'reports-receptionist', label: 'Receptionist Hours', icon: BarChart3,  description: 'Clock-in / clock-out log for receptionists' },
     ],
