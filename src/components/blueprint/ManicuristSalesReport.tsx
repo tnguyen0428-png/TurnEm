@@ -131,6 +131,67 @@ export default function ManicuristSalesReport() {
     return Array.from(map.values()).sort((a, b) => b.totalCents - a.totalCents);
   }, [closed, range.from, range.to, state.manicurists]);
 
+  // Per-manicurist per-category revenue breakdown. Keyed by manicurist id (or
+  // synthetic key for unassigned), value is a Map<category, cents>. Receptionists
+  // are excluded the same way as the productivity table.
+  const categoryByManicurist = useMemo(() => {
+    const serviceCategoryById = new Map<string, string>();
+    for (const s of state.salonServices) {
+      if (s.id) serviceCategoryById.set(s.id, s.category || 'Uncategorized');
+    }
+    const receptionistIds = new Set(
+      state.manicurists.filter((m) => m.isReceptionist).map((m) => m.id),
+    );
+
+    const byStaff = new Map<string, { staffName: string; cats: Map<string, number> }>();
+    for (const t of closed) {
+      for (const it of t.items) {
+        if (it.kind !== 'service') continue;
+        if (it.staff1Id && receptionistIds.has(it.staff1Id)) continue;
+        const ext = lineExt(it);
+        if (ext <= 0) continue;
+        const key = it.staff1Id ?? `__no_id__:${it.staff1Name}`;
+        const name = it.staff1Name || '(Unassigned)';
+        let entry = byStaff.get(key);
+        if (!entry) {
+          entry = { staffName: name, cats: new Map() };
+          byStaff.set(key, entry);
+        }
+        const cat = it.serviceId
+          ? serviceCategoryById.get(it.serviceId) ?? 'Uncategorized'
+          : 'Uncategorized';
+        entry.cats.set(cat, (entry.cats.get(cat) ?? 0) + ext);
+      }
+    }
+
+    // Flatten + sort by total per manicurist (matches main table ordering).
+    return Array.from(byStaff.entries())
+      .map(([key, { staffName, cats }]) => {
+        const total = Array.from(cats.values()).reduce((s, v) => s + v, 0);
+        const sortedCats = Array.from(cats.entries())
+          .map(([category, cents]) => ({ category, cents }))
+          .sort((a, b) => b.cents - a.cents);
+        return { key, staffName, total, cats: sortedCats };
+      })
+      .filter((r) => r.total > 0)
+      .sort((a, b) => b.total - a.total);
+  }, [closed, state.salonServices, state.manicurists]);
+
+  // Stable category color so the same category gets the same shade across
+  // rows. Hash the category name into one of these soft palette buckets.
+  const CATEGORY_PALETTE = [
+    'bg-pink-400',  'bg-emerald-400', 'bg-sky-400',   'bg-amber-400',
+    'bg-violet-400', 'bg-rose-400',   'bg-teal-400',  'bg-indigo-400',
+    'bg-orange-400', 'bg-lime-400',   'bg-fuchsia-400', 'bg-cyan-400',
+  ] as const;
+  function categoryColor(category: string): string {
+    let h = 0;
+    for (let i = 0; i < category.length; i += 1) {
+      h = (h * 31 + category.charCodeAt(i)) >>> 0;
+    }
+    return CATEGORY_PALETTE[h % CATEGORY_PALETTE.length];
+  }
+
   const summary = useMemo(() => {
     const totalGross = rows.reduce((s, r) => s + r.grossCents, 0);
     const totalTips = rows.reduce((s, r) => s + r.tipCents, 0);
@@ -188,6 +249,58 @@ export default function ManicuristSalesReport() {
                   {r.hoursMs && r.hoursMs > 0 ? formatHours(r.hoursMs) : '—'}
                 </span>
                 <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoney(r.totalCents)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Category mix — per-manicurist revenue grouped by service category */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">CATEGORY MIX</h3>
+          <span className="font-mono text-[10px] text-gray-400">Revenue grouped by service category</span>
+        </div>
+        {categoryByManicurist.length === 0 ? (
+          <div className="px-4 py-10 text-center font-mono text-xs text-gray-400">
+            {loading ? 'Loading…' : 'No service revenue in this range.'}
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {categoryByManicurist.map((r) => (
+              <div key={r.key} className="px-4 py-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-sm font-semibold text-gray-900 truncate">{r.staffName}</span>
+                  <span className="font-mono text-sm font-bold text-gray-900">{formatMoney(r.total)}</span>
+                </div>
+                {/* Stacked bar showing category proportions */}
+                <div className="flex w-full h-2.5 rounded-full overflow-hidden bg-gray-100">
+                  {r.cats.map((c) => {
+                    const pct = (c.cents / r.total) * 100;
+                    return (
+                      <div
+                        key={c.category}
+                        className={categoryColor(c.category)}
+                        style={{ width: `${pct}%` }}
+                        title={`${c.category}: ${formatMoney(c.cents)} (${pct.toFixed(0)}%)`}
+                      />
+                    );
+                  })}
+                </div>
+                {/* Category legend */}
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {r.cats.map((c) => {
+                    const pct = (c.cents / r.total) * 100;
+                    return (
+                      <div key={c.category} className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-sm ${categoryColor(c.category)}`} />
+                        <span className="font-mono text-[11px] text-gray-700">{c.category}</span>
+                        <span className="font-mono text-[11px] font-semibold text-gray-900">{formatMoney(c.cents)}</span>
+                        <span className="font-mono text-[10px] text-gray-400">{pct.toFixed(0)}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             ))}
           </div>
