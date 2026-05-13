@@ -184,6 +184,26 @@ export default function SalesReport() {
       .sort((a, b) => b.cents - a.cents);
   }, [closed]);
 
+  // Payment totals + variance summary. Variance is the sum of
+  // (declared_cash_cents - expected_cash_cents) across every CLOSED shift in
+  // the range — positive = over, negative = short. Open shifts have no
+  // variance yet so they don't count.
+  const paymentSummary = useMemo(() => {
+    const totalPaymentsCents = byPaymentMethod.reduce((s, p) => s + p.cents, 0);
+    let varianceCents = 0;
+    let reconciledShifts = 0;
+    let openShifts = 0;
+    for (const sh of shifts) {
+      if (sh.status === 'closed') {
+        varianceCents += sh.varianceCents ?? 0;
+        reconciledShifts += 1;
+      } else if (sh.status === 'open') {
+        openShifts += 1;
+      }
+    }
+    return { totalPaymentsCents, varianceCents, reconciledShifts, openShifts };
+  }, [byPaymentMethod, shifts]);
+
   const byDay = useMemo(() => {
     const dates = eachDateInRange(range);
     const map = new Map<string, { count: number; grossCents: number; tipCents: number }>();
@@ -301,6 +321,45 @@ export default function SalesReport() {
                 <span className="font-mono text-sm font-bold text-gray-900">{formatMoney(p.cents)}</span>
               </div>
             ))}
+            {/* TOTAL of all tendered payments */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50/60">
+              <span className="font-mono text-sm font-bold text-gray-900 uppercase tracking-wider">Total</span>
+              <span className="font-mono text-sm font-bold text-gray-900">{formatMoney(paymentSummary.totalPaymentsCents)}</span>
+            </div>
+            {/* VARIANCE — sum of (declared - expected) across closed shifts in
+                range. Color-coded: red = short, emerald = over, gray = balanced. */}
+            <div className="flex items-center justify-between px-4 py-2.5">
+              <span className="font-mono text-sm font-semibold text-gray-700 uppercase tracking-wider flex items-center gap-2">
+                Variance
+                <span className="font-mono text-[10px] text-gray-400 normal-case tracking-normal">
+                  {paymentSummary.reconciledShifts === 0
+                    ? 'no closed shifts'
+                    : `${paymentSummary.reconciledShifts} closed shift${paymentSummary.reconciledShifts === 1 ? '' : 's'}`}
+                  {paymentSummary.openShifts > 0
+                    ? ` · ${paymentSummary.openShifts} still open`
+                    : ''}
+                </span>
+              </span>
+              <span
+                className={`font-mono text-sm font-bold ${
+                  paymentSummary.reconciledShifts === 0
+                    ? 'text-gray-400'
+                    : paymentSummary.varianceCents === 0
+                      ? 'text-gray-700'
+                      : paymentSummary.varianceCents > 0
+                        ? 'text-emerald-600'
+                        : 'text-red-600'
+                }`}
+              >
+                {paymentSummary.reconciledShifts === 0
+                  ? '—'
+                  : paymentSummary.varianceCents === 0
+                    ? formatMoney(0)
+                    : paymentSummary.varianceCents > 0
+                      ? `+${formatMoney(paymentSummary.varianceCents)} OVER`
+                      : `${formatMoney(paymentSummary.varianceCents)} SHORT`}
+              </span>
+            </div>
           </div>
         )}
       </div>
