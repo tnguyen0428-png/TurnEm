@@ -112,6 +112,27 @@ export async function fetchShiftsForDate(dateLA: string): Promise<Shift[]> {
   return (data ?? []).map((r) => fromDbShift(r as DbShift));
 }
 
+/**
+ * List all shifts across an inclusive LA-local business-date range —
+ * used by the Sales report's Shifts section. Returns every drawer session
+ * whose `business_date` falls in [fromDateLA, toDateLA], regardless of
+ * status. Newest first.
+ */
+export async function fetchShiftsForRange(
+  fromDateLA: string,
+  toDateLA: string,
+): Promise<Shift[]> {
+  const { data, error } = await supabase
+    .from('shifts')
+    .select('*')
+    .gte('business_date', fromDateLA)
+    .lte('business_date', toDateLA)
+    .order('business_date', { ascending: false })
+    .order('opened_at', { ascending: false });
+  if (error) { console.error('[shifts] fetchShiftsForRange:', error.message); return []; }
+  return (data ?? []).map((r) => fromDbShift(r as DbShift));
+}
+
 export async function fetchShiftMovements(shiftId: string): Promise<ShiftMovement[]> {
   const { data, error } = await supabase
     .from('shift_movements')

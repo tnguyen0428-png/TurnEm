@@ -5,8 +5,10 @@
 // breakdown table.
 
 import { useEffect, useMemo, useState } from 'react';
-import type { Ticket } from '../../types';
+import type { Shift, Ticket } from '../../types';
 import { fetchTicketsForRange } from '../../lib/tickets';
+import { fetchShiftsForRange } from '../../lib/shifts';
+import { useApp } from '../../state/AppContext';
 import {
   ReportRangeHeader, useReportRange, formatMoney, formatLongDate, eachDateInRange,
 } from './reportShared';
@@ -14,20 +16,36 @@ import {
 export default function SalesReport() {
   const [range, setRange] = useReportRange();
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
+  const { state } = useApp();
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const all = await fetchTicketsForRange(range.from, range.to);
+      // Tickets + shifts in parallel — the Shifts section needs the drawer
+      // sessions across the same date range.
+      const [allTickets, allShifts] = await Promise.all([
+        fetchTicketsForRange(range.from, range.to),
+        fetchShiftsForRange(range.from, range.to),
+      ]);
       if (!cancelled) {
-        setTickets(all);
+        setTickets(allTickets);
+        setShifts(allShifts);
         setLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, [range.from, range.to]);
+
+  // Map manicurist id → display name so the shifts table can render the
+  // human name beside each opened_by / closed_by id without re-fetching.
+  const manicuristNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of state.manicurists) m.set(r.id, r.name);
+    return m;
+  }, [state.manicurists]);
 
   // Only closed tickets count toward "sales" — open tickets are still in
   // progress and voided tickets are tracked in the Cancellation report.
@@ -107,6 +125,77 @@ export default function SalesReport() {
                 <span className="font-mono text-sm font-bold text-gray-900">{formatMoney(p.cents)}</span>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* Shifts — who opened/closed each drawer session in this range */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100">
+          <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">SHIFTS</h3>
+        </div>
+        {shifts.length === 0 ? (
+          <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">
+            {loading ? 'Loading…' : 'No shifts opened in this range.'}
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+              <span>Date</span>
+              <span>Opened</span>
+              <span>Opened by</span>
+              <span>Closed</span>
+              <span>Closed by</span>
+              <span className="text-right">Variance</span>
+              <span className="text-right">Status</span>
+            </div>
+            {shifts.map((s) => {
+              const openedName = s.openedByReceptionistId
+                ? manicuristNameById.get(s.openedByReceptionistId) ?? '(removed)'
+                : '—';
+              const closedName = s.closedByReceptionistId
+                ? manicuristNameById.get(s.closedByReceptionistId) ?? '(removed)'
+                : '—';
+              const variance = s.varianceCents ?? null;
+              return (
+                <div
+                  key={s.id}
+                  className="grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
+                >
+                  <span className="font-mono text-sm text-gray-800">{formatLongDate(s.businessDate)}</span>
+                  <span className="font-mono text-sm text-gray-700">
+                    {new Date(s.openedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  </span>
+                  <span className="font-mono text-sm text-gray-800 truncate" title={openedName}>{openedName}</span>
+                  <span className="font-mono text-sm text-gray-700">
+                    {s.closedAt
+                      ? new Date(s.closedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                      : '—'}
+                  </span>
+                  <span className="font-mono text-sm text-gray-800 truncate" title={closedName}>{closedName}</span>
+                  <span
+                    className={`font-mono text-sm text-right ${
+                      variance === null
+                        ? 'text-gray-400'
+                        : variance === 0
+                          ? 'text-gray-700'
+                          : variance > 0
+                            ? 'text-emerald-600'
+                            : 'text-red-600'
+                    }`}
+                  >
+                    {variance === null ? '—' : formatMoney(variance)}
+                  </span>
+                  <span
+                    className={`font-mono text-[10px] font-bold tracking-wider text-right uppercase ${
+                      s.status === 'open' ? 'text-emerald-600' : 'text-gray-500'
+                    }`}
+                  >
+                    {s.status}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
