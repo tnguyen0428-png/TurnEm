@@ -83,14 +83,23 @@ export default function SalesReport() {
     let tipCents = 0;
     let taxCents = 0;
     let discountCents = 0;
+    // Per-line breakdown: ext of every service line vs gift_card_sale line.
+    // Lines with kind='retail' or 'discount' don't count toward either of
+    // these two and stay in Gross via t.totalCents.
+    let serviceSalesCents = 0;
+    let giftSalesCents = 0;
     for (const t of closed) {
       count += 1;
       grossCents += t.totalCents;
       tipCents += t.tipCents;
       taxCents += t.taxCents;
       discountCents += ticketDiscountTotalCents(t);
+      for (const it of t.items) {
+        if (it.kind === 'service') serviceSalesCents += it.extPriceCents;
+        else if (it.kind === 'gift_card_sale') giftSalesCents += it.extPriceCents;
+      }
     }
-    return { count, grossCents, tipCents, taxCents, discountCents };
+    return { count, grossCents, tipCents, taxCents, discountCents, serviceSalesCents, giftSalesCents };
   }, [closed]);
 
   const discountTickets = useMemo(() => {
@@ -264,11 +273,12 @@ export default function SalesReport() {
         )}
       </div>
 
-      {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* KPI row — Gross plus the service vs gift-certificate breakdown */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Kpi label="Gross Sales" value={formatMoney(summary.grossCents)} accent="emerald" loading={loading} />
+        <Kpi label="Service Sales" value={formatMoney(summary.serviceSalesCents)} loading={loading} />
+        <Kpi label="Gift Cert Sales" value={formatMoney(summary.giftSalesCents)} loading={loading} />
         <Kpi label="Tickets" value={summary.count.toString()} loading={loading} />
-        <Kpi label="Tips" value={formatMoney(summary.tipCents)} loading={loading} />
         <Kpi label="Discounts" value={formatMoney(summary.discountCents)} loading={loading} />
       </div>
 
