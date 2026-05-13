@@ -326,3 +326,22 @@ export interface AppState {
   servicePriority: Record<string, string[]>;
   loaded: boolean;
 }
+
+// ── Customers ────────────────────────────────────────────────────────────────
+//
+// First-class profile. Not yet linked by FK from queue_entries / appointments /
+// tickets — those still carry free-text client_name/phone. The Customers
+// Blueprint section matches history JS-side by phone then by name.
+
+export interface Customer {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string;
+  notes: string;
+  /** Pops up when this customer is selected in the appointment booking flow. */
+  popupNote: string;
+  createdAt: number;
+  updatedAt: number;
+}

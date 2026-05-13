@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
   Clock3, ChevronRight, GripVertical, KeyRound,
-  DollarSign, UserCheck, Gift,
+  DollarSign, UserCheck, Gift, UserPlus,
 } from 'lucide-react';
 import SalesReport from './SalesReport';
 import StaffReport from './StaffReport';
@@ -35,7 +35,8 @@ type BlueprintSection =
   | 'criteria'
   | 'reports-sales'
   | 'reports-staff'
-  | 'reports-gift-certs';
+  | 'reports-gift-certs'
+  | 'customers';
 
 interface NavItem {
   id: BlueprintSection;
@@ -65,6 +66,12 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     items: [
       { id: 'services', label: 'Services', icon: Sparkles, description: 'Manage service types and pricing' },
       { id: 'criteria', label: 'Criteria', icon: Scale,    description: 'Turn assignment rules and priority' },
+    ],
+  },
+  {
+    heading: 'CUSTOMERS',
+    items: [
+      { id: 'customers', label: 'Customer Profiles', icon: UserPlus, description: 'Search and edit customer info, history, notes' },
     ],
   },
   {
