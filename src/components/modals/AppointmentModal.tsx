@@ -2,7 +2,11 @@ import { useState, useEffect, useMemo } from 'react';
 import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
-import { upsertCustomerFromIntake, toTitleCase, formatPhoneDashed } from '../../lib/customers';
+import {
+  upsertCustomerFromIntake, toTitleCase, formatPhoneDashed,
+  searchCustomers, displayCustomerName, normalizePhone, matchAppointments,
+} from '../../lib/customers';
+import type { Customer } from '../../types';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { getTodayLA } from '../../utils/time';
@@ -34,8 +38,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
   const [showBookGate, setShowBookGate] = useState(false);
   // Holds the parsed-and-validated form payload while the PIN gate is open.
-  // We capture once on submit, then complete the dispatch from the gate's
-  // onConfirm so the form state stays untouched if the user cancels.
   const [pendingBooking, setPendingBooking] = useState<null | {
     name: string;
     services: string[];
@@ -43,12 +45,57 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     appointmentManicuristId: string | null;
     partyId: string | null;
   }>(null);
+  // Customer match suggestions surfaced while the receptionist types name
+  // or phone. Clicking one fills the form and pins the matched profile.
+  const [matches, setMatches] = useState<Customer[]>([]);
+  const [matchedCustomer, setMatchedCustomer] = useState<Customer | null>(null);
+  // Recap shown after a successful new booking — receptionist taps DONE
+  // to dismiss. Edits skip this.
+  const [recap, setRecap] = useState<null | {
+    clientName: string;
+    services: string[];
+    date: string;
+    time: string;
+    staffName: string;
+    receptionistName: string;
+  }>(null);
   const [clientFirstName, setClientFirstName] = useState('');
   const [clientLastName, setClientLastName] = useState('');
   // Combined name used everywhere else in this modal (save payload, display).
   // The two inputs stay the single source of truth.
   const clientName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim();
   const [clientPhone, setClientPhone] = useState('');
+
+  // Debounced live search for existing customer profiles.
+  useEffect(() => {
+    const q = clientFirstName.trim() || clientLastName.trim() || clientPhone.trim();
+    if (!q) { setMatches([]); return; }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      const rows = await searchCustomers(q, 6);
+      if (!cancelled) setMatches(rows);
+    }, 200);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [clientFirstName, clientLastName, clientPhone]);
+
+  // Drop the pinned match if the form diverges from it.
+  useEffect(() => {
+    if (!matchedCustomer) return;
+    const sameName =
+      matchedCustomer.firstName === clientFirstName.trim() &&
+      matchedCustomer.lastName === clientLastName.trim();
+    const samePhone =
+      normalizePhone(matchedCustomer.phone) === normalizePhone(clientPhone);
+    if (!sameName || !samePhone) setMatchedCustomer(null);
+  }, [matchedCustomer, clientFirstName, clientLastName, clientPhone]);
+
+  function selectCustomer(c: Customer) {
+    setClientFirstName(c.firstName);
+    setClientLastName(c.lastName);
+    setClientPhone(c.phone);
+    setMatchedCustomer(c);
+    setMatches([]);
+  }
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
@@ -298,7 +345,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     });
     setShowBookGate(false);
     setPendingBooking(null);
-    handleClose();
+    const receptionist = state.manicurists.find((m) => m.id === receptionistId);
+    const staff = appointmentManicuristId
+      ? state.manicurists.find((m) => m.id === appointmentManicuristId)?.name ?? ''
+      : '';
+    setRecap({
+      clientName: name,
+      services: services as string[],
+      date,
+      time,
+      staffName: staff,
+      receptionistName: receptionist?.name ?? '',
+    });
   }
 
   function handleClose() {
@@ -322,6 +380,39 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             </span>
           </p>
         )}
+
+        {matchedCustomer ? (
+          <MatchedCustomerBanner
+            customer={matchedCustomer}
+            openAppointmentsCount={
+              matchAppointments(matchedCustomer, state.appointments)
+                .filter((a) => a.status === 'scheduled' || a.status === 'checked-in')
+                .length
+            }
+            onClear={() => { setMatchedCustomer(null); }}
+          />
+        ) : matches.length > 0 && mode !== 'edit' ? (
+          <div className="rounded-xl border border-pink-200 bg-pink-50/40 p-3">
+            <p className="font-mono text-[10px] tracking-wider font-bold text-pink-700 uppercase mb-1.5">
+              Existing customers matching
+            </p>
+            <div className="flex flex-col gap-1">
+              {matches.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => selectCustomer(c)}
+                  className="flex items-center justify-between gap-3 px-2.5 py-1.5 rounded-lg bg-white border border-pink-100 hover:bg-pink-100/40 transition-colors text-left"
+                >
+                  <span className="font-mono text-sm font-semibold text-gray-900 truncate">
+                    {displayCustomerName(c)}
+                  </span>
+                  <span className="font-mono text-xs text-gray-500 flex-shrink-0">{c.phone || '—'}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {/* Client info */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -604,6 +695,12 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           {mode === 'edit' ? 'SAVE CHANGES' : 'BOOK APPOINTMENT'}
         </button>
       </form>
+    {recap && (
+      <BookingRecapModal
+        info={recap}
+        onClose={() => { setRecap(null); handleClose(); }}
+      />
+    )}
     {showBookGate && (
       <ReceptionistPinGate
         open={showBookGate}
@@ -617,5 +714,104 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       />
     )}
     </Modal>
+  );
+}
+
+
+// ── Matched-customer banner ──────────────────────────────────────────────────
+
+function MatchedCustomerBanner({
+  customer, openAppointmentsCount, onClear,
+}: {
+  customer: Customer;
+  openAppointmentsCount: number;
+  onClear: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="font-mono text-[10px] tracking-wider font-bold text-emerald-700 uppercase">
+          Matched profile
+        </p>
+        <p className="font-mono text-sm font-semibold text-gray-900 truncate">
+          {displayCustomerName(customer)}
+        </p>
+        <p className="font-mono text-xs text-gray-500">
+          {customer.phone || 'no phone'} · {openAppointmentsCount} open appointment{openAppointmentsCount === 1 ? '' : 's'}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onClear}
+        className="font-mono text-[10px] tracking-wider font-bold text-gray-500 hover:text-gray-800 uppercase"
+      >
+        Clear
+      </button>
+    </div>
+  );
+}
+
+// ── Booking recap ────────────────────────────────────────────────────────────
+
+function BookingRecapModal({
+  info, onClose,
+}: {
+  info: {
+    clientName: string;
+    services: string[];
+    date: string;
+    time: string;
+    staffName: string;
+    receptionistName: string;
+  };
+  onClose: () => void;
+}) {
+  function formatDate(iso: string): string {
+    const d = new Date(iso + 'T12:00:00');
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    }).format(d);
+  }
+  function formatTime(t: string): string {
+    const [hh, mm] = (t || '').split(':').map((s) => parseInt(s, 10));
+    if (!Number.isFinite(hh)) return t;
+    const ampm = hh >= 12 ? 'PM' : 'AM';
+    const h12 = ((hh + 11) % 12) + 1;
+    return `${h12}:${String(mm ?? 0).padStart(2, '0')} ${ampm}`;
+  }
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 flex flex-col gap-4">
+        <div>
+          <h2 className="font-bebas text-2xl tracking-[3px] text-gray-900">BOOKING CONFIRMED</h2>
+          <p className="font-mono text-xs text-gray-500 mt-0.5">Recap of what was just saved.</p>
+        </div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 flex flex-col gap-1.5">
+          <RecapLine label="Client" value={info.clientName || 'Walk-in'} />
+          <RecapLine label="Services" value={info.services.join(', ') || '\u2014'} />
+          <RecapLine label="When" value={`${formatDate(info.date)} · ${formatTime(info.time)}`} />
+          <RecapLine label="Staff" value={info.staffName || '\u2014'} />
+          <RecapLine label="Booked by" value={info.receptionistName || '\u2014'} />
+        </div>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800"
+          >
+            DONE
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecapLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500 flex-shrink-0">{label}</span>
+      <span className="font-mono text-sm font-semibold text-gray-900 text-right truncate">{value}</span>
+    </div>
   );
 }
