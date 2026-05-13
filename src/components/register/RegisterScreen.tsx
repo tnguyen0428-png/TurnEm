@@ -365,8 +365,17 @@ function TicketList({
               <span className="text-gray-300">—</span>
             )}
           </span>
-          <span className="font-mono text-[10px] text-gray-500 truncate">
-            {t.items.length > 0 ? t.items.map((i) => i.name).join(', ') : '—'}
+          <span className="font-mono text-[10px] text-gray-500 truncate flex items-center gap-1.5">
+            {t.items.length > 0 ? (
+              <>
+                <span className="font-mono text-xs font-bold text-red-600 flex-shrink-0">
+                  {t.items.filter((i) => i.kind === 'service').length}
+                </span>
+                <span className="truncate">{t.items.map((i) => i.name).join(', ')}</span>
+              </>
+            ) : (
+              <span>—</span>
+            )}
           </span>
           <span className="font-mono text-sm font-bold text-gray-900 text-right flex items-center justify-end gap-1.5">
             {formatMoneyCents(t.totalCents)}
