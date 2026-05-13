@@ -1,4 +1,5 @@
 // RegisterScreen — the SalonBiz-mirrored register tab.
+// (Closed-shift viewing wired in.)
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Receipt, ChevronLeft, ChevronRight, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown } from 'lucide-react';
@@ -10,7 +11,7 @@ import {
   reconcileMissingTicketsForDate,
   mergeOpenTicketsByClient,
 } from '../../lib/tickets';
-import { fetchOpenShift } from '../../lib/shifts';
+import { fetchShiftsForDate } from '../../lib/shifts';
 import { getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { Shift, Ticket } from '../../types';
 import TicketModal from './TicketModal';
@@ -39,8 +40,6 @@ export default function RegisterScreen() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Load the ticket list with a single bulk query. No reconcile here — that
-  // runs in the background effect below so the UI paints immediately.
   const refresh = useCallback(async () => {
     setLoading(true);
     const rows = await fetchTicketsForDate(dateLA, 'all');
@@ -50,9 +49,6 @@ export default function RegisterScreen() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // Background reconcile + merge. Runs after the UI has painted and only
-  // re-renders the list if any change was made. Keeps queue updates (which
-  // mutate state.completed frequently) from blocking the visible Register.
   useEffect(() => {
     const completedForDate = state.completed.filter(
       (c) => getLocalDateStr(new Date(c.completedAt)) === dateLA,
@@ -86,36 +82,34 @@ export default function RegisterScreen() {
     return () => { cancelled = true; };
   }, [dateLA, state.completed, state.salonServices]);
 
-  const [shift, setShift] = useState<Shift | null>(null);
-  // Scope the "open shift" lookup to the currently-displayed date. On a fresh
-  // day, even if yesterday's shift was never closed, this returns null and
-  // the header shows the OPEN SHIFT button (clickable) instead of locking the
-  // user into yesterday's still-open drawer.
+  const [shifts, setShifts] = useState<Shift[]>([]);
   const refreshShift = useCallback(async () => {
-    setShift(await fetchOpenShift(dateLA));
+    setShifts(await fetchShiftsForDate(dateLA));
   }, [dateLA]);
   useEffect(() => { void refreshShift(); }, [refreshShift]);
+  const shift = useMemo(() => shifts.find((s) => s.status === 'open') ?? null, [shifts]);
+  const closedShifts = useMemo(
+    () => shifts.filter((s) => s.status === 'closed')
+      .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0)),
+    [shifts],
+  );
 
   const [openTicket, setOpenTicket] = useState<Ticket | null>(null);
   const [showOpenShift, setShowOpenShift] = useState(false);
   const [showCloseShift, setShowCloseShift] = useState(false);
+  const [viewShift, setViewShift] = useState<Shift | null>(null);
   const [showClockModal, setShowClockModal] = useState(false);
 
-  // Sort applies to all three ticket lists (open / closed / voided).
-  // Click a column header again to flip direction.
   const [sortKey, setSortKey] = useState<SortKey>('time');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   function handleSortChange(k: SortKey) {
     if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else {
       setSortKey(k);
-      // Time + total default to descending; alphabetical defaults to ascending.
       setSortDir(k === 'time' || k === 'total' || k === 'number' ? 'desc' : 'asc');
     }
   }
 
-  // Receptionists who can authenticate with their PIN on the open/close-shift
-  // modals so the shift row records who physically opened/closed the drawer.
   const receptionists = useMemo(
     () => state.manicurists.filter((m) => m.isReceptionist),
     [state.manicurists],
@@ -173,8 +167,6 @@ export default function RegisterScreen() {
           </button>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* Clock in/out — receptionists tap, enter their PIN, and their
-                time clock toggles. Sun + moon together hints at "on duty / off duty". */}
             <button
               onClick={() => setShowClockModal(true)}
               title="Clock in / Clock out"
@@ -183,6 +175,16 @@ export default function RegisterScreen() {
               <Sun size={16} className="text-amber-500 -mr-1.5" />
               <Moon size={14} className="text-indigo-500" />
             </button>
+            {closedShifts.map((cs) => (
+              <button
+                key={cs.id}
+                onClick={() => setViewShift(cs)}
+                title={cs.closedAt ? `Closed ${new Date(cs.closedAt).toLocaleString()} — click to view` : 'Click to view'}
+                className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 font-mono text-[10px] font-bold tracking-wider border border-gray-200 transition-colors"
+              >
+                SHIFT CLOSED — {formatMoneyCents(cs.declaredCashCents ?? 0)}
+              </button>
+            ))}
             {shift ? (
               <>
                 <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-mono text-[10px] font-bold tracking-wider border border-emerald-200">
@@ -259,6 +261,14 @@ export default function RegisterScreen() {
           onClosed={() => { setShowCloseShift(false); void refreshShift(); }}
         />
       )}
+      {viewShift && (
+        <CloseShiftScreen
+          shift={viewShift}
+          receptionists={receptionists}
+          onClose={() => setViewShift(null)}
+          onClosed={() => setViewShift(null)}
+        />
+      )}
       {showClockModal && (
         <ReceptionistClockModal
           receptionists={state.manicurists.filter((m) => m.isReceptionist)}
@@ -309,11 +319,7 @@ function Section({
 }
 
 function TicketList({
-  tickets,
-  onClick,
-  sortKey,
-  sortDir,
-  onSortChange,
+  tickets, onClick, sortKey, sortDir, onSortChange,
 }: {
   tickets: Ticket[];
   onClick: (t: Ticket) => void;
@@ -337,7 +343,7 @@ function TicketList({
 
   return (
     <div>
-      <div className="grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_110px] gap-3 px-4 py-2 border-b border-gray-100 font-mono text-base tracking-wider font-semibold text-gray-400 uppercase">
+      <div className="grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_110px] gap-3 px-4 py-2 border-b border-gray-100 font-mono text-base tracking-wider font-normal text-gray-400 uppercase">
         <SortHdr label="#"      keyId="number" sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
         <SortHdr label="Time"   keyId="time"   sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
         <SortHdr label="Client" keyId="client" sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
@@ -356,7 +362,6 @@ function TicketList({
           <span className="font-mono text-base font-semibold text-gray-900 truncate">{t.clientName}</span>
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-base text-gray-700 min-w-0">
             {(() => {
-              // Distinct (id, name, color) tuples across every service line.
               const seen = new Set<string>();
               const list: { id: string; name: string; color: string }[] = [];
               for (const it of t.items) {
@@ -366,7 +371,6 @@ function TicketList({
                 seen.add(key);
                 list.push({ id: it.staff1Id ?? '', name: it.staff1Name, color: it.staff1Color });
               }
-              // Fall back to the ticket's primary staff if no service lines.
               if (list.length === 0 && t.primaryManicuristName) {
                 list.push({ id: t.primaryManicuristId ?? '', name: t.primaryManicuristName, color: t.primaryManicuristColor });
               }
@@ -415,14 +419,12 @@ function SortHdr({
   return (
     <button
       onClick={() => onClick(keyId)}
-      className={`flex items-center gap-1 font-mono text-[10px] tracking-wider font-semibold uppercase hover:text-gray-700 transition-colors ${
+      className={`flex items-center gap-1 font-mono text-base tracking-wider font-normal uppercase hover:text-gray-700 transition-colors ${
         align === 'right' ? 'justify-end' : ''
       } ${active ? 'text-gray-700' : 'text-gray-400'}`}
     >
       <span>{label}</span>
-      {active && (sortDir === 'asc' ? <ArrowUp size={10} /> : <ArrowDown size={10} />)}
+      {active && (sortDir === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}
     </button>
   );
 }
-
-                                                          

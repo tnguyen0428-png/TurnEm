@@ -969,7 +969,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     isReorderTarget ? 'bg-pink-50 ring-2 ring-pink-300 ring-inset' : ''
                   }`}
                   style={{ width: colWidth }}>
-                  <span className="font-mono text-[13px] font-bold text-gray-700 truncate text-center">
+                  <span className="font-mono text-lg font-bold text-gray-700 truncate text-center">
                     {m ? m.name : 'ANY'}
                   </span>
                   {/* Color bar under the name */}
