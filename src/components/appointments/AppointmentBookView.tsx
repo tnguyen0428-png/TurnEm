@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect, useMemo } from 'react';
+import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { Plus, Trash2, GripVertical, XCircle } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
@@ -688,9 +689,33 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       bodyRef.current.scrollTop = nowTopPx != null ? Math.max(0, nowTopPx - 120) : 0;
   }, [selectedDate]); // eslint-disable-line
 
+  // Pending open: receptionist double-clicked a slot; we hold the draft
+  // parameters here until they pass the PIN gate. The actual modal-open
+  // happens in onConfirm so the audit trail starts at the receptionist
+  // taking control, not at save time.
+  const [pendingOpen, setPendingOpen] = useState<null | {
+    mId: string | null;
+    slotIdx: number;
+  }>(null);
+
   function openAddModal(mId: string | null, slotIdx: number) {
-    dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: { date: selectedDate, time: slotToTime(slotIdx), manicuristId: mId } });
+    setPendingOpen({ mId, slotIdx });
+  }
+
+  function commitOpenModal(receptionistId: string) {
+    if (!pendingOpen) return;
+    const { mId, slotIdx } = pendingOpen;
+    dispatch({
+      type: 'SET_APPOINTMENT_DRAFT',
+      draft: {
+        date: selectedDate,
+        time: slotToTime(slotIdx),
+        manicuristId: mId,
+        bookedByReceptionistId: receptionistId,
+      },
+    });
     dispatch({ type: 'SET_MODAL', modal: 'addAppointment' });
+    setPendingOpen(null);
   }
 
   function openEditModal(appt: Appointment) {
@@ -989,6 +1014,18 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       )}
 
       {/* Pending drop confirmation for client-requested services */}
+      {pendingOpen && (
+        <ReceptionistPinGate
+          open={!!pendingOpen}
+          title="BOOK APPOINTMENT"
+          subtitle="Enter your PIN to open a new booking."
+          confirmLabel="OPEN"
+          tone="primary"
+          receptionists={state.manicurists.filter((m) => m.isReceptionist)}
+          onCancel={() => setPendingOpen(null)}
+          onConfirm={(receptionistId) => commitOpenModal(receptionistId)}
+        />
+      )}
       {pendingDrop && (() => {
         const targetMani = pendingDrop.mId ? state.manicurists.find((m) => m.id === pendingDrop.mId) : null;
         return (

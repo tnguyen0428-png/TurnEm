@@ -7,7 +7,6 @@ import {
   searchCustomers, displayCustomerName, normalizePhone, matchAppointments,
 } from '../../lib/customers';
 import type { Customer } from '../../types';
-import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { getTodayLA } from '../../utils/time';
 import type { ServiceType, ServiceRequest, Appointment } from '../../types';
@@ -36,15 +35,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const today = getTodayLA();
   const draft = mode === 'add' ? state.appointmentDraft : null;
 
-  const [showBookGate, setShowBookGate] = useState(false);
-  // Holds the parsed-and-validated form payload while the PIN gate is open.
-  const [pendingBooking, setPendingBooking] = useState<null | {
-    name: string;
-    services: string[];
-    serviceRequests: unknown[];
-    appointmentManicuristId: string | null;
-    partyId: string | null;
-  }>(null);
+
   // Customer match suggestions surfaced while the receptionist types name
   // or phone. Clicking one fills the form and pins the matched profile.
   const [matches, setMatches] = useState<Customer[]>([]);
@@ -295,14 +286,52 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         },
       });
     } else {
-      // New booking — defer dispatch until the receptionist PIN is verified.
-      setPendingBooking({ name, services, serviceRequests, appointmentManicuristId, partyId });
-      setShowBookGate(true);
+      // New booking — the receptionist already authenticated when they
+      // double-clicked the slot, so the receptionist id is already on the
+      // draft. Just save and recap.
+      const receptionistId = state.appointmentDraft?.bookedByReceptionistId ?? null;
+      const appt: Appointment = {
+        id: crypto.randomUUID(),
+        clientName: name,
+        clientPhone: clientPhone.trim(),
+        service: services[0],
+        services,
+        serviceRequests,
+        manicuristId: appointmentManicuristId,
+        date,
+        time,
+        notes: notes.trim(),
+        status: 'scheduled',
+        createdAt: Date.now(),
+        sameTime,
+        partyId,
+        bookedByReceptionistId: receptionistId,
+      };
+      dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
+      void upsertCustomerFromIntake({
+        firstName: clientFirstName,
+        lastName: clientLastName,
+        phone: clientPhone,
+      });
+      const receptionist = receptionistId
+        ? state.manicurists.find((m) => m.id === receptionistId)
+        : null;
+      const staff = appointmentManicuristId
+        ? state.manicurists.find((m) => m.id === appointmentManicuristId)?.name ?? ''
+        : '';
+      setRecap({
+        clientName: name,
+        services: services as string[],
+        date,
+        time,
+        staffName: staff,
+        receptionistName: receptionist?.name ?? '',
+      });
       return;
     }
 
     // Edit path: dispatch already ran above. Sync the customer profile and
-    // close the modal. New bookings flow through the PIN gate instead.
+    // close the modal.
     void upsertCustomerFromIntake({
       firstName: clientFirstName,
       lastName: clientLastName,
@@ -310,53 +339,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     });
 
     handleClose();
-  }
-
-  /**
-   * Final commit for a NEW booking once the receptionist has authenticated
-   * via the PIN gate. `receptionistId` becomes the appointment's
-   * bookedByReceptionistId so reports can attribute the booking later.
-   */
-  function commitNewBooking(receptionistId: string) {
-    if (!pendingBooking) return;
-    const { name, services, serviceRequests, appointmentManicuristId, partyId } = pendingBooking;
-    const appt: Appointment = {
-      id: crypto.randomUUID(),
-      clientName: name,
-      clientPhone: clientPhone.trim(),
-      service: services[0],
-      services: services as Appointment['services'],
-      serviceRequests: serviceRequests as Appointment['serviceRequests'],
-      manicuristId: appointmentManicuristId,
-      date,
-      time,
-      notes: notes.trim(),
-      status: 'scheduled',
-      createdAt: Date.now(),
-      sameTime,
-      partyId,
-      bookedByReceptionistId: receptionistId,
-    };
-    dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
-    void upsertCustomerFromIntake({
-      firstName: clientFirstName,
-      lastName: clientLastName,
-      phone: clientPhone,
-    });
-    setShowBookGate(false);
-    setPendingBooking(null);
-    const receptionist = state.manicurists.find((m) => m.id === receptionistId);
-    const staff = appointmentManicuristId
-      ? state.manicurists.find((m) => m.id === appointmentManicuristId)?.name ?? ''
-      : '';
-    setRecap({
-      clientName: name,
-      services: services as string[],
-      date,
-      time,
-      staffName: staff,
-      receptionistName: receptionist?.name ?? '',
-    });
   }
 
   function handleClose() {
@@ -384,10 +366,13 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         {matchedCustomer ? (
           <MatchedCustomerBanner
             customer={matchedCustomer}
-            openAppointmentsCount={
+            openAppointments={
               matchAppointments(matchedCustomer, state.appointments)
                 .filter((a) => a.status === 'scheduled' || a.status === 'checked-in')
-                .length
+                .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
+            }
+            manicuristNameById={
+              new Map(state.manicurists.map((m) => [m.id, m.name]))
             }
             onClear={() => { setMatchedCustomer(null); }}
           />
@@ -701,18 +686,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         onClose={() => { setRecap(null); handleClose(); }}
       />
     )}
-    {showBookGate && (
-      <ReceptionistPinGate
-        open={showBookGate}
-        title="BOOK APPOINTMENT"
-        subtitle={`Confirming booking for ${(clientFirstName + ' ' + clientLastName).trim() || 'Walk-in'}.`}
-        confirmLabel="BOOK"
-        tone="primary"
-        receptionists={state.manicurists.filter((m) => m.isReceptionist)}
-        onCancel={() => { setShowBookGate(false); setPendingBooking(null); }}
-        onConfirm={(receptionistId) => commitNewBooking(receptionistId)}
-      />
-    )}
     </Modal>
   );
 }
@@ -721,32 +694,79 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 // ── Matched-customer banner ──────────────────────────────────────────────────
 
 function MatchedCustomerBanner({
-  customer, openAppointmentsCount, onClear,
+  customer, openAppointments, manicuristNameById, onClear,
 }: {
   customer: Customer;
-  openAppointmentsCount: number;
+  openAppointments: import('../../types').Appointment[];
+  manicuristNameById: Map<string, string>;
   onClear: () => void;
 }) {
+  function formatDate(iso: string): string {
+    const d = new Date(iso + 'T12:00:00');
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric',
+    }).format(d);
+  }
+  function formatTime(t: string): string {
+    const [hh, mm] = (t || '').split(':').map((s) => parseInt(s, 10));
+    if (!Number.isFinite(hh)) return t;
+    const ampm = hh >= 12 ? 'PM' : 'AM';
+    const h12 = ((hh + 11) % 12) + 1;
+    return `${h12}:${String(mm ?? 0).padStart(2, '0')} ${ampm}`;
+  }
   return (
-    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 flex items-center justify-between gap-3">
-      <div className="min-w-0">
-        <p className="font-mono text-[10px] tracking-wider font-bold text-emerald-700 uppercase">
-          Matched profile
-        </p>
-        <p className="font-mono text-sm font-semibold text-gray-900 truncate">
-          {displayCustomerName(customer)}
-        </p>
-        <p className="font-mono text-xs text-gray-500">
-          {customer.phone || 'no phone'} · {openAppointmentsCount} open appointment{openAppointmentsCount === 1 ? '' : 's'}
-        </p>
+    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 flex flex-col gap-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-mono text-[10px] tracking-wider font-bold text-emerald-700 uppercase">
+            Matched profile
+          </p>
+          <p className="font-mono text-sm font-semibold text-gray-900 truncate">
+            {displayCustomerName(customer)}
+          </p>
+          <p className="font-mono text-xs text-gray-500">
+            {customer.phone || 'no phone'} · {openAppointments.length} open appointment{openAppointments.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          className="font-mono text-[10px] tracking-wider font-bold text-gray-500 hover:text-gray-800 uppercase"
+        >
+          Clear
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={onClear}
-        className="font-mono text-[10px] tracking-wider font-bold text-gray-500 hover:text-gray-800 uppercase"
-      >
-        Clear
-      </button>
+      {openAppointments.length > 0 && (
+        <div className="rounded-lg bg-white border border-emerald-100 overflow-hidden">
+          <div className="grid grid-cols-[100px_70px_1fr_1fr] gap-2 px-3 py-1.5 bg-emerald-50/60 border-b border-emerald-100 font-mono text-[10px] tracking-wider font-semibold text-emerald-700 uppercase">
+            <span>Date</span>
+            <span>Time</span>
+            <span>Services</span>
+            <span>Staff</span>
+          </div>
+          {openAppointments.slice(0, 5).map((a) => {
+            const services = (a.services?.length ? a.services : [a.service]).join(', ');
+            const staffId = a.manicuristId ?? a.serviceRequests?.[0]?.manicuristIds?.[0] ?? null;
+            const staff = staffId ? manicuristNameById.get(staffId) ?? '—' : '—';
+            return (
+              <div
+                key={a.id}
+                className="grid grid-cols-[100px_70px_1fr_1fr] gap-2 px-3 py-2 border-b border-emerald-50 last:border-b-0 items-center"
+              >
+                <span className="font-mono text-xs text-gray-800">{formatDate(a.date)}</span>
+                <span className="font-mono text-xs text-gray-700">{formatTime(a.time)}</span>
+                <span className="font-mono text-xs text-gray-700 truncate">{services || '—'}</span>
+                <span className="font-mono text-xs text-gray-700 truncate">{staff}</span>
+              </div>
+            );
+          })}
+          {openAppointments.length > 5 && (
+            <p className="font-mono text-[10px] text-gray-400 px-3 py-1 text-center">
+              Showing 5 of {openAppointments.length}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

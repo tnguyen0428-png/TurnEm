@@ -277,6 +277,10 @@ export interface AppointmentDraft {
   date?: string;
   time?: string;
   manicuristId?: string | null;
+  /** Receptionist who PIN-gated open-of-booking. Carries through to the
+   *  saved Appointment.bookedByReceptionistId so the audit trail starts at
+   *  the moment the receptionist took control, not at save time. */
+  bookedByReceptionistId?: string | null;
 }
 
 // One row per (manicurist, weekday). Absence of a row for a (manicurist,
