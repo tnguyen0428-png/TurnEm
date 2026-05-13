@@ -1026,7 +1026,13 @@ export async function appendItemsToTicket(
     sort_order: startSort + idx,
     queue_entry_id: it.queueEntryId ?? null,
   }));
-  const { error: insErr } = await supabase.from('ticket_items').insert(itemRows);
+  // Use upsert with ignoreDuplicates so the partial unique index on
+  // (ticket_id, queue_entry_id) silently no-ops concurrent inserts. This
+  // closes a check-then-act race where N sibling syncCompleted firings
+  // all see "entry not yet on ticket" in their JS dedupe and all insert.
+  const { error: insErr } = await supabase
+    .from('ticket_items')
+    .upsert(itemRows, { onConflict: 'ticket_id,queue_entry_id', ignoreDuplicates: true });
   if (insErr) {
     console.warn('[tickets] appendItemsToTicket items insert:', insErr.message);
     return null;
@@ -1129,7 +1135,9 @@ export async function createTicketAtCheckin(input: CreateTicketAtCheckinInput): 
       // override this on a per-item basis.
       queue_entry_id: it.queueEntryId ?? input.queueEntryId ?? null,
     }));
-    const { error: iErr } = await supabase.from('ticket_items').insert(itemRows);
+    const { error: iErr } = await supabase
+      .from('ticket_items')
+      .upsert(itemRows, { onConflict: 'ticket_id,queue_entry_id', ignoreDuplicates: true });
     if (iErr) {
       console.error('[tickets] createTicketAtCheckin items, rolling back:', iErr.message);
       await supabase.from('tickets').delete().eq('id', ticketId);

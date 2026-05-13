@@ -1512,65 +1512,63 @@ async function syncCompleted(
         console.warn('[syncCompleted] backfillTicketStaff failed for', c.id, err);
       }
 
-      if (!inFlightAutoCreates.has(visitId)) {
-        try {
-          const existing = await fetchTicketByQueueEntry(visitId);
-          // Build the items for this completed entry. Each line gets the
-          // entry's id so subsequent re-syncs are silently deduped.
-          const items = (c.services && c.services.length > 0 ? c.services : [''])
-            .filter((name) => name.trim().length > 0)
-            .map((svcName) => {
-              const svc = salonServices.find((s) => s.name === svcName);
-              return {
-                name: svcName,
-                serviceId: svc?.id ?? null,
-                staff1Id: c.manicuristId,
-                staff1Name: c.manicuristName,
-                staff1Color: c.manicuristColor,
-                unitPriceCents: Math.round((svc?.price ?? 0) * 100),
-                quantity: 1,
-                queueEntryId: c.id,
-              };
-            });
-          if (items.length > 0) {
-            if (existing) {
-              // Ticket already exists for this visit. Make sure this
-              // completed entry's services are on it. appendItemsToTicket
-              // dedupes by queue_entry_id so this is a no-op if syncQueue
-              // already added the line during the "just assigned" pass.
-              await appendItemsToTicket(existing.id, items, { allowDuplicates: true });
-            } else {
-              inFlightAutoCreates.add(visitId);
-              // No ticket yet. Either consolidate onto the same client's
-              // open ticket or create a new one.
-              const businessDate = getLocalDateStr(new Date(c.completedAt));
-              const sameClient = await findOpenTicketForClient(c.clientName, '', businessDate);
-              if (sameClient) {
-                await appendItemsToTicket(sameClient.id, items, { allowDuplicates: true });
-                if (!sameClient.primaryManicuristId) {
-                  await backfillTicketStaff(
-                    sameClient.queueEntryId ?? visitId,
-                    c.manicuristId,
-                    c.manicuristName,
-                    c.manicuristColor,
-                  );
-                }
-              } else {
-                await createTicketAtCheckin({
-                  queueEntryId: visitId,
-                  appointmentId: null,
-                  clientName: c.clientName,
-                  primaryManicuristId: c.manicuristId,
-                  primaryManicuristName: c.manicuristName,
-                  primaryManicuristColor: c.manicuristColor,
-                  items,
-                });
+      // Build this completed entry's items every time — appendItemsToTicket
+      // dedupes by queue_entry_id so a re-fire of the same entry is silent.
+      try {
+        const existing = await fetchTicketByQueueEntry(visitId);
+        const items = (c.services && c.services.length > 0 ? c.services : [''])
+          .filter((name) => name.trim().length > 0)
+          .map((svcName) => {
+            const svc = salonServices.find((s) => s.name === svcName);
+            return {
+              name: svcName,
+              serviceId: svc?.id ?? null,
+              staff1Id: c.manicuristId,
+              staff1Name: c.manicuristName,
+              staff1Color: c.manicuristColor,
+              unitPriceCents: Math.round((svc?.price ?? 0) * 100),
+              quantity: 1,
+              queueEntryId: c.id,
+            };
+          });
+        if (items.length > 0) {
+          if (existing) {
+            // Ticket already exists for this visit. Append this completed
+            // entry's services. The lock only gates CREATION; appending an
+            // already-created ticket has to happen for every sibling so a
+            // 4-service split visit gets all 4 lines (not just sibling #1).
+            await appendItemsToTicket(existing.id, items, { allowDuplicates: true });
+          } else if (!inFlightAutoCreates.has(visitId)) {
+            inFlightAutoCreates.add(visitId);
+            // No ticket yet. Either consolidate onto the same client's
+            // open ticket or create a new one.
+            const businessDate = getLocalDateStr(new Date(c.completedAt));
+            const sameClient = await findOpenTicketForClient(c.clientName, '', businessDate);
+            if (sameClient) {
+              await appendItemsToTicket(sameClient.id, items, { allowDuplicates: true });
+              if (!sameClient.primaryManicuristId) {
+                await backfillTicketStaff(
+                  sameClient.queueEntryId ?? visitId,
+                  c.manicuristId,
+                  c.manicuristName,
+                  c.manicuristColor,
+                );
               }
+            } else {
+              await createTicketAtCheckin({
+                queueEntryId: visitId,
+                appointmentId: null,
+                clientName: c.clientName,
+                primaryManicuristId: c.manicuristId,
+                primaryManicuristName: c.manicuristName,
+                primaryManicuristColor: c.manicuristColor,
+                items,
+              });
             }
           }
-        } catch (err) {
-          console.warn('[syncCompleted] fallback ticket create failed for', c.id, err);
         }
+      } catch (err) {
+        console.warn('[syncCompleted] fallback ticket create failed for', c.id, err);
       }
     }
   }
