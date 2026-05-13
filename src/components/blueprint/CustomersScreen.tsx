@@ -11,10 +11,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowLeft, Edit3, Plus, Search, Trash2, AlertTriangle,
+  ArrowLeft, Edit3, Plus, Search, Trash2, AlertTriangle, RefreshCw,
   User, Phone, Mail, StickyNote, Calendar, Receipt,
 } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
+import { supabase } from '../../lib/supabase';
 import type { Appointment, Customer } from '../../types';
 import {
   fetchCustomers,
@@ -65,6 +66,21 @@ export default function CustomersScreen() {
 
   useEffect(() => { void refresh(); }, []);
 
+  // Live updates: subscribe to any insert/update/delete on customers so
+  // adding a client in the Appointments or Queue modal immediately surfaces
+  // here without the user needing to navigate away and back.
+  useEffect(() => {
+    const channel = supabase
+      .channel('blueprint-customers-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers' },
+        () => { void refresh(); },
+      )
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, []);
+
   function goList() { setMode({ kind: 'list' }); }
   function goDetail(id: string) { setMode({ kind: 'detail', customerId: id }); }
   function goEdit(id: string) { setMode({ kind: 'form', customerId: id }); }
@@ -83,7 +99,7 @@ export default function CustomersScreen() {
     const c = customers.find((x) => x.id === mode.customerId);
     if (!c) {
       // Customer disappeared (deleted from another tab?). Fall back to list.
-      return <CustomerListView customers={customers} loading={loading} onSelect={goDetail} onNew={goNew} />;
+      return <CustomerListView customers={customers} loading={loading} onSelect={goDetail} onNew={goNew} onRefresh={refresh} />;
     }
     return (
       <CustomerDetailView
@@ -100,6 +116,7 @@ export default function CustomersScreen() {
       loading={loading}
       onSelect={goDetail}
       onNew={goNew}
+      onRefresh={refresh}
     />
   );
 }
@@ -107,12 +124,13 @@ export default function CustomersScreen() {
 // ── List view ────────────────────────────────────────────────────────────────
 
 function CustomerListView({
-  customers, loading, onSelect, onNew,
+  customers, loading, onSelect, onNew, onRefresh,
 }: {
   customers: Customer[];
   loading: boolean;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onRefresh: () => void | Promise<void>;
 }) {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => {
@@ -145,6 +163,14 @@ function CustomerListView({
               className="flex-1 font-mono text-xs bg-transparent focus:outline-none"
             />
           </label>
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            title="Refresh"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50 disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          </button>
           <button
             onClick={onNew}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-pink-600 text-white font-mono text-xs font-bold hover:bg-pink-700"
