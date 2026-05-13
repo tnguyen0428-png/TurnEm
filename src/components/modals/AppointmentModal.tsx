@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
-import { upsertCustomerFromIntake } from '../../lib/customers';
+import { upsertCustomerFromIntake, toTitleCase, formatPhoneDashed } from '../../lib/customers';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { getTodayLA } from '../../utils/time';
 import type { ServiceType, ServiceRequest, Appointment } from '../../types';
@@ -289,6 +289,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               type="text"
               value={clientFirstName}
               onChange={(e) => setClientFirstName(e.target.value)}
+              onBlur={(e) => setClientFirstName(toTitleCase(e.target.value))}
               placeholder="First"
               className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
@@ -299,6 +300,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               type="text"
               value={clientLastName}
               onChange={(e) => setClientLastName(e.target.value)}
+              onBlur={(e) => setClientLastName(toTitleCase(e.target.value))}
               placeholder="Last"
               className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
@@ -307,9 +309,19 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">PHONE</label>
             <input
               type="tel"
+              inputMode="numeric"
               value={clientPhone}
-              onChange={(e) => setClientPhone(e.target.value)}
-              placeholder="(555) 123-4567"
+              onChange={(e) => {
+                // Live-format: keep at most 10 digits, insert dashes at the 3rd
+                // and 6th. Anything beyond is dropped so the field can't grow.
+                const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                let out = digits;
+                if (digits.length > 6) out = `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+                else if (digits.length > 3) out = `${digits.slice(0, 3)}-${digits.slice(3)}`;
+                setClientPhone(out);
+              }}
+              onBlur={(e) => setClientPhone(formatPhoneDashed(e.target.value))}
+              placeholder="555-123-4567"
               className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>
