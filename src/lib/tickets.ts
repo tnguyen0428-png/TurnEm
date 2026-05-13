@@ -1370,3 +1370,66 @@ export async function voidTicket(
   }
   return true;
 }
+
+/**
+ * When a cashier changes the staff on a ticket line at checkout, the turn
+ * credit should follow the work — the old assignee gives up their turn,
+ * the new assignee earns it. Same logic regardless of whether they were
+ * requested, walk-in, or part of a split visit.
+ *
+ * For each (queueEntryId, oldStaffId, newStaffId) tuple:
+ *   1. Look up the matching completed_services row to get the turn_value.
+ *   2. Decrement totalTurns on oldStaffId, increment on newStaffId.
+ *   3. Repoint completed_services.manicurist_id (+ name + color) to the
+ *      new staff so reports attribute the work correctly.
+ *
+ * Skips entries where the queue_entry_id is null or the staff didn't
+ * actually change (caller pre-filters).
+ */
+export async function reallocateTurnsForStaffChanges(
+  changes: Array<{
+    queueEntryId: string;
+    oldStaffId: string | null;
+    newStaffId: string | null;
+    newStaffName: string;
+    newStaffColor: string;
+  }>,
+): Promise<void> {
+  for (const c of changes) {
+    if (!c.queueEntryId) continue;
+    if (c.oldStaffId === c.newStaffId) continue;
+    try {
+      const { data: completed, error: cErr } = await supabase
+        .from('completed_services')
+        .select('id, turn_value, manicurist_id')
+        .eq('id', c.queueEntryId)
+        .maybeSingle();
+      if (cErr || !completed) continue;
+      const turn = Number((completed as { turn_value: number }).turn_value) || 0;
+
+      // Decrement the old staff's totalTurns (when known).
+      if (c.oldStaffId) {
+        const { data: oldRow } = await supabase
+          .from('manicurists').select('total_turns').eq('id', c.oldStaffId).maybeSingle();
+        const oldTurns = Math.max(0, Number((oldRow as { total_turns?: number } | null)?.total_turns ?? 0) - turn);
+        await supabase.from('manicurists').update({ total_turns: oldTurns }).eq('id', c.oldStaffId);
+      }
+      // Increment the new staff's totalTurns.
+      if (c.newStaffId) {
+        const { data: newRow } = await supabase
+          .from('manicurists').select('total_turns').eq('id', c.newStaffId).maybeSingle();
+        const newTurns = Number((newRow as { total_turns?: number } | null)?.total_turns ?? 0) + turn;
+        await supabase.from('manicurists').update({ total_turns: newTurns }).eq('id', c.newStaffId);
+      }
+      // Repoint the completed_services row.
+      await supabase.from('completed_services').update({
+        manicurist_id: c.newStaffId,
+        manicurist_name: c.newStaffName,
+        manicurist_color: c.newStaffColor,
+      }).eq('id', c.queueEntryId);
+    } catch (err) {
+      console.warn('[tickets] reallocateTurnsForStaffChanges failed for', c.queueEntryId, err);
+    }
+  }
+}
+

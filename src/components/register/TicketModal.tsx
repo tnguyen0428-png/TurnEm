@@ -27,6 +27,7 @@ import {
   updateOpenTicket,
   closeTicket,
   voidTicket,
+  reallocateTurnsForStaffChanges,
   type ClosingPaymentInput,
 } from '../../lib/tickets';
 import { fetchOpenShift } from '../../lib/shifts';
@@ -116,6 +117,17 @@ export default function TicketModal({
       kind: it.kind,
     })),
   );
+  // Snapshot of the original (staff1Id, queueEntryId) per line, captured
+  // once on mount. We diff this against the current `lines` state on Save
+  // to know which manicurist reassignments to push through the turn-credit
+  // reallocation path.
+  const originalStaffByItemId = useMemo(() => {
+    const m = new Map<string, { staff1Id: string | null; queueEntryId: string | null }>();
+    for (const it of ticket.items) {
+      m.set(it.id, { staff1Id: it.staff1Id, queueEntryId: it.queueEntryId ?? null });
+    }
+    return m;
+  }, [ticket.items]);
 
   // ─── Ticket-level totals state ────────────────────────────────────────────
   const [ticketDiscountInput, setTicketDiscountInput] = useState((ticket.discountCents / 100).toFixed(2));
@@ -333,6 +345,33 @@ export default function TicketModal({
     if (!saved) {
       setError('Could not save — check connection and try again.');
       return null;
+    }
+    // Turn reallocation: any line whose staff1 changed reassigns the turn
+    // credit from the old assignee to the new one. Only service-kind lines
+    // with a queue_entry_id (i.e. ones tied to a completed entry) qualify;
+    // manually-added lines never had a turn credited to begin with.
+    const changes: Array<{
+      queueEntryId: string;
+      oldStaffId: string | null;
+      newStaffId: string | null;
+      newStaffName: string;
+      newStaffColor: string;
+    }> = [];
+    for (const l of lines) {
+      if (l.kind !== 'service' || !l.existingId) continue;
+      const orig = originalStaffByItemId.get(l.existingId);
+      if (!orig || !orig.queueEntryId) continue;
+      if (orig.staff1Id === l.staff1Id) continue;
+      changes.push({
+        queueEntryId: orig.queueEntryId,
+        oldStaffId: orig.staff1Id,
+        newStaffId: l.staff1Id,
+        newStaffName: l.staff1Name,
+        newStaffColor: l.staff1Color,
+      });
+    }
+    if (changes.length > 0) {
+      void reallocateTurnsForStaffChanges(changes);
     }
     onChanged?.(saved);
     return saved;
@@ -807,6 +846,10 @@ export default function TicketModal({
             {isOpen && (
               <>
                 <span className="w-px h-6 bg-gray-200 mx-1" />
+                <button onClick={() => { void doSave(); }} disabled={busy !== 'idle'}
+                  className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-mono text-xs font-bold disabled:opacity-50">
+                  {busy === 'saving' ? 'SAVING…' : 'SAVE'}
+                </button>
                 <button onClick={handleVoid} disabled={busy !== 'idle'}
                   className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 font-mono text-xs font-bold disabled:opacity-50">
                   {busy === 'voiding' ? 'VOIDING…' : 'VOID'}
