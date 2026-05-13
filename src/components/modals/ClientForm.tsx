@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { CalendarCheck, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { SERVICE_CATEGORIES } from '../../constants/services';
+import { toTitleCase } from '../../lib/customers';
 import type { SalonService, ServiceType, Manicurist, ServiceRequest } from '../../types';
 
 interface SelectedService {
@@ -163,6 +164,7 @@ export default function ClientForm({
             type="text"
             value={clientFirstName}
             onChange={(e) => setClientFirstName(e.target.value)}
+            onBlur={(e) => setClientFirstName(toTitleCase(e.target.value))}
             placeholder="First"
             className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
           />
@@ -175,6 +177,7 @@ export default function ClientForm({
             type="text"
             value={clientLastName}
             onChange={(e) => setClientLastName(e.target.value)}
+            onBlur={(e) => setClientLastName(toTitleCase(e.target.value))}
             placeholder="Last"
             className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
           />
