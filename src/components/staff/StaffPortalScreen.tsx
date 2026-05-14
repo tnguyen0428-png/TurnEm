@@ -678,7 +678,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {isToday && (
-                            <span className="font-mono text-[11px] font-bold text-gray-900 mr-0.5 truncate max-w-[120px]">
+                            <span className="font-mono text-sm font-bold text-gray-900 mr-0.5 truncate max-w-[140px]">
                               {firstName(entry.clientName)}
                             </span>
                           )}
@@ -699,10 +699,10 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                           })}
                         </div>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className="font-mono text-[10px] text-gray-400">
+                          <span className="font-mono text-[10px] text-gray-600 font-semibold">
                             {entry.turnValue} turns
                           </span>
-                          <span className="flex items-center gap-1 font-mono text-[10px] text-gray-300">
+                          <span className="flex items-center gap-1 font-mono text-[10px] text-gray-500 font-semibold">
                             <Clock size={9} />
                             {formatTime(entry.completedAt)}
                           </span>
@@ -710,7 +710,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                       </div>
                       {isToday && (
                         <div className="flex-shrink-0 text-right">
-                          <p className="font-bebas text-xl text-gray-900 tabular-nums leading-none">
+                          <p className="font-mono text-sm font-bold text-gray-900 tabular-nums leading-none">
                             ${total.toFixed(0)}
                           </p>
                         </div>
@@ -718,6 +718,16 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                     </div>
                   );
                 })}
+                {isToday && (
+                  <div className="px-4 py-3 flex items-center justify-between bg-gray-50">
+                    <span className="font-mono text-xs font-bold tracking-wider uppercase text-gray-600">
+                      Total
+                    </span>
+                    <span className="font-mono text-base font-bold text-gray-900 tabular-nums">
+                      ${entries.reduce((sum, e) => sum + entryTotalDollars(e), 0).toFixed(0)}
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })()}
