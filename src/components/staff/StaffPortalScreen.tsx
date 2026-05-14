@@ -12,6 +12,7 @@ import {
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { Manicurist, CompletedEntry } from '../../types';
 import DailySchedulePanel from './DailySchedulePanel';
+import WeeklyTotalPanel from './WeeklyTotalPanel';
 
 interface StaffPortalScreenProps {
   manicurist: Manicurist;
@@ -205,9 +206,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   // populates it) so the setter binding is unambiguously in scope.
   const [ticketAmountMap, setTicketAmountMap] = useState<Map<string, number>>(new Map());
 
-  // Per-day cents for this manicurist across the past 14 days. Powers the
-  // two-week total card below the Services list. Keyed by 'YYYY-MM-DD'.
-  const [weekAmountByDate, setWeekAmountByDate] = useState<Map<string, number>>(new Map());
 
   // Live ticket-amount sync — fetches today's tickets + items, aggregates
   // by (visit_id, staff_id), and subscribes to changes. The aggregation uses
@@ -268,71 +266,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     };
   }, [selectedDate]);
 
-  // Two-week amount sync: pulls today's plus the past 13 days of tickets +
-  // ticket_items, scoped to this manicurist via staff1_id, aggregated by
-  // business_date. Feeds the "Weekly Total" card below the Services list and
-  // refreshes live via realtime on tickets / ticket_items.
-  useEffect(() => {
-    let cancelled = false;
-
-    function fourteenDaysAgoStr(): string {
-      const d = new Date(`${todayStr}T12:00:00`);
-      d.setDate(d.getDate() - 13);
-      return getLocalDateStr(d);
-    }
-
-    async function refreshWeekAmounts() {
-      try {
-        const startStr = fourteenDaysAgoStr();
-        const { data: ticketRows, error: tErr } = await supabase
-          .from('tickets')
-          .select('id, business_date')
-          .gte('business_date', startStr)
-          .lte('business_date', todayStr);
-        if (cancelled) return;
-        if (tErr) { console.error('[staff week] tickets fetch:', tErr.message); return; }
-        const dateByTicketId = new Map<string, string>();
-        for (const t of (ticketRows ?? []) as Array<{ id: string; business_date: string }>) {
-          dateByTicketId.set(t.id, t.business_date);
-        }
-        const ticketIds = Array.from(dateByTicketId.keys());
-        if (ticketIds.length === 0) {
-          if (!cancelled) setWeekAmountByDate(new Map());
-          return;
-        }
-        const { data: itemRows, error: iErr } = await supabase
-          .from('ticket_items')
-          .select('ticket_id, staff1_id, ext_price_cents')
-          .in('ticket_id', ticketIds);
-        if (cancelled) return;
-        if (iErr) { console.error('[staff week] items fetch:', iErr.message); return; }
-        const sumByDate = new Map<string, number>();
-        for (const i of (itemRows ?? []) as Array<{ ticket_id: string; staff1_id: string | null; ext_price_cents: number }>) {
-          if (i.staff1_id !== initialManicurist.id) continue;
-          const date = dateByTicketId.get(i.ticket_id);
-          if (!date) continue;
-          sumByDate.set(date, (sumByDate.get(date) ?? 0) + (i.ext_price_cents ?? 0));
-        }
-        if (!cancelled) setWeekAmountByDate(sumByDate);
-      } catch (e) {
-        if (!cancelled) console.error('[staff week] refresh error:', e);
-      }
-    }
-
-    void refreshWeekAmounts();
-
-    const channel = supabase
-      .channel('staff-week-amounts')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' },      () => { void refreshWeekAmounts(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket_items' }, () => { void refreshWeekAmounts(); })
-      .subscribe();
-
-    return () => {
-      cancelled = true;
-      supabase.removeChannel(channel);
-    };
-  }, [todayStr, initialManicurist.id]);
-
   // Get live data for this manicurist from state
   const manicurist = state.manicurists.find((m) => m.id === initialManicurist.id) || initialManicurist;
 
@@ -376,36 +309,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       .filter((e) => e.manicuristId === manicurist.id)
       .sort((a, b) => b.completedAt - a.completedAt);
   }, [state.completed, manicurist.id]);
-
-  // Two-week dollar totals for the Weekly Total card. Week runs Sun-Sat in
-  // LA local time. Range labels render as e.g. "May 10 - May 14".
-  const weekTotals = useMemo(() => {
-    const todayDate = new Date(`${todayStr}T12:00:00`);
-    const dow = todayDate.getDay(); // 0 = Sunday
-    const thisWeekStart = new Date(todayDate); thisWeekStart.setDate(todayDate.getDate() - dow);
-    const lastWeekEnd   = new Date(thisWeekStart); lastWeekEnd.setDate(thisWeekStart.getDate() - 1);
-    const lastWeekStart = new Date(thisWeekStart); lastWeekStart.setDate(thisWeekStart.getDate() - 7);
-
-    function sumRange(start: Date, end: Date): number {
-      let cents = 0;
-      const cursor = new Date(start);
-      while (cursor <= end) {
-        cents += weekAmountByDate.get(getLocalDateStr(cursor)) ?? 0;
-        cursor.setDate(cursor.getDate() + 1);
-      }
-      return cents / 100;
-    }
-    function mmmDD(d: Date): string {
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    }
-
-    return {
-      thisWeek:      sumRange(thisWeekStart, todayDate),
-      lastWeek:      sumRange(lastWeekStart, lastWeekEnd),
-      thisWeekRange: `${mmmDD(thisWeekStart)} - ${mmmDD(todayDate)}`,
-      lastWeekRange: `${mmmDD(lastWeekStart)} - ${mmmDD(lastWeekEnd)}`,
-    };
-  }, [weekAmountByDate, todayStr]);
 
   // Catalog-price fallback for the staff's services when a ticket hasn't
   // been written yet. salonServices.price is in dollars (not cents).
@@ -795,6 +698,9 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
         {/* Daily Schedule pill — request appointments for today */}
         <DailySchedulePanel manicuristId={manicurist.id} />
 
+        {/* Weekly Total pill — tap to view this week + last week dollar totals */}
+        <WeeklyTotalPanel manicuristId={manicurist.id} />
+
         {/* Stats Row */}
         <div className="grid grid-cols-2 gap-3">
           {/* Total Turns */}
@@ -945,34 +851,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               </div>
             );
           })()}
-        </div>
-
-        {/* Weekly Total - this week (Sun-today) and last week (Sun-Sat).
-            Sourced from ticket_items aggregated by business_date. */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
-          <div className="px-4 py-3 border-b border-gray-100">
-            <p className="font-mono text-xs font-semibold text-gray-900">Weekly Total</p>
-          </div>
-          <div className="divide-y divide-gray-50">
-            <div className="px-4 py-3 flex items-center justify-between">
-              <div>
-                <p className="font-mono text-sm font-bold text-gray-900">This Week</p>
-                <p className="font-mono text-[10px] text-gray-400 mt-0.5">{weekTotals.thisWeekRange}</p>
-              </div>
-              <span className="font-mono text-base font-bold text-gray-900 tabular-nums">
-                ${weekTotals.thisWeek.toFixed(0)}
-              </span>
-            </div>
-            <div className="px-4 py-3 flex items-center justify-between">
-              <div>
-                <p className="font-mono text-sm font-bold text-gray-900">Last Week</p>
-                <p className="font-mono text-[10px] text-gray-400 mt-0.5">{weekTotals.lastWeekRange}</p>
-              </div>
-              <span className="font-mono text-base font-bold text-gray-900 tabular-nums">
-                ${weekTotals.lastWeek.toFixed(0)}
-              </span>
-            </div>
-          </div>
         </div>
       </div>
     </div>
