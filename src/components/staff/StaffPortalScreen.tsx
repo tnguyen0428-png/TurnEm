@@ -157,6 +157,65 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     };
   }, [dispatch]);
 
+  // Live ticket-amount sync — fetches today's tickets + items, aggregates
+  // by (visit_id, staff_id), and subscribes to changes. The aggregation uses
+  // ticket.queue_entry_id (the visit id) and ticket_items.staff1_id, so the
+  // amount shown in the services list always tracks what the cashier locked
+  // in at checkout (including discounts and price overrides).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshAmounts() {
+      try {
+        const { data: ticketRows, error: tErr } = await supabase
+          .from('tickets')
+          .select('id, queue_entry_id, business_date')
+          .eq('business_date', todayStr);
+        if (cancelled) return;
+        if (tErr) { console.error('[staff amounts] tickets fetch:', tErr.message); return; }
+        const visitByTicketId = new Map<string, string>();
+        for (const t of (ticketRows ?? []) as Array<{ id: string; queue_entry_id: string | null }>) {
+          if (t.queue_entry_id) visitByTicketId.set(t.id, t.queue_entry_id);
+        }
+        const ticketIds = Array.from(visitByTicketId.keys());
+        if (ticketIds.length === 0) {
+          if (!cancelled) setTicketAmountMap(new Map());
+          return;
+        }
+        const { data: itemRows, error: iErr } = await supabase
+          .from('ticket_items')
+          .select('ticket_id, staff1_id, ext_price_cents')
+          .in('ticket_id', ticketIds);
+        if (cancelled) return;
+        if (iErr) { console.error('[staff amounts] items fetch:', iErr.message); return; }
+        const map = new Map<string, number>();
+        for (const i of (itemRows ?? []) as Array<{ ticket_id: string; staff1_id: string | null; ext_price_cents: number }>) {
+          const visitId = visitByTicketId.get(i.ticket_id);
+          const staffId = i.staff1_id;
+          if (!visitId || !staffId) continue;
+          const key = `${visitId}|${staffId}`;
+          map.set(key, (map.get(key) ?? 0) + (i.ext_price_cents ?? 0));
+        }
+        if (!cancelled) setTicketAmountMap(map);
+      } catch (e) {
+        if (!cancelled) console.error('[staff amounts] refresh error:', e);
+      }
+    }
+
+    void refreshAmounts();
+
+    const channel = supabase
+      .channel('staff-ticket-amounts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' },      () => { void refreshAmounts(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket_items' }, () => { void refreshAmounts(); })
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [todayStr]);
+
   // Get live data for this manicurist from state
   const manicurist = state.manicurists.find((m) => m.id === initialManicurist.id) || initialManicurist;
 
@@ -201,16 +260,34 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       .sort((a, b) => b.completedAt - a.completedAt);
   }, [state.completed, manicurist.id]);
 
-  // Price lookup keyed by service name — used to render the dollar amount
-  // next to each services-list row. salonServices.price is stored in dollars
-  // (not cents) on this table, so we display it as-is.
+  // Live amount lookup keyed by (visit_id, staff_id) → total cents on the
+  // closed-out ticket. This is what the customer actually paid for THIS
+  // staff's services on this visit, reflecting any cashier edits, discounts,
+  // or price overrides done at checkout. Falls back to catalog prices when
+  // no ticket exists yet (pre-checkout).
+  const [ticketAmountMap, setTicketAmountMap] = useState<Map<string, number>>(new Map());
+
+  // Catalog-price fallback for the staff's services when a ticket hasn't
+  // been written yet. salonServices.price is in dollars (not cents).
   const priceByService = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of state.salonServices ?? []) m.set(s.name, Number(s.price) || 0);
     return m;
   }, [state.salonServices]);
 
+  // visit_id = leading UUID of the completed_services / queue_entries id.
+  // For non-split entries this equals the id itself; for SPLIT_AND_ASSIGN
+  // children it strips the `-mani-N` / `-waiting` suffix down to the parent.
+  function getVisitId(id: string): string {
+    const m = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    return m ? m[0] : id;
+  }
+
   function entryTotalDollars(entry: CompletedEntry): number {
+    const visitId = getVisitId(entry.id);
+    const fromTicket = ticketAmountMap.get(`${visitId}|${entry.manicuristId}`);
+    if (typeof fromTicket === 'number') return fromTicket / 100;
+    // Fallback: catalog price sum.
     return (entry.services ?? []).reduce((sum, name) => sum + (priceByService.get(name) ?? 0), 0);
   }
 
