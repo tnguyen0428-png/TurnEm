@@ -755,7 +755,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 <ChevronLeft size={16} />
               </button>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-xs font-semibold text-gray-700">
+                <span className="font-bebas text-xl text-pink-600 tracking-wider">
                   {formatDateLabel(selectedDate)}
                 </span>
                 {!isToday && (
