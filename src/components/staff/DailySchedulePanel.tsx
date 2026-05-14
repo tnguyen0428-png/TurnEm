@@ -28,8 +28,8 @@ import { getTodayLA, formatTimeOfDay } from '../../utils/time';
  * increment an unread count badge on the pill for new requests, cancellations,
  * and reschedules. Badge clears when the view is opened.
  *
- * 8 AM rule: before 8:00 AM (America/Los_Angeles), the opened view shows an
- * empty state — "Today's schedule loads at 8:00 AM" — instead of the list.
+ * 7 AM rule: before 7:00 AM (America/Los_Angeles), the opened view shows an
+ * empty state — "Today's schedule loads at 7:00 AM" — instead of the list.
  */
 
 interface DailyScheduleEntry {
@@ -108,7 +108,7 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
     });
   }, [today]);
 
-  // Salon opens at 8:00 AM Los Angeles time. Before then, show an empty state.
+  // Salon opens at 7:00 AM Los Angeles time. Before then, show an empty state.
   const isBeforeOpen = useMemo(() => {
     const hourStr = new Intl.DateTimeFormat('en-US', {
       hour: 'numeric',
@@ -117,7 +117,7 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
     }).format(new Date());
     // Intl can yield "24" at midnight LA — treat that as 0
     const hour = parseInt(hourStr, 10) % 24;
-    return hour < 8;
+    return hour < 7;
   }, []);
 
   const fetchAndDiff = useCallback(async () => {
@@ -313,7 +313,7 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
               {isBeforeOpen ? (
                 <div className="py-14 text-center">
                   <p className="font-mono text-sm text-gray-400">
-                    Today's schedule loads at 8:00 AM.
+                    Today's schedule loads at 7:00 AM.
                   </p>
                 </div>
               ) : entries.length === 0 ? (
