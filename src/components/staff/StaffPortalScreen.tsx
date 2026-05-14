@@ -77,10 +77,18 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
 
     async function refresh() {
       try {
-        const [{ data: staffRows, error: staffErr }, { data: queueRows, error: queueErr }, { data: completedRows }] = await Promise.all([
+        const [
+          { data: staffRows, error: staffErr },
+          { data: queueRows, error: queueErr },
+          { data: completedRows },
+          { data: serviceRows },
+          { data: appointmentRows },
+        ] = await Promise.all([
           supabase.from('manicurists').select('*'),
           supabase.from('queue_entries').select('*'),
           supabase.from('completed_services').select('*'),
+          supabase.from('salon_services').select('*').order('sort_order'),
+          supabase.from('appointments').select('*'),
         ]);
         if (cancelled) return;
         if (staffErr || queueErr) {
@@ -130,6 +138,38 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 turnValue: Number(r.turn_value) || 0,
                 requestedServices: r.requested_services || [],
               })),
+              // Service catalog — prices live here. Pulled into state.salonServices
+              // so entryTotalDollars()'s fallback and any other catalog-reading
+              // surface on the staff portal stays current with admin edits.
+              salonServices: (serviceRows || []).map((r: any) => ({
+                id: r.id, name: r.name, turnValue: Number(r.turn_value) || 0,
+                duration: Number(r.duration) || 0, price: Number(r.price) || 0,
+                isActive: r.is_active !== false, category: r.category || '',
+                sortOrder: Number(r.sort_order) || 0,
+                isFourthPositionSpecial: !!r.is_fourth_position_special,
+              })),
+              // Appointments — feeds today's schedule (DailySchedulePanel) and
+              // any other appointment-aware UI. Replaces stale data if the
+              // realtime channel happened to drop a message.
+              appointments: (appointmentRows || []).map((r: any) => ({
+                id: r.id,
+                clientName: r.client_name || '',
+                clientPhone: r.client_phone || '',
+                service: r.service || '',
+                services: r.services || (r.service ? [r.service] : []),
+                serviceRequests: r.service_requests || [],
+                manicuristId: r.manicurist_id || null,
+                date: r.date,
+                time: r.time,
+                notes: r.notes || '',
+                status: r.status || 'scheduled',
+                createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+                sameTime: !!r.same_time,
+                partyId: r.party_id || null,
+                bookedByReceptionistId: r.booked_by_receptionist_id || null,
+                lastEditedByReceptionistId: r.last_edited_by_receptionist_id || null,
+                lastEditedAt: r.last_edited_at ? new Date(r.last_edited_at).getTime() : null,
+              })),
             },
           });
         }
@@ -141,14 +181,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     // Initial fetch on mount so the portal has data before the first event.
     void refresh();
 
-    // Realtime: any insert/update/delete on the three watched tables triggers
-    // a single refresh. Coarse-grained but matches the previous polling shape
-    // and stays consistent across all three tables in one round trip.
+    // Realtime: any insert/update/delete on the watched tables triggers a
+    // single refresh. Now covers salon_services (catalog/price edits) and
+    // appointments (schedule changes) so the staff tablet doesn't need a
+    // page reload to see updated prices or new bookings.
     const channel = supabase
       .channel('staff-portal-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'manicurists' },        () => { void refresh(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'queue_entries' },      () => { void refresh(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'completed_services' }, () => { void refresh(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'salon_services' },     () => { void refresh(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' },       () => { void refresh(); })
       .subscribe();
 
     return () => {
@@ -156,6 +199,11 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       supabase.removeChannel(channel);
     };
   }, [dispatch]);
+
+  // Live amount lookup keyed by `${visit_id}|${staff_id}` → total cents on the
+  // matching ticket. Declared up here (not inline with the useEffect that
+  // populates it) so the setter binding is unambiguously in scope.
+  const [ticketAmountMap, setTicketAmountMap] = useState<Map<string, number>>(new Map());
 
   // Live ticket-amount sync — fetches today's tickets + items, aggregates
   // by (visit_id, staff_id), and subscribes to changes. The aggregation uses
@@ -259,13 +307,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       .filter((e) => e.manicuristId === manicurist.id)
       .sort((a, b) => b.completedAt - a.completedAt);
   }, [state.completed, manicurist.id]);
-
-  // Live amount lookup keyed by (visit_id, staff_id) → total cents on the
-  // closed-out ticket. This is what the customer actually paid for THIS
-  // staff's services on this visit, reflecting any cashier edits, discounts,
-  // or price overrides done at checkout. Falls back to catalog prices when
-  // no ticket exists yet (pre-checkout).
-  const [ticketAmountMap, setTicketAmountMap] = useState<Map<string, number>>(new Map());
 
   // Catalog-price fallback for the staff's services when a ticket hasn't
   // been written yet. salonServices.price is in dollars (not cents).
@@ -547,7 +588,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           <img
             src="/Turn_Em_Logo.jpg"
             alt="TurnEM Logo"
-            className="h-24 w-auto object-contain"
+            className="h-40 w-auto object-contain"
           />
         </div>
         <div className="max-w-lg mx-auto px-4 pb-3 flex items-center justify-between">

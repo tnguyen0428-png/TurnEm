@@ -54,3 +54,35 @@ _Last updated: 2026-05-12_
 - **Cause:** Vite cached the parse result from when the file was actually broken. HMR didn't pick up the subsequent fix, OR the user's npm run dev is in a stale state.
 - **Fix:** `Ctrl+C` the dev server, run `npm run dev` again, hard refresh the browser (`Ctrl+Shift+R`).
 - **When it's NOT stale:** If a clean restart still shows the error, run `findstr /n "<unique-text>" <file>` in Windows to confirm what's actually on disk.
+
+## Realtime publication missing tables (2026-05-13)
+- **Symptom:** Staff portal (and any other surface) feels frozen — first load shows correct data, but no updates flow when something changes on another device. The frontend subscribes via `supabase.channel(...).on('postgres_changes', { table: ... })` and never receives anything.
+- **Cause:** `supabase_realtime` publication only included `customers`. Every other postgres_changes subscription was silently listening to events that were never broadcast.
+- **Detection:** `SELECT tablename FROM pg_publication_tables WHERE pubname='supabase_realtime' ORDER BY tablename;` — should list every live-ops table.
+- **Fix:** `ALTER PUBLICATION supabase_realtime ADD TABLE <table>;` — applied via migration `realtime_publication_all_live_tables`.
+- **Prevention:** Whenever the frontend adds a new postgres_changes subscription, also add the table to the publication. Easy thing to forget.
+
+## Auto-trigger duplicates from same source row (2026-05-13)
+- **Symptom:** Ticket items appear duplicated on closed tickets — same service, same staff, two lines. paid_cents stays correct but subtotal_cents inflates.
+- **Cause:** The first version of the `tickets_ensure_for_visit` Postgres trigger appended items every time it fired, with `queue_entry_id = source_row_id` for every line. Re-fires (UPDATE echoes, multiple events) added duplicates. Worse, on a single completed_services row carrying multiple services, all lines collided on `(ticket_id, queue_entry_id)` and only the FIRST service got in.
+- **Fix (current trigger):**
+  1. Skip if `tickets.status != 'open'` (closed/voided are untouchable).
+  2. Skip if `source_row_id` is already in `tickets.auto_attributed_sources`.
+  3. Use per-line key `${source_row_id}#${idx}` for ticket_items.queue_entry_id so N services in one row produce N distinct lines.
+  4. Per-service same-name-staff guard so the trigger doesn't duplicate what older client code already inserted (with NULL queue_entry_id).
+- **Cleanup pattern when this recurs:** look for ticket_items pairs where one has NULL qe and another has a non-NULL qe with the same name + staff; the trigger-inserted one is the dupe.
+
+## COMPLETE_SERVICE with empty client.services (2026-05-13)
+- **Symptom:** History page shows a manicurist row for a client but with NO service name (the service pill is missing).
+- **Cause:** Reducer wrote `client.services` directly into the completed_services row. When a SPLIT_AND_ASSIGN child ended up with an empty services array (multi-service distribution put all services on siblings, or a later edit cleared it), the completed_services row was persisted with `services=[]`.
+- **Fix:** In COMPLETE_SERVICE reducer, fall back to the names in `client.serviceRequests` filtered to the completing manicurist when `client.services` is empty.
+- **First seen:** Candace × Tammy on ticket #70 (2026-05-13). Tammy's completed_services row had `services=[]`; the ticket had her line correctly (Pedicure $40).
+
+## Blueprint dual-PIN gate (2026-05-13)
+- Blueprint now accepts EITHER the system admin PIN (system_state.admin_passcode) for full access OR any receptionist's personal PIN for Customer-Profiles-only access. Tier stored in `accessTier` state in BlueprintScreen.
+- If you need to add new sidebar groups, remember to keep `CUSTOMERS` group always visible at the receptionist tier — that's the only one filtered IN, everything else filtered OUT.
+
+## Multi-device assignment missing tickets (2026-05-13)
+- **Symptom:** Clients assigned/completed on one device's queue UI don't get tickets created — they're missing from Register.
+- **Cause:** AppContext's sync effect short-circuits with `if (wasRemote) return;` before `syncQueue` (which contains the ticket auto-create call) runs. Assignments arriving via realtime from another device skipped the ticket-create path.
+- **Fix:** Server-side trigger on `queue_entries` / `completed_services` (see turnem-app.md). The frontend reconcile path (RegisterScreen.useEffect) and AppContext.syncQueue paths are now belt-and-suspenders, with the DB trigger as primary.
