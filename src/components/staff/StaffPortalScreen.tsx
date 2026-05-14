@@ -63,11 +63,10 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   }
 
   function formatDateLabel(dateStr: string): string {
-    if (dateStr === todayStr) return 'Today';
-    const yesterday = getLocalDateStr(new Date(new Date().setDate(new Date().getDate() - 1)));
-    if (dateStr === yesterday) return 'Yesterday';
     const d = new Date(dateStr + 'T12:00:00');
-    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const weekday = d.toLocaleDateString('en-US', { weekday: 'long' });
+    const mdy = d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+    return `${weekday} ${mdy}`;
   }
   // Live data for staff mode: subscribe to realtime changes on the same three
   // tables admin syncs, plus an initial fetch on mount. Replaces the previous
