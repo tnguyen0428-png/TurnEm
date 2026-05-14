@@ -1466,6 +1466,11 @@ export async function replaceTicketPayments(
   if (dErr) { console.error('[tickets] replaceTicketPayments delete:', dErr.message); return false; }
 
   if (newPayments.length > 0) {
+    // Several columns on `payments` are NOT NULL with text defaults (''):
+    // gift_card_code, processor, processor_payment_id, card_brand, card_last4.
+    // Send empty strings, not nulls, so the defaults apply and inserts don't
+    // trip the NOT NULL constraint. tendered_cents / change_cents are
+    // nullable; we leave tendered as null for non-cash receptionist edits.
     const rows = newPayments.map((p) => ({
       ticket_id: ticketId,
       shift_id: shiftId,
@@ -1473,11 +1478,11 @@ export async function replaceTicketPayments(
       amount_cents: p.amountCents,
       tendered_cents: null,
       change_cents: 0,
-      gift_card_code: p.giftCardCode ?? null,
-      processor: null,
-      processor_payment_id: null,
-      card_brand: null,
-      card_last4: null,
+      gift_card_code: p.giftCardCode ?? '',
+      processor: 'manual',
+      processor_payment_id: '',
+      card_brand: '',
+      card_last4: '',
       refund_of: null,
       captured_at: new Date().toISOString(),
     }));
