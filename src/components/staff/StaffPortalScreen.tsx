@@ -201,6 +201,29 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       .sort((a, b) => b.completedAt - a.completedAt);
   }, [state.completed, manicurist.id]);
 
+  // Price lookup keyed by service name — used to render the dollar amount
+  // next to each services-list row. salonServices.price is stored in dollars
+  // (not cents) on this table, so we display it as-is.
+  const priceByService = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of state.salonServices ?? []) m.set(s.name, Number(s.price) || 0);
+    return m;
+  }, [state.salonServices]);
+
+  function entryTotalDollars(entry: CompletedEntry): number {
+    return (entry.services ?? []).reduce((sum, name) => sum + (priceByService.get(name) ?? 0), 0);
+  }
+
+  // First name only: split on whitespace and take the first non-empty token.
+  // Empty client names render as the generic "Walk-in" so the row still has
+  // a leading anchor.
+  function firstName(name: string): string {
+    const trimmed = (name ?? '').trim();
+    if (!trimmed) return 'Walk-in';
+    const head = trimmed.split(/\s+/)[0];
+    return head || 'Walk-in';
+  }
+
   // Queue position: rank among clocked-in available manicurists by turn count
   const queuePosition = useMemo(() => {
     if (!manicurist.clockedIn) return null;
@@ -648,38 +671,53 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             }
             return (
               <div className="divide-y divide-gray-50">
-                {entries.map((entry) => (
-                  <div key={entry.id} className="px-4 py-3 flex items-center justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {entry.services.map((s, i) => {
-                          const isRequested = entry.requestedServices?.includes(s);
-                          return (
-                            <span key={`${s}-${i}`} className="inline-flex items-center gap-1">
-                              <span className="inline-block px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600 font-semibold">
-                                {s}
-                              </span>
-                              {isRequested && (
-                                <span className="font-mono text-[9px] font-bold bg-purple-500 text-white rounded px-1 py-0.5 leading-none">
-                                  R
-                                </span>
-                              )}
+                {entries.map((entry) => {
+                  const total = isToday ? entryTotalDollars(entry) : 0;
+                  return (
+                    <div key={entry.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {isToday && (
+                            <span className="font-mono text-[11px] font-bold text-gray-900 mr-0.5 truncate max-w-[120px]">
+                              {firstName(entry.clientName)}
                             </span>
-                          );
-                        })}
+                          )}
+                          {entry.services.map((s, i) => {
+                            const isRequested = entry.requestedServices?.includes(s);
+                            return (
+                              <span key={`${s}-${i}`} className="inline-flex items-center gap-1">
+                                <span className="inline-block px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600 font-semibold">
+                                  {s}
+                                </span>
+                                {isRequested && (
+                                  <span className="font-mono text-[9px] font-bold bg-purple-500 text-white rounded px-1 py-0.5 leading-none">
+                                    R
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="font-mono text-[10px] text-gray-400">
+                            {entry.turnValue} turns
+                          </span>
+                          <span className="flex items-center gap-1 font-mono text-[10px] text-gray-300">
+                            <Clock size={9} />
+                            {formatTime(entry.completedAt)}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="font-mono text-[10px] text-gray-400">
-                          {entry.turnValue} turns
-                        </span>
-                        <span className="flex items-center gap-1 font-mono text-[10px] text-gray-300">
-                          <Clock size={9} />
-                          {formatTime(entry.completedAt)}
-                        </span>
-                      </div>
+                      {isToday && (
+                        <div className="flex-shrink-0 text-right">
+                          <p className="font-bebas text-xl text-gray-900 tabular-nums leading-none">
+                            ${total.toFixed(0)}
+                          </p>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })()}
