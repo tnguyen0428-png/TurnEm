@@ -218,7 +218,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
         const { data: ticketRows, error: tErr } = await supabase
           .from('tickets')
           .select('id, queue_entry_id, business_date')
-          .eq('business_date', todayStr);
+          .eq('business_date', selectedDate);
         if (cancelled) return;
         if (tErr) { console.error('[staff amounts] tickets fetch:', tErr.message); return; }
         const visitByTicketId = new Map<string, string>();
@@ -262,7 +262,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, [todayStr]);
+  }, [selectedDate]);
 
   // Get live data for this manicurist from state
   const manicurist = state.manicurists.find((m) => m.id === initialManicurist.id) || initialManicurist;
@@ -793,16 +793,14 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             return (
               <div className="divide-y divide-gray-50">
                 {entries.map((entry) => {
-                  const total = isToday ? entryTotalDollars(entry) : 0;
+                  const total = entryTotalDollars(entry);
                   return (
                     <div key={entry.id} className="px-4 py-3 flex items-center justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          {isToday && (
-                            <span className="font-mono text-sm font-bold text-gray-900 mr-0.5 truncate max-w-[140px]">
-                              {firstName(entry.clientName)}
-                            </span>
-                          )}
+                          <span className="font-mono text-sm font-bold text-gray-900 mr-0.5 truncate max-w-[140px]">
+                            {firstName(entry.clientName)}
+                          </span>
                           {entry.services.map((s, i) => {
                             const isRequested = entry.requestedServices?.includes(s);
                             return (
@@ -829,26 +827,22 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                           </span>
                         </div>
                       </div>
-                      {isToday && (
-                        <div className="flex-shrink-0 text-right">
-                          <p className="font-mono text-sm font-bold text-gray-900 tabular-nums leading-none">
-                            ${total.toFixed(0)}
-                          </p>
-                        </div>
-                      )}
+                      <div className="flex-shrink-0 text-right">
+                        <p className="font-mono text-sm font-bold text-gray-900 tabular-nums leading-none">
+                          ${total.toFixed(0)}
+                        </p>
+                      </div>
                     </div>
                   );
                 })}
-                {isToday && (
-                  <div className="px-4 py-3 flex items-center justify-between bg-gray-50">
-                    <span className="font-mono text-xs font-bold tracking-wider uppercase text-gray-600">
-                      Total
-                    </span>
-                    <span className="font-mono text-base font-bold text-gray-900 tabular-nums">
-                      ${entries.reduce((sum, e) => sum + entryTotalDollars(e), 0).toFixed(0)}
-                    </span>
-                  </div>
-                )}
+                <div className="px-4 py-3 flex items-center justify-between bg-gray-50">
+                  <span className="font-mono text-xs font-bold tracking-wider uppercase text-gray-600">
+                    Total
+                  </span>
+                  <span className="font-mono text-base font-bold text-gray-900 tabular-nums">
+                    ${entries.reduce((sum, e) => sum + entryTotalDollars(e), 0).toFixed(0)}
+                  </span>
+                </div>
               </div>
             );
           })()}
