@@ -81,6 +81,15 @@ export default function TicketModal({
   // VOID requires a receptionist PIN — the modal renders inline once this is true.
   const [showVoidGate, setShowVoidGate] = useState(false);
 
+  // Closed-ticket edit unlock. By default a CLOSED ticket is read-only; a
+  // receptionist can tap EDIT in the footer to open a PIN gate. Once they
+  // confirm, `unlockedForEdit` flips true and the form behaves like an open
+  // ticket (inputs editable, SAVE button visible) for the duration of this
+  // modal instance.
+  const [showEditGate, setShowEditGate] = useState(false);
+  const [unlockedForEdit, setUnlockedForEdit] = useState(false);
+  const canEdit = ticket.status === 'open' || unlockedForEdit;
+
   // ─── Header state ─────────────────────────────────────────────────────────
   // Split the stored single-string client name into first/last on first render.
   // We persist it back as `${first} ${last}`.trim() so the data layer is unchanged.
@@ -464,6 +473,9 @@ export default function TicketModal({
             {ticket.status === 'closed' && (
               <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-mono text-xs font-bold tracking-wider">CLOSED</span>
             )}
+            {unlockedForEdit && (
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-mono text-xs font-bold tracking-wider">EDITING</span>
+            )}
             {isVoided && (
               <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-mono text-xs font-bold tracking-wider">VOID</span>
             )}
@@ -488,7 +500,7 @@ export default function TicketModal({
                 <Field label="First Name">
                   <input
                     type="text" value={clientFirstName} onChange={(e) => setClientFirstName(e.target.value)}
-                    disabled={!isOpen}
+                    disabled={!canEdit}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
                     placeholder="Walk-in"
                   />
@@ -496,7 +508,7 @@ export default function TicketModal({
                 <Field label="Last Name">
                   <input
                     type="text" value={clientLastName} onChange={(e) => setClientLastName(e.target.value)}
-                    disabled={!isOpen}
+                    disabled={!canEdit}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
                     placeholder="—"
                   />
@@ -504,7 +516,7 @@ export default function TicketModal({
                 <Field label="Phone">
                   <input
                     type="tel" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)}
-                    disabled={!isOpen}
+                    disabled={!canEdit}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
                     placeholder="(555) 555-5555"
                   />
@@ -513,7 +525,7 @@ export default function TicketModal({
                   <select
                     value={primaryManicuristId ?? ''}
                     onChange={(e) => setPrimaryManicuristId(e.target.value || null)}
-                    disabled={!isOpen}
+                    disabled={!canEdit}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
                   >
                     <option value="">—</option>
@@ -571,13 +583,13 @@ export default function TicketModal({
                           <input
                             type="number" min={1} step={1} value={line.quantity}
                             onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value || '1', 10)) })}
-                            disabled={!isOpen}
+                            disabled={!canEdit}
                             className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-center focus:outline-none disabled:bg-gray-50"
                           />
                           <input
                             type="text" value={line.name}
                             onChange={(e) => updateLine(idx, { name: e.target.value })}
-                            disabled={!isOpen}
+                            disabled={!canEdit}
                             placeholder="Service name"
                             className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm focus:outline-none disabled:bg-gray-50"
                           />
@@ -591,7 +603,7 @@ export default function TicketModal({
                                 staff1Color: m?.color ?? '#9ca3af',
                               });
                             }}
-                            disabled={!isOpen}
+                            disabled={!canEdit}
                             className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm focus:outline-none disabled:bg-gray-50"
                           >
                             <option value="">—</option>
@@ -603,21 +615,21 @@ export default function TicketModal({
                             type="text" inputMode="decimal" value={line.priceInput}
                             onChange={(e) => updateLine(idx, { priceInput: e.target.value })}
                             onBlur={(e) => updateLine(idx, { priceInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
-                            disabled={!isOpen}
+                            disabled={!canEdit}
                             className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-gray-50"
                           />
                           <input
                             type="text" inputMode="decimal" value={line.discountInput}
                             onChange={(e) => updateLine(idx, { discountInput: e.target.value })}
                             onBlur={(e) => updateLine(idx, { discountInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
-                            disabled={!isOpen || !note.trim()}
+                            disabled={!canEdit || !note.trim()}
                             title={!note.trim() ? 'Add a note before applying a discount.' : undefined}
                             className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
                           />
                           <span className="px-1.5 py-1 font-mono text-sm font-semibold text-gray-900 text-right">
                             {formatMoneyCents(ext)}
                           </span>
-                          {isOpen ? (
+                          {canEdit ? (
                             <button onClick={() => removeLine(idx)}
                               className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors">
                               <Trash2 size={14} />
@@ -631,7 +643,7 @@ export default function TicketModal({
                 </div>
 
                 {/* Add line */}
-                {isOpen && (
+                {canEdit && (
                   <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-center px-3 py-1.5 bg-gray-50/60 border-t border-gray-100">
                     <select
                       value={pickerCategory}
@@ -681,11 +693,11 @@ export default function TicketModal({
                   <input
                     type="text"
                     value={note} onChange={(e) => setNote(e.target.value)}
-                    disabled={!isOpen}
+                    disabled={!canEdit}
                     className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50"
                     placeholder="Note…"
                   />
-                  {isOpen && !note && (
+                  {canEdit && !note && (
                     <button onClick={() => setShowNote(false)}
                       className="px-2 py-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 font-mono text-xs">
                       ×
@@ -693,7 +705,7 @@ export default function TicketModal({
                   )}
                 </div>
               ) : (
-                isOpen && (
+canEdit && (
                   <button onClick={() => setShowNote(true)}
                     className="self-start px-2 py-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-50 font-mono text-xs">
                     + Add note
@@ -709,16 +721,16 @@ export default function TicketModal({
                 <RowEdit label="Discount" value={ticketDiscountInput}
                   onChange={(v) => setTicketDiscountInput(v)}
                   onBlur={(v) => setTicketDiscountInput((parseDollarsToCents(v) / 100).toFixed(2))}
-                  disabled={!isOpen || !note.trim()}
-                  title={!isOpen ? undefined : (!note.trim() ? 'Add a note before applying a discount.' : undefined)} />
+                  disabled={!canEdit || !note.trim()}
+                  title={!canEdit ? undefined : (!note.trim() ? 'Add a note before applying a discount.' : undefined)} />
                 <RowEdit label="Tax" value={taxInput}
                   onChange={(v) => setTaxInput(v)}
                   onBlur={(v) => setTaxInput((parseDollarsToCents(v) / 100).toFixed(2))}
-                  disabled={!isOpen} />
+                  disabled={!canEdit} />
                 <RowEdit label="Tip" value={tipInput}
                   onChange={(v) => setTipInput(v)}
                   onBlur={(v) => setTipInput((parseDollarsToCents(v) / 100).toFixed(2))}
-                  disabled={!isOpen} />
+                  disabled={!canEdit} />
                 <div className="border-t border-gray-200 my-0.5" />
                 <Row label="Total" value={formatMoneyCents(totalCents)} bold />
               </div>
@@ -726,7 +738,7 @@ export default function TicketModal({
               {/* Payment method buttons — pulled up so the cashier can pick a
                   tender immediately after seeing Total. Each click adds a
                   pending row below, defaulting to the remaining due. */}
-              {isOpen ? (
+              {canEdit ? (
                 <>
                   <div className="grid grid-cols-3 gap-1.5">
                     <PayBtn label="Cash" tone="cash" onClick={() => addPending('cash')} />
@@ -860,11 +872,30 @@ export default function TicketModal({
                 </button>
               </>
             )}
-            {!isOpen && (
-              <button onClick={onClose}
-                className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800">
-                CLOSE
-              </button>
+            {!isOpen && !unlockedForEdit && (
+              <>
+                <button onClick={() => setShowEditGate(true)}
+                  className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-mono text-xs font-bold">
+                  EDIT
+                </button>
+                <button onClick={onClose}
+                  className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800">
+                  CLOSE
+                </button>
+              </>
+            )}
+            {!isOpen && unlockedForEdit && (
+              <>
+                <span className="w-px h-6 bg-gray-200 mx-1" />
+                <button onClick={async () => { const s = await doSave(); if (s) onClose(); }} disabled={busy !== 'idle'}
+                  className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50">
+                  {busy === 'saving' ? 'SAVING…' : 'SAVE'}
+                </button>
+                <button onClick={onClose}
+                  className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-mono text-xs font-bold">
+                  CANCEL
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -893,6 +924,16 @@ export default function TicketModal({
         receptionists={state.manicurists.filter((m) => m.isReceptionist)}
         onCancel={() => setShowVoidGate(false)}
         onConfirm={handleVoidConfirmed}
+      />
+      <ReceptionistPinGate
+        open={showEditGate}
+        title="EDIT CLOSED TICKET"
+        subtitle={`Editing Ticket #${ticket.ticketNumber} after checkout. Receptionist PIN required.`}
+        confirmLabel="UNLOCK"
+        tone="primary"
+        receptionists={state.manicurists.filter((m) => m.isReceptionist)}
+        onCancel={() => setShowEditGate(false)}
+        onConfirm={() => { setShowEditGate(false); setUnlockedForEdit(true); }}
       />
     </div>
   );
