@@ -285,6 +285,20 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // set but serviceRequests isn't populated per-service.
       const wholeEntryRequested = !!client.isRequested &&
         client.requestedManicuristId === action.manicuristId;
+      // Fallback when a split-and-assign child ended up with no services in
+      // its services[] (e.g. the multi-service assign distributed all services
+      // to siblings and left this child empty, or a later edit cleared it).
+      // Without this, History shows a blank service line for the completing
+      // staff — see Candace × Tammy 2026-05-13 ticket #70. Prefer the explicit
+      // services array, then fall back to the serviceRequests entries that
+      // target this manicurist.
+      const fallbackServicesFromRequests = (client.serviceRequests || [])
+        .filter((r) => r.manicuristIds && r.manicuristIds.includes(action.manicuristId))
+        .map((r) => r.service);
+      const recordedServices =
+        client.services && client.services.length > 0
+          ? client.services
+          : fallbackServicesFromRequests;
       // Deterministic ID — the queue entry's own id. A queue entry can only be
       // completed once (it's removed from the queue below), so using its id as
       // the completed_services row id makes COMPLETE_SERVICE idempotent at the
@@ -294,7 +308,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const completedEntry = {
         id: client.id,
         clientName: client.clientName,
-        services: client.services,
+        services: recordedServices,
         turnValue: client.turnValue,
         manicuristId: manicurist.id,
         manicuristName: manicurist.name,
