@@ -25,6 +25,7 @@ import {
   formatMoneyCents,
   parseDollarsToCents,
   updateOpenTicket,
+  replaceTicketPayments,
   closeTicket,
   voidTicket,
   reallocateTurnsForStaffChanges,
@@ -89,6 +90,26 @@ export default function TicketModal({
   const [showEditGate, setShowEditGate] = useState(false);
   const [unlockedForEdit, setUnlockedForEdit] = useState(false);
   const canEdit = ticket.status === 'open' || unlockedForEdit;
+
+  // When a receptionist unlocks a closed ticket, seed the `pending` editor
+  // with the ticket's existing captured payments so the row is visible and
+  // editable — otherwise the user sees an empty pending block and can't tell
+  // what was previously recorded. Pre-fill only fires once per unlock.
+  useEffect(() => {
+    if (unlockedForEdit && ticket.status === 'closed') {
+      setPending(
+        ticket.payments
+          .filter((p) => p.refundOf === null)
+          .map((p) => ({
+            method: p.method,
+            amountInput: (p.amountCents / 100).toFixed(2),
+            tenderedInput: p.tenderedCents != null ? (p.tenderedCents / 100).toFixed(2) : '',
+            giftCardCode: p.giftCardCode ?? '',
+          })),
+      );
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unlockedForEdit]);
 
   // ─── Header state ─────────────────────────────────────────────────────────
   // Split the stored single-string client name into first/last on first render.
@@ -887,7 +908,20 @@ canEdit && (
             {!isOpen && unlockedForEdit && (
               <>
                 <span className="w-px h-6 bg-gray-200 mx-1" />
-                <button onClick={async () => { const s = await doSave(); if (s) onClose(); }} disabled={busy !== 'idle'}
+                <button onClick={async () => {
+                  // Persist items/header via doSave, then for closed tickets
+                  // also replace the payments table so method/amount edits
+                  // (e.g. gift → card) actually stick.
+                  const s = await doSave();
+                  if (!s) return;
+                  const payRes = await replaceTicketPayments(ticket.id, pending.map((p) => ({
+                    method: p.method,
+                    amountCents: parseDollarsToCents(p.amountInput),
+                    giftCardCode: p.giftCardCode,
+                  })));
+                  if (!payRes) { setError('Saved items but could not update payments.'); return; }
+                  onClose();
+                }} disabled={busy !== 'idle'}
                   className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50">
                   {busy === 'saving' ? 'SAVING…' : 'SAVE'}
                 </button>

@@ -1433,6 +1433,69 @@ export async function reallocateTurnsForStaffChanges(
   }
 }
 
+// replace payments on a closed ticket --------------------------------------
+
+/**
+ * Wholesale replacement of a closed ticket's payments. Used by the
+ * receptionist-edit flow when a payment method or split needs to be corrected
+ * after checkout (e.g. customer paid card but it was recorded as gift).
+ *
+ * Deletes the existing non-refund rows, inserts the supplied set, and
+ * re-derives `tickets.paid_cents` from the sum.
+ */
+export async function replaceTicketPayments(
+  ticketId: string,
+  newPayments: Array<{ method: 'cash' | 'visa_mc' | 'gift'; amountCents: number; giftCardCode?: string | null }>,
+): Promise<boolean> {
+  // Pull shift_id from the ticket so the new rows stay attached to the
+  // same shift the original payments belonged to.
+  const { data: tr, error: tErr } = await supabase
+    .from('tickets')
+    .select('shift_id')
+    .eq('id', ticketId)
+    .maybeSingle();
+  if (tErr || !tr) { console.error('[tickets] replaceTicketPayments read ticket:', tErr?.message ?? 'not found'); return false; }
+  const shiftId = (tr as { shift_id: string | null }).shift_id;
+
+  // Drop existing non-refund payments. Refund rows are preserved as audit.
+  const { error: dErr } = await supabase
+    .from('payments')
+    .delete()
+    .eq('ticket_id', ticketId)
+    .is('refund_of', null);
+  if (dErr) { console.error('[tickets] replaceTicketPayments delete:', dErr.message); return false; }
+
+  if (newPayments.length > 0) {
+    const rows = newPayments.map((p) => ({
+      ticket_id: ticketId,
+      shift_id: shiftId,
+      method: p.method,
+      amount_cents: p.amountCents,
+      tendered_cents: null,
+      change_cents: 0,
+      gift_card_code: p.giftCardCode ?? null,
+      processor: null,
+      processor_payment_id: null,
+      card_brand: null,
+      card_last4: null,
+      refund_of: null,
+      captured_at: new Date().toISOString(),
+    }));
+    const { error: iErr } = await supabase.from('payments').insert(rows);
+    if (iErr) { console.error('[tickets] replaceTicketPayments insert:', iErr.message); return false; }
+  }
+
+  // Re-derive paid_cents on the parent ticket from the new payment set.
+  const paidCents = newPayments.reduce((s, p) => s + p.amountCents, 0);
+  const { error: uErr } = await supabase
+    .from('tickets')
+    .update({ paid_cents: paidCents })
+    .eq('id', ticketId);
+  if (uErr) { console.error('[tickets] replaceTicketPayments update paid:', uErr.message); return false; }
+
+  return true;
+}
+
 // update payment ----------------------------------------------------------
 
 /**
