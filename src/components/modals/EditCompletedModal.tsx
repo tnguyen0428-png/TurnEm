@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, RotateCcw, X } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
@@ -58,15 +58,30 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
     return total;
   }, [services, state.salonServices]);
 
+  // When the user adds or removes a service, recompute the turn value to
+  // match the catalog. This keeps the History view honest: editing a Gel
+  // Manicure (2.5 turns) down to a regular Manicure (2 turns) will drop the
+  // entry's turn count without the user having to remember to click "use
+  // suggested". Tracked via a ref so we don't override the saved entry's
+  // value on first render.
+  const servicesEditedRef = useRef(false);
+  useEffect(() => {
+    if (servicesEditedRef.current) {
+      setTurnValue(String(suggestedTurnValue));
+    }
+  }, [suggestedTurnValue]);
+
   function handleAddService(svcId: string) {
     const svc = sortedServices.find((s) => s.id === svcId);
     if (!svc) return;
+    servicesEditedRef.current = true;
     setServices((prev) => [...prev, svc.name]);
     setSelectedServiceId('');
     setSelectedCategory('');
   }
 
   function handleRemoveServiceAt(idx: number) {
+    servicesEditedRef.current = true;
     setServices((prev) => {
       const removed = prev[idx];
       const next = prev.filter((_, i) => i !== idx);
