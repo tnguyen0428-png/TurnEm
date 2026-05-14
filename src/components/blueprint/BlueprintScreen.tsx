@@ -1,14 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
-  Clock3, ChevronRight, GripVertical, KeyRound,
+  Clock3, ChevronRight, GripVertical, KeyRound, Lock, X,
   DollarSign, UserCheck, Gift, UserPlus,
 } from 'lucide-react';
 import SalesReport from './SalesReport';
 import StaffReport from './StaffReport';
 import GiftCertificatesReport from './GiftCertificatesReport';
 import CustomersScreen from './CustomersScreen';
-import { PinVerifyModal } from '../shared/AdminPinGate';
+import { supabase } from '../../lib/supabase';
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
   type DragEndEvent,
@@ -110,7 +110,6 @@ function SortableStaffRow({
         background: isDragging ? '#fdf2f8' : 'white',
       }}
     >
-      {/* Name + grip */}
       <div className="px-4 py-3.5 flex items-center gap-3">
         <div
           {...attributes}
@@ -124,7 +123,6 @@ function SortableStaffRow({
         <span className="font-mono text-[13px] font-semibold text-gray-800 truncate">{manicurist.name}</span>
       </div>
 
-      {/* Manicurist toggle */}
       <div className="flex justify-center py-3.5">
         <button
           onClick={() => onToggleBook(!inBook)}
@@ -134,7 +132,6 @@ function SortableStaffRow({
         </button>
       </div>
 
-      {/* Receptionist toggle */}
       <div className="flex justify-center py-3.5">
         <button
           onClick={() => onToggleReceptionist(!isReceptionist)}
@@ -175,14 +172,12 @@ function StaffGroupScreen() {
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-        {/* Header */}
         <div className="grid bg-gray-50 border-b border-gray-100" style={{ gridTemplateColumns: '1fr 130px 150px' }}>
           <div className="px-4 py-3 font-mono text-[10px] font-bold text-gray-400 tracking-wider">STAFF MEMBER</div>
           <div className="py-3 text-center font-mono text-[10px] font-bold text-pink-400 tracking-wider">MANICURIST</div>
           <div className="py-3 text-center font-mono text-[10px] font-bold text-indigo-400 tracking-wider">RECEPTIONIST</div>
         </div>
 
-        {/* Hint row */}
         <div className="grid border-b border-gray-50 bg-gray-50/50" style={{ gridTemplateColumns: '1fr 130px 150px' }}>
           <div className="px-4 py-1.5 font-mono text-[9px] text-gray-300">Drag ⠿ to reorder</div>
           <div className="py-1.5 text-center font-mono text-[9px] text-gray-300">Shows in book</div>
@@ -239,8 +234,6 @@ function SecurityScreen() {
 
   return (
     <div className="p-6 overflow-y-auto h-full space-y-6">
-
-      {/* Receptionists */}
       <div>
         <h3 className="font-bebas text-lg tracking-[2px] text-gray-800 mb-1">RECEPTIONIST ACCESS</h3>
         <p className="font-mono text-[11px] text-gray-400 mb-3">Staff marked as Receptionist in Staff Group can log in and book appointments.</p>
@@ -269,7 +262,6 @@ function SecurityScreen() {
         )}
       </div>
 
-      {/* All staff PINs */}
       <div>
         <h3 className="font-bebas text-lg tracking-[2px] text-gray-800 mb-1">STAFF PIN CODES</h3>
         <p className="font-mono text-[11px] text-gray-400 mb-3">4-digit PINs for staff portal access.</p>
@@ -283,28 +275,155 @@ function SecurityScreen() {
   );
 }
 
+// ─── Dual-mode PIN gate ────────────────────────────────────────────────────────
+// Single PIN field that accepts either the admin PIN (full access) or a
+// receptionist's personal PIN (Customer Profiles only).
+
+async function fetchAdminPasscode(): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('system_state')
+    .select('admin_passcode')
+    .eq('id', 'singleton')
+    .maybeSingle();
+  if (error || !data) return null;
+  return (data.admin_passcode as string) || null;
+}
+
+function BlueprintPinGate({
+  receptionists, onSuccess, onCancel,
+}: {
+  receptionists: Manicurist[];
+  onSuccess: (tier: 'admin' | 'receptionist') => void;
+  onCancel: () => void;
+}) {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const pinRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setTimeout(() => pinRef.current?.focus(), 50);
+  }, []);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pin) return;
+    setError('');
+    setLoading(true);
+    try {
+      const adminPin = await fetchAdminPasscode();
+      if (adminPin && pin === adminPin) {
+        onSuccess('admin');
+        return;
+      }
+      const match = receptionists.find((r) => r.pinCode && r.pinCode === pin);
+      if (match) {
+        onSuccess('receptionist');
+        return;
+      }
+      setError('Incorrect PIN');
+      setPin('');
+      setTimeout(() => pinRef.current?.focus(), 0);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
+              <Lock size={18} className="text-gray-600" />
+            </div>
+            <h2 className="font-bebas text-2xl tracking-[1.5px] text-gray-900">Enter PIN</h2>
+          </div>
+          <button type="button" onClick={onCancel} className="text-gray-400 hover:text-gray-600" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <input
+            ref={pinRef}
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={pin}
+            onChange={(e) => { setPin(e.target.value); setError(''); }}
+            className={`w-full px-4 py-3 rounded-xl border font-mono text-lg text-center tracking-widest focus:outline-none ${
+              error ? 'border-red-300 bg-red-50 text-red-600' : 'border-gray-200 text-gray-900 focus:border-gray-400'
+            }`}
+            placeholder="PIN"
+            autoComplete="off"
+          />
+          {error && <p className="mt-2 font-mono text-xs text-red-500 text-center">{error}</p>}
+          <p className="mt-3 font-mono text-[10px] text-gray-400 text-center leading-relaxed">
+            Admin PIN → full Blueprint · Receptionist PIN → Customer Profiles only
+          </p>
+          <div className="flex gap-2 mt-4">
+            <button type="button" onClick={onCancel}
+              className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-mono text-xs font-semibold">
+              CANCEL
+            </button>
+            <button type="submit" disabled={loading || !pin}
+              className="flex-1 py-2.5 rounded-xl bg-gray-900 text-white font-mono text-xs font-semibold disabled:opacity-50">
+              {loading ? 'CHECKING...' : 'UNLOCK'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Blueprint screen ─────────────────────────────────────────────────────
+type AccessTier = 'admin' | 'receptionist';
+
 export default function BlueprintScreen() {
-  const { dispatch } = useApp();
-  const [unlocked, setUnlocked] = useState(false);
+  const { state, dispatch } = useApp();
+  const [accessTier, setAccessTier] = useState<AccessTier | null>(null);
   const [active, setActive] = useState<BlueprintSection>('staff-management');
+
+  const receptionists = useMemo(
+    () => state.manicurists.filter((m) => m.isReceptionist),
+    [state.manicurists],
+  );
+
+  const visibleNavGroups = useMemo(() => {
+    if (accessTier === 'admin') return NAV_GROUPS;
+    if (accessTier === 'receptionist') return NAV_GROUPS.filter((g) => g.heading === 'CUSTOMERS');
+    return [];
+  }, [accessTier]);
+
+  const visibleSectionIds = useMemo(
+    () => new Set(visibleNavGroups.flatMap((g) => g.items.map((i) => i.id))),
+    [visibleNavGroups],
+  );
+
+  useEffect(() => {
+    if (accessTier === 'receptionist') {
+      setActive('customers');
+    } else if (accessTier === 'admin' && !visibleSectionIds.has(active)) {
+      setActive('staff-management');
+    }
+  }, [accessTier, visibleSectionIds, active]);
+
   const activeItem = NAV_GROUPS.flatMap((g) => g.items).find((i) => i.id === active);
 
-  // PIN gate — require admin PIN (Kayla) to access Blueprint. Cancelling the PIN modal
-  // routes the user back to the Queue tab; previously onCancel just re-asserted unlocked=false,
-  // leaving the user stuck on the PIN prompt with no way out except entering the right PIN.
-  if (!unlocked) {
+  if (accessTier === null) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-gray-50/50">
         <div className="w-16 h-16 rounded-2xl bg-pink-50 flex items-center justify-center mb-4">
           <KeyRound size={28} className="text-pink-400" />
         </div>
         <h2 className="font-bebas text-2xl tracking-[3px] text-gray-800 mb-1">BLUEPRINT</h2>
-        <p className="font-mono text-xs text-gray-400 mb-6">Admin access required</p>
-        <PinVerifyModal
-          isOpen={true}
-          title="Enter Admin PIN"
-          onSuccess={() => setUnlocked(true)}
+        <p className="font-mono text-xs text-gray-400 mb-1">
+          Admin PIN unlocks everything · Receptionist PIN unlocks Customer Profiles
+        </p>
+        <BlueprintPinGate
+          receptionists={receptionists}
+          onSuccess={setAccessTier}
           onCancel={() => dispatch({ type: 'SET_VIEW', view: 'queue' })}
         />
       </div>
@@ -312,6 +431,7 @@ export default function BlueprintScreen() {
   }
 
   function renderContent() {
+    if (!visibleSectionIds.has(active)) return null;
     switch (active) {
       case 'staff-management': return <StaffScreen />;
       case 'staff-schedule':   return <StaffScheduleScreen />;
@@ -330,14 +450,15 @@ export default function BlueprintScreen() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* ── Sidebar ──────────────────────────────────────────────────────────── */}
       <div className="w-64 flex-shrink-0 bg-white border-r border-gray-100 overflow-y-auto flex flex-col">
         <div className="px-5 pt-5 pb-4 border-b border-gray-50">
           <h2 className="font-bebas text-2xl tracking-[3px] text-gray-900">BLUEPRINT</h2>
-          <p className="font-mono text-[11px] text-gray-400 mt-0.5">Salon configuration</p>
+          <p className="font-mono text-[11px] text-gray-400 mt-0.5">
+            {accessTier === 'receptionist' ? 'Receptionist · Customer Profiles' : 'Salon configuration'}
+          </p>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-6">
-          {NAV_GROUPS.map((group) => (
+          {visibleNavGroups.map((group) => (
             <div key={group.heading}>
               <p className="font-mono text-[10px] font-bold text-gray-400 tracking-[2px] px-3 mb-2">{group.heading}</p>
               <div className="space-y-0.5">
@@ -361,7 +482,6 @@ export default function BlueprintScreen() {
           ))}
         </nav>
       </div>
-      {/* ── Content ──────────────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
         {activeItem && (
           <div className="flex-shrink-0 bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-3">
@@ -372,11 +492,6 @@ export default function BlueprintScreen() {
             </div>
           </div>
         )}
-        {/* overflow-y-auto on this wrapper lets sub-screens that don't define their own
-            scroll (Services, Criteria, Calendar) scroll their content here. Screens that
-            do define their own scroll (Staff, StaffSchedule, StaffGroup, Security) still
-            work because their h-full fits within this wrapper's bounded height — their
-            inner overflow handles their own scroll without producing a nested scrollbar. */}
         <div className="flex-1 min-h-0 overflow-y-auto bg-gray-50/30">
           {renderContent()}
         </div>
