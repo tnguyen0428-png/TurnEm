@@ -12,7 +12,6 @@ import {
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { Manicurist, CompletedEntry } from '../../types';
 import DailySchedulePanel from './DailySchedulePanel';
-import WeeklyTotalPanel from './WeeklyTotalPanel';
 
 interface StaffPortalScreenProps {
   manicurist: Manicurist;
@@ -302,12 +301,14 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     }
   }, [pushBusy, pushSubscribed, manicurist.id]);
 
-  // Services completed today by this manicurist
+  // Services completed today by this manicurist. Filter by today's LA date
+  // explicitly so stale entries left in state.completed (e.g. before the
+  // 11:59pm archive runs, or right at the rollover) don't leak into the view.
   const completedToday = useMemo(() => {
     return state.completed
-      .filter((e) => e.manicuristId === manicurist.id)
+      .filter((e) => e.manicuristId === manicurist.id && getLocalDateStr(new Date(e.completedAt)) === todayStr)
       .sort((a, b) => b.completedAt - a.completedAt);
-  }, [state.completed, manicurist.id]);
+  }, [state.completed, manicurist.id, todayStr]);
 
   // Catalog-price fallback for the staff's services when a ticket hasn't
   // been written yet. salonServices.price is in dollars (not cents).
@@ -697,9 +698,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
         {/* Daily Schedule pill — request appointments for today */}
         <DailySchedulePanel manicuristId={manicurist.id} />
 
-        {/* Weekly Total pill — tap to view this week + last week dollar totals */}
-        <WeeklyTotalPanel manicuristId={manicurist.id} />
-
         {/* Stats Row */}
         <div className="grid grid-cols-2 gap-3">
           {/* Total Turns */}
@@ -731,6 +729,14 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             <style>{`@keyframes floatBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }`}</style>
             <img src="/lunch-break.webp" alt="Enjoy your break!" style={{ width: '180px', height: 'auto', display: 'inline-block', animation: 'floatBob 2s ease-in-out infinite' }} />
             <p className="font-bebas text-2xl text-sky-600 tracking-[3px] mt-1">ENJOY YOUR BREAK!</p>
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'END_BREAK', id: manicurist.id })}
+              className="mt-3 px-6 py-2.5 rounded-full bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white font-mono text-sm font-bold tracking-wider shadow-sm transition-all"
+              aria-label="End break and return to queue"
+            >
+              I'M BACK
+            </button>
           </div>
         )}
 
