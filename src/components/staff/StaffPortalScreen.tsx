@@ -737,7 +737,10 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             <div className="flex items-center justify-between">
               <p className="font-mono text-xs font-semibold text-gray-900">Services</p>
               <span className="font-mono text-[10px] text-gray-400 font-semibold">
-                {isToday ? completedToday.length : historyEntries.length} completed
+                {(isToday ? completedToday : historyEntries).reduce(
+                  (sum, e) => sum + (e.services?.length || 1),
+                  0,
+                )} completed
               </span>
             </div>
             <div className="flex items-center justify-between mt-2">
