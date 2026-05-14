@@ -260,7 +260,7 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
       >
         <Calendar size={16} className="text-cyan-500" />
         <span className="font-mono text-sm font-semibold text-gray-900 tracking-wide">
-          Daily Schedule
+          Daily Schedule · Lịch hôm nay
         </span>
         {unreadCount > 0 && (
           <span

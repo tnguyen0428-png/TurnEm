@@ -10,15 +10,12 @@ import { getTodayLA, getLocalDateStr } from '../../utils/time';
  * view of the manicurist's dollar totals for the current week and the previous
  * week (Sunday - Saturday, America/Los_Angeles).
  *
- * Data comes from the same source as the per-day amount on the Services list:
- * sum of ticket_items.ext_price_cents where staff1_id = this manicurist,
+ * Data: sum of ticket_items.ext_price_cents where staff1_id = this manicurist,
  * grouped by tickets.business_date, fetched across the past 14 days. Refreshes
- * live via realtime on tickets / ticket_items so a checkout that closed seconds
- * ago is reflected without a reload.
+ * live via realtime on tickets / ticket_items.
  *
  * Retention: daily_history rows older than 14 days are pruned nightly by the
- * pg_cron job `prune_daily_history_14d`. This panel only ever needs the past
- * 14 days of tickets, so older data is unused.
+ * pg_cron job `prune_daily_history_14d`.
  */
 
 interface Props {
@@ -31,9 +28,6 @@ export default function WeeklyTotalPanel({ manicuristId }: Props) {
 
   const todayStr = getTodayLA();
 
-  // Past-14-days amount sync. Aggregates ticket_items by business_date, scoped
-  // to this manicurist's staff1_id. Live via realtime so the totals tick up
-  // as soon as the cashier closes a ticket.
   useEffect(() => {
     let cancelled = false;
 
@@ -95,11 +89,9 @@ export default function WeeklyTotalPanel({ manicuristId }: Props) {
     };
   }, [todayStr, manicuristId]);
 
-  // Two-week breakdown. Week starts Sunday, ends Saturday (or today for the
-  // current, in-progress week).
   const weekTotals = useMemo(() => {
     const todayDate = new Date(`${todayStr}T12:00:00`);
-    const dow = todayDate.getDay(); // 0 = Sunday
+    const dow = todayDate.getDay();
     const thisWeekStart = new Date(todayDate); thisWeekStart.setDate(todayDate.getDate() - dow);
     const lastWeekEnd   = new Date(thisWeekStart); lastWeekEnd.setDate(thisWeekStart.getDate() - 1);
     const lastWeekStart = new Date(thisWeekStart); lastWeekStart.setDate(thisWeekStart.getDate() - 7);
@@ -125,7 +117,6 @@ export default function WeeklyTotalPanel({ manicuristId }: Props) {
     };
   }, [weekAmountByDate, todayStr]);
 
-  // Esc closes the opened panel.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -137,7 +128,6 @@ export default function WeeklyTotalPanel({ manicuristId }: Props) {
 
   return (
     <>
-      {/* Pill button - entry point inside the staff panel layout */}
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -146,11 +136,10 @@ export default function WeeklyTotalPanel({ manicuristId }: Props) {
       >
         <TrendingUp size={16} className="text-emerald-500" />
         <span className="font-mono text-sm font-semibold text-gray-900 tracking-wide">
-          Weekly Total
+          Weekly Total · Tổng tuần
         </span>
       </button>
 
-      {/* Opened full-screen view */}
       {open && (
         <div
           className="fixed inset-0 z-50 bg-white overflow-y-auto"
