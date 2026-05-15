@@ -48,6 +48,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     date: string;
     time: string;
     staffName: string;
+    serviceLines: Array<{ service: string; staffName: string }>;
     receptionistName: string;
   }>(null);
   // Pre-fill name + phone from the appointment draft. Used when the
@@ -458,12 +459,22 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const staff = appointmentManicuristId
         ? state.manicurists.find((m) => m.id === appointmentManicuristId)?.name ?? ''
         : '';
+      const serviceLines = selectedServices.map((s) => {
+        const mId = s.requestedManicuristIds[0]
+          ?? appointmentManicuristId
+          ?? null;
+        const staffName = mId
+          ? (state.manicurists.find((m) => m.id === mId)?.name ?? '?')
+          : 'Unassigned';
+        return { service: s.serviceName as string, staffName };
+      });
       setRecap({
         clientName: name,
         services: services as string[],
         date,
         time,
         staffName: staff,
+        serviceLines,
         receptionistName: receptionist?.name ?? '',
       });
       return;
@@ -1003,6 +1014,7 @@ function BookingRecapModal({
     date: string;
     time: string;
     staffName: string;
+    serviceLines: Array<{ service: string; staffName: string }>;
     receptionistName: string;
   };
   onClose: () => void;
@@ -1029,9 +1041,21 @@ function BookingRecapModal({
         </div>
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 flex flex-col gap-1.5">
           <RecapLine label="Client" value={info.clientName || 'Walk-in'} />
-          <RecapLine label="Services" value={info.services.join(', ') || '\u2014'} />
           <RecapLine label="When" value={`${formatDate(info.date)} · ${formatTime(info.time)}`} />
-          <RecapLine label="Staff" value={info.staffName || '\u2014'} />
+          {/* One line per service so multi-staff bookings name every
+              manicurist involved. Each row: "<Service> -- <Staff>". */}
+          <div className="flex items-start justify-between gap-3 pt-1">
+            <span className="font-mono text-base uppercase tracking-wider text-gray-500 flex-shrink-0">With</span>
+            <ul className="flex flex-col gap-0.5 text-right max-w-[70%]">
+              {info.serviceLines.length === 0 ? (
+                <li className="font-mono text-base font-semibold text-gray-900">{info.staffName || '\u2014'}</li>
+              ) : info.serviceLines.map((sl, i) => (
+                <li key={i} className="font-mono text-base font-semibold text-gray-900">
+                  {sl.service} \u2014 <span className="text-emerald-700">{sl.staffName}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
           <RecapLine label="Booked by" value={info.receptionistName || '\u2014'} />
         </div>
         <div className="flex justify-end">
