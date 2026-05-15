@@ -59,6 +59,11 @@ interface DraftLine {
   discountInput: string;    // free-text dollar input (discount per line)
   quantity: number;
   kind: 'service' | 'retail' | 'discount' | 'gift_card_sale';
+  // Snapshot of the original ticket_items.queue_entry_id so the visit link
+  // survives the delete+reinsert cycle in updateOpenTicket. Without this
+  // queue_entry_id ends up null after the first save and the
+  // completed_services sync can no longer find the row.
+  queueEntryId?: string | null;
   // True when this service was a client request — credits the manicurist
   // half a turn (or 1 for Combo) instead of the full base turn value.
   // Initialized from the matching completed_services.requestedServices on
@@ -162,6 +167,7 @@ export default function TicketModal({
         discountInput: (it.discountCents / 100).toFixed(2),
         quantity: it.quantity,
         kind: it.kind,
+        queueEntryId: it.queueEntryId ?? null,
         isRequested,
       };
     }),
@@ -368,6 +374,7 @@ export default function TicketModal({
       unitPriceCents: parseDollarsToCents(l.priceInput),
       quantity: l.quantity,
       discountCents: parseDollarsToCents(l.discountInput),
+      queueEntryId: l.queueEntryId ?? null,
     }));
   }
 

@@ -1176,6 +1176,11 @@ export interface UpdateOpenTicketInput {
     unitPriceCents: number;
     quantity: number;
     discountCents: number;
+    // Original queue_entry_id snapshot — passed through so save round-trips
+    // don't drop the link back to completed_services. Without this, edits
+    // that delete+reinsert items lose the visit-id binding and downstream
+    // sync (turn counts, requested flag) can't find the matching row.
+    queueEntryId?: string | null;
   }>;
 }
 
@@ -1218,6 +1223,9 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
         discount_cents: it.discountCents,
         ext_price_cents: computeLineExt(it),
         sort_order: idx,
+        // Carry the visit-id binding through delete+reinsert cycles so
+        // downstream sync (completed_services lookup) still works.
+        queue_entry_id: it.queueEntryId ?? null,
       }));
       const { error: iErr } = await supabase.from('ticket_items').insert(rows);
       if (iErr) { console.error('[tickets] updateOpenTicket insert items:', iErr.message); return null; }
