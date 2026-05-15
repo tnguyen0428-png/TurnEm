@@ -1342,7 +1342,7 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
       const m = entry.assignedManicuristId
         ? manicurists.find((mm) => mm.id === entry.assignedManicuristId) ?? null
         : null;
-      const itemsForEntry = entry.services.map((svcName) => {
+      const itemsForEntry = entry.services.map((svcName, idx) => {
         const svc = salonServices.find((s2) => s2.name === svcName);
         const sr = entry.serviceRequests.find((r) => r.service === svcName);
         const lineMid = sr?.manicuristIds?.[0] ?? m?.id ?? null;
@@ -1355,9 +1355,13 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
           staff1Color: lineM?.color ?? '#9ca3af',
           unitPriceCents: Math.round((svc?.price ?? 0) * 100),
           quantity: 1,
-          // Per-line entry tag so siblings (3 manicures from same staff)
-          // each land as their own line and re-syncs are silently deduped.
-          queueEntryId: entry.id,
+          // Per-line entry tag so each service lands as its own line and
+          // re-syncs are silently deduped. When a single queue entry holds
+          // multiple services (e.g. SPLIT_AND_ASSIGN grouping 2 Gel Pedis
+          // for the same staff) every service must carry a DISTINCT
+          // queue_entry_id, otherwise the upsert's ON CONFLICT (ticket_id,
+          // queue_entry_id) drops all but the first.
+          queueEntryId: entry.services.length > 1 ? `${entry.id}#svc${idx}` : entry.id,
         };
       });
 
