@@ -35,7 +35,7 @@ import { fetchOpenShift } from '../../lib/shifts';
 import GiftCardSaleModal from './GiftCardSaleModal';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
-import type { PaymentMethod, Ticket } from '../../types';
+import type { PaymentMethod, ServiceType, Ticket } from '../../types';
 
 interface Props {
   ticket: Ticket;
@@ -59,6 +59,11 @@ interface DraftLine {
   discountInput: string;    // free-text dollar input (discount per line)
   quantity: number;
   kind: 'service' | 'retail' | 'discount' | 'gift_card_sale';
+  // True when this service was a client request — credits the manicurist
+  // half a turn (or 1 for Combo) instead of the full base turn value.
+  // Initialized from the matching completed_services.requestedServices on
+  // mount; togglable via the R chip in the line row.
+  isRequested?: boolean;
 }
 
 interface PendingPayment {
@@ -131,30 +136,56 @@ export default function TicketModal({
 
   // ─── Line items ───────────────────────────────────────────────────────────
   const [lines, setLines] = useState<DraftLine[]>(() =>
-    ticket.items.map((it) => ({
-      existingId: it.id,
-      serviceId: it.serviceId,
-      name: it.name,
-      staff1Id: it.staff1Id,
-      staff1Name: it.staff1Name,
-      staff1Color: it.staff1Color,
-      staff2Id: it.staff2Id,
-      staff2Name: it.staff2Name,
-      staff2Color: it.staff2Color,
-      priceInput: (it.unitPriceCents / 100).toFixed(2),
-      discountInput: (it.discountCents / 100).toFixed(2),
-      quantity: it.quantity,
-      kind: it.kind,
-    })),
+    ticket.items.map((it) => {
+      // Was this service flagged as a client request when its completed_services
+      // row was first written? Find the matching entry by stripping the
+      // index suffix from the queue_entry_id and checking requestedServices.
+      let isRequested = false;
+      if (it.queueEntryId && it.kind === 'service') {
+        const visitId = it.queueEntryId.includes('#') ? it.queueEntryId.split('#')[0] : it.queueEntryId;
+        const entry = state.completed.find((e) => e.id === visitId);
+        if (entry?.requestedServices?.includes(it.name as ServiceType)) {
+          isRequested = true;
+        }
+      }
+      return {
+        existingId: it.id,
+        serviceId: it.serviceId,
+        name: it.name,
+        staff1Id: it.staff1Id,
+        staff1Name: it.staff1Name,
+        staff1Color: it.staff1Color,
+        staff2Id: it.staff2Id,
+        staff2Name: it.staff2Name,
+        staff2Color: it.staff2Color,
+        priceInput: (it.unitPriceCents / 100).toFixed(2),
+        discountInput: (it.discountCents / 100).toFixed(2),
+        quantity: it.quantity,
+        kind: it.kind,
+        isRequested,
+      };
+    }),
   );
-  // Snapshot of the original (staff1Id, queueEntryId) per line, captured
-  // once on mount. We diff this against the current `lines` state on Save
-  // to know which manicurist reassignments to push through the turn-credit
-  // reallocation path.
+  // Snapshot of the original line content per item id, captured once on
+  // mount. We diff this against the current `lines` state on Save to know:
+  //   - which manicurist reassignments to push through the turn-credit
+  //     reallocation path
+  //   - which service-name changes need to propagate back to the matching
+  //     completed_services row + the manicurist's totalTurns
   const originalStaffByItemId = useMemo(() => {
-    const m = new Map<string, { staff1Id: string | null; queueEntryId: string | null }>();
+    const m = new Map<string, {
+      staff1Id: string | null;
+      queueEntryId: string | null;
+      name: string;
+      serviceId: string | null;
+    }>();
     for (const it of ticket.items) {
-      m.set(it.id, { staff1Id: it.staff1Id, queueEntryId: it.queueEntryId ?? null });
+      m.set(it.id, {
+        staff1Id: it.staff1Id,
+        queueEntryId: it.queueEntryId ?? null,
+        name: it.name,
+        serviceId: it.serviceId,
+      });
     }
     return m;
   }, [ticket.items]);
@@ -403,6 +434,89 @@ export default function TicketModal({
     if (changes.length > 0) {
       void reallocateTurnsForStaffChanges(changes);
     }
+
+    // Service-edit sync: any line whose service name OR request flag changed
+    // and that's tied to a queue entry needs to propagate to the matching
+    // completed_services row so History and the staff-mobile services list
+    // reflect the new state. We group by visitId so all changed slots on the
+    // same completed_services entry are merged into one UPDATE_COMPLETED.
+    //
+    // Turn-value math (mirrors MultiServiceAssign):
+    //   - non-request service     => contributes its full catalog turnValue
+    //   - client-requested service => contributes 1 if Combo, 0.5 otherwise
+    // The reducer's UPDATE_COMPLETED handler re-derives the manicurist's
+    // totalTurns based on the new turnValue, so the staff card updates in
+    // place.
+    type Pending = { newServices: ServiceType[]; newRequested: ServiceType[]; touched: boolean };
+    const pendingByVisit = new Map<string, Pending>();
+    function pendingFor(visitId: string, entry: { services: ServiceType[]; requestedServices?: ServiceType[] }): Pending {
+      const existing = pendingByVisit.get(visitId);
+      if (existing) return existing;
+      const fresh: Pending = {
+        newServices: entry.services.slice(),
+        newRequested: (entry.requestedServices ?? []).slice(),
+        touched: false,
+      };
+      pendingByVisit.set(visitId, fresh);
+      return fresh;
+    }
+
+    for (const l of lines) {
+      if (l.kind !== 'service' || !l.existingId) continue;
+      const orig = originalStaffByItemId.get(l.existingId);
+      if (!orig || !orig.queueEntryId) continue;
+      const nameChanged = orig.name !== l.name || orig.serviceId !== l.serviceId;
+      const visitId = orig.queueEntryId.includes('#') ? orig.queueEntryId.split('#')[0] : orig.queueEntryId;
+      const entry = state.completed.find((e) => e.id === visitId);
+      if (!entry) continue;
+      const wasRequested = (entry.requestedServices ?? []).includes(orig.name as ServiceType);
+      const isRequested = !!l.isRequested;
+      const requestChanged = wasRequested !== isRequested;
+      if (!nameChanged && !requestChanged) continue;
+
+      const pending = pendingFor(visitId, entry);
+      pending.touched = true;
+      const idxMatch = orig.queueEntryId.match(/#svc(\d+)$/);
+      const idx = idxMatch ? Number(idxMatch[1]) : pending.newServices.indexOf(orig.name as ServiceType);
+      if (idx < 0 || idx >= pending.newServices.length) continue;
+
+      // Apply service-name replacement if needed.
+      if (nameChanged) {
+        pending.newServices[idx] = l.name as ServiceType;
+      }
+      // Apply request-flag change. Drop ANY occurrence of the prior service
+      // name from the request list, then add the (possibly renamed) service
+      // back in if the line is now requested.
+      pending.newRequested = pending.newRequested.filter((s) => s !== (orig.name as ServiceType));
+      if (isRequested) {
+        const newName = (nameChanged ? l.name : orig.name) as ServiceType;
+        if (!pending.newRequested.includes(newName)) pending.newRequested.push(newName);
+      }
+    }
+
+    for (const [visitId, pending] of pendingByVisit) {
+      if (!pending.touched) continue;
+      const newTurnValue = pending.newServices.reduce((sum, name) => {
+        const svc = state.salonServices.find((s) => s.name === name);
+        const base = svc?.turnValue ?? 0;
+        if (base === 0) return sum;
+        if (pending.newRequested.includes(name)) {
+          return sum + (svc?.category === 'Combo' ? 1 : 0.5);
+        }
+        return sum + base;
+      }, 0);
+      dispatch({
+        type: 'UPDATE_COMPLETED',
+        id: visitId,
+        updates: {
+          services: pending.newServices,
+          requestedServices: pending.newRequested.length > 0 ? pending.newRequested : undefined,
+          turnValue: newTurnValue,
+          isRequested: pending.newRequested.length > 0,
+        },
+      });
+    }
+
     onChanged?.(saved);
     return saved;
   }
@@ -559,7 +673,7 @@ export default function TicketModal({
 
               {/* Line items grid — scrolls inside if needed so the rest stays in view */}
               <div className="border border-gray-100 rounded-xl overflow-hidden flex flex-col min-h-0">
-                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_30px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 text-[11px] tracking-wider font-mono font-semibold text-gray-400 uppercase">
+                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_36px_30px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 text-[11px] tracking-wider font-mono font-semibold text-gray-400 uppercase">
                   <span className="text-center">#</span>
                   <span className="text-center">Qty</span>
                   <span>Service</span>
@@ -567,6 +681,7 @@ export default function TicketModal({
                   <span className="text-right">Price</span>
                   <span className="text-right">Disc</span>
                   <span className="text-right">Ext</span>
+                  <span className="text-center">R</span>
                   <span></span>
                 </div>
                 <div className="flex-1 min-h-0 overflow-y-auto">
@@ -592,7 +707,7 @@ export default function TicketModal({
                       return (
                         <div
                           key={idx}
-                          className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_30px] gap-2 items-center px-3 py-1 border-b border-gray-50 last:border-b-0"
+                          className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_36px_30px] gap-2 items-center px-3 py-1 border-b border-gray-50 last:border-b-0"
                         >
                           {badgeNumber !== null ? (
                             <span className="justify-self-center w-7 h-7 rounded-full border-2 border-red-500 text-red-600 font-mono text-base font-bold flex items-center justify-center">
@@ -650,6 +765,21 @@ export default function TicketModal({
                           <span className="px-1.5 py-1 font-mono text-sm font-semibold text-gray-900 text-right">
                             {formatMoneyCents(ext)}
                           </span>
+                          {isService ? (
+                            <button
+                              type="button"
+                              onClick={() => updateLine(idx, { isRequested: !line.isRequested })}
+                              disabled={!canEdit}
+                              title={line.isRequested ? 'Client request \u2014 click to clear' : 'Mark as client request'}
+                              className={`justify-self-center w-7 h-7 rounded-full text-xs font-bold transition-colors ${
+                                line.isRequested
+                                  ? 'bg-red-500 text-white border-2 border-red-500 hover:bg-red-600'
+                                  : 'bg-white text-gray-300 border-2 border-gray-200 hover:border-red-400 hover:text-red-500'
+                              } disabled:opacity-50 disabled:cursor-not-allowed`}
+                            >
+                              R
+                            </button>
+                          ) : <span />}
                           {canEdit ? (
                             <button onClick={() => removeLine(idx)}
                               className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors">
