@@ -35,6 +35,7 @@ import { fetchOpenShift } from '../../lib/shifts';
 import GiftCardSaleModal from './GiftCardSaleModal';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
+import { supabase } from '../../lib/supabase';
 import type { PaymentMethod, ServiceType, Ticket } from '../../types';
 
 interface Props {
@@ -511,6 +512,8 @@ export default function TicketModal({
 
     for (const [visitId, pending] of pendingByVisit) {
       if (!pending.touched) continue;
+      const entry = state.completed.find((e) => e.id === visitId);
+      if (!entry) continue;
       const newTurnValue = pending.newServices.reduce((sum, name) => {
         const svc = state.salonServices.find((s) => s.name === name);
         const base = svc?.turnValue ?? 0;
@@ -520,16 +523,43 @@ export default function TicketModal({
         }
         return sum + base;
       }, 0);
-      dispatch({
-        type: 'UPDATE_COMPLETED',
-        id: visitId,
-        updates: {
+
+      // Write directly to Supabase. Going through dispatch UPDATE_COMPLETED
+      // + the reducer + the trackSave effect races against the isApplyingRemoteRef
+      // flag — when updateOpenTicket's ticket_items write fires its own realtime
+      // tick, the global flag is true at the moment our local state change
+      // settles, and the effect skips syncing completed_services. Bypass that
+      // by writing completed_services straight to the DB; realtime then echoes
+      // back into state.completed via REMOTE_COMPLETED_UPSERT for the UI.
+      void (async () => {
+        const turnDelta = newTurnValue - entry.turnValue;
+        const { error } = await supabase.from('completed_services').update({
           services: pending.newServices,
-          requestedServices: pending.newRequested.length > 0 ? pending.newRequested : undefined,
-          turnValue: newTurnValue,
-          isRequested: pending.newRequested.length > 0,
-        },
-      });
+          service: pending.newServices[0] ?? '',
+          requested_services: pending.newRequested,
+          turn_value: newTurnValue,
+          is_requested: pending.newRequested.length > 0,
+          edited: true,
+        }).eq('id', visitId);
+        if (error) {
+          console.error('[ticket modal] completed_services sync failed:', error.message);
+          return;
+        }
+        // Adjust the manicurist's totalTurns by the same delta so the queue
+        // card / staff portal reflect the new credit.
+        if (turnDelta !== 0 && entry.manicuristId) {
+          const { data: mRow } = await supabase
+            .from('manicurists')
+            .select('total_turns')
+            .eq('id', entry.manicuristId)
+            .maybeSingle();
+          const current = Number((mRow as { total_turns?: number } | null)?.total_turns ?? 0);
+          await supabase
+            .from('manicurists')
+            .update({ total_turns: Math.max(0, current + turnDelta) })
+            .eq('id', entry.manicuristId);
+        }
+      })();
     }
 
     onChanged?.(saved);
