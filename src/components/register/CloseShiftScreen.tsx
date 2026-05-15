@@ -161,9 +161,10 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
       ticketDiscounts += t.discountCents ?? 0;
     }
     const series = 0; // not tracked (SalonBiz field — reserved for service packages)
-    const subTotal = services + retail + giftCert + series - lineDiscounts - ticketDiscounts;
+    const discounts = lineDiscounts + ticketDiscounts;
+    const subTotal = services + retail + giftCert + series - discounts;
     const totalReceipts = subTotal + tips + tax;
-    return { services, retail, giftCert, series, subTotal, tips, tax, totalReceipts };
+    return { services, retail, giftCert, series, discounts, subTotal, tips, tax, totalReceipts };
   }, [tickets]);
 
   useEffect(() => {
@@ -486,7 +487,9 @@ function PaymentsSummary({
 
   const serviceSalesCents = breakdown.services;
   const giftSalesCents = breakdown.giftCert;
-  const grandTotalCents = serviceSalesCents + giftSalesCents;
+  const discountsCents = breakdown.discounts;
+  // Grand total = service + gift, net of any discounts applied.
+  const grandTotalCents = serviceSalesCents + giftSalesCents - discountsCents;
 
   return (
     <div className="flex flex-col gap-4">
@@ -564,6 +567,10 @@ function PaymentsSummary({
         <div className="px-3 py-2.5 flex items-center justify-between border-b border-gray-100">
           <span className="font-mono text-base text-gray-700">Gift Sales Total</span>
           <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(giftSalesCents)}</span>
+        </div>
+        <div className="px-3 py-2.5 flex items-center justify-between border-b border-gray-100">
+          <span className="font-mono text-base text-gray-700">Discounts</span>
+          <span className="font-mono text-base font-bold text-red-600 tabular-nums">−{formatMoneyCents(discountsCents)}</span>
         </div>
         <div className="px-3 py-2.5 flex items-center justify-between bg-gray-50 border-t-2 border-gray-300">
           <span className="font-mono text-base tracking-wider font-bold text-gray-700 uppercase">Grand Total</span>
@@ -938,6 +945,7 @@ interface Breakdown {
   retail: number;
   giftCert: number;
   series: number;
+  discounts: number;
   subTotal: number;
   tips: number;
   tax: number;
