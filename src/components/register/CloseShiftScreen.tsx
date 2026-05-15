@@ -200,7 +200,7 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
             <h2 className="font-bebas text-2xl tracking-widest text-gray-900">
               {isReadOnly ? 'SHIFT SUMMARY' : 'CLOSE SHIFT'}
             </h2>
-            <p className="font-mono text-xs text-gray-400 mt-0.5">
+            <p className="font-mono text-base text-gray-400 mt-0.5">
               Drawer #{shift.drawerNumber} — opened {new Date(shift.openedAt).toLocaleString()}
               {shift.openedByReceptionistId ? (
                 <>
@@ -229,17 +229,17 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
             {isClosedShift && !unlocked && (
               <button onClick={() => setUnlocked(true)}
                 title="Unlock inputs and re-close with new values"
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 font-mono text-[10px] font-bold tracking-wider">
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 font-mono text-base font-bold tracking-wider">
                 EDIT
               </button>
             )}
             {isClosedShift && unlocked && (
-              <span className="px-2 py-1 rounded-md bg-amber-100 text-amber-800 font-mono text-[10px] font-bold tracking-wider">
+              <span className="px-2 py-1 rounded-md bg-amber-100 text-amber-800 font-mono text-base font-bold tracking-wider">
                 EDITING
               </span>
             )}
             <button onClick={() => setRefreshKey((k) => k + 1)}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 font-mono text-[10px] font-semibold tracking-wider">
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 font-mono text-base font-semibold tracking-wider">
               <RefreshCw size={11} /> REFRESH
             </button>
             <button onClick={onClose}
@@ -257,23 +257,26 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
           )
         )}
 
-        <div className="px-6 pt-2 border-b border-gray-100 flex items-center gap-1 flex-wrap">
-          <TabBtn active={tab === 'summary'}   onClick={() => setTab('summary')}>PAYMENTS SUMMARY</TabBtn>
-          <TabBtn active={tab === 'reconcile'} onClick={() => setTab('reconcile')}>RECONCILE CASH</TabBtn>
-          <TabBtn active={tab === 'cash'}      onClick={() => setTab('cash')}>CASH TRANSACTIONS</TabBtn>
-          <TabBtn active={tab === 'card'}      onClick={() => setTab('card')}>CREDIT CARD TRANSACTIONS</TabBtn>
-          <TabBtn active={tab === 'gift'}      onClick={() => setTab('gift')}>GIFT TRANSACTIONS</TabBtn>
-          <TabBtn active={tab === 'tickets'}   onClick={() => setTab('tickets')}>TICKET LIST</TabBtn>
+        <div className="px-6 pt-3 border-b border-gray-200 flex items-end gap-1 flex-nowrap overflow-x-auto">
+          <TabBtn color="slate"   active={tab === 'summary'}   onClick={() => setTab('summary')}>SUMMARY</TabBtn>
+          <TabBtn color="pink"    active={tab === 'reconcile'} onClick={() => setTab('reconcile')}>RECONCILE</TabBtn>
+          <TabBtn color="emerald" active={tab === 'cash'}      onClick={() => setTab('cash')}>CASH</TabBtn>
+          <TabBtn color="sky"     active={tab === 'card'}      onClick={() => setTab('card')}>CARD</TabBtn>
+          <TabBtn color="amber"   active={tab === 'gift'}      onClick={() => setTab('gift')}>GIFT</TabBtn>
+          <TabBtn color="violet"  active={tab === 'tickets'}   onClick={() => setTab('tickets')}>TICKETS</TabBtn>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {loading ? (
-            <div className="text-center font-mono text-xs text-gray-400 py-12">Computing balance…</div>
+            <div className="text-center font-mono text-base text-gray-400 py-12">Computing balance…</div>
           ) : tab === 'summary' ? (
-            <PaymentsSummary lines={lines} declaredCents={declaredCents} />
+            <PaymentsSummary lines={lines} declaredCents={declaredCents} breakdown={breakdown} />
           ) : tab === 'reconcile' ? (
             <ReconcileCash
-              expectedCashCents={expectedCashCents}
+              startingCashCents={lines.find((l) => l.method === 'cash')?.startingBalanceCents ?? 0}
+              cashIntakeCents={lines.find((l) => l.method === 'cash')?.paymentAmountCents ?? 0}
+              changeOutCents={lines.find((l) => l.method === 'cash')?.changeOutCents ?? 0}
+              drawerEntriesCents={lines.find((l) => l.method === 'cash')?.drawerEntriesCents ?? 0}
               count={closingCount}
               setCount={setClosingCount}
               declaredCents={declaredCents}
@@ -309,11 +312,11 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
         </div>
 
         <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
-          {error && !isReadOnly && <p className="font-mono text-xs text-red-500 w-full">{error}</p>}
+          {error && !isReadOnly && <p className="font-mono text-base text-red-500 w-full">{error}</p>}
           {isReadOnly ? (
             <div className="ml-auto flex items-center gap-2">
               <button onClick={onClose}
-                className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800">
+                className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-base font-bold hover:bg-gray-800">
                 CLOSE
               </button>
             </div>
@@ -321,11 +324,11 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
             <>
               <div className="flex items-center gap-2 flex-wrap">
                 <label className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Closing as</span>
+                  <span className="font-mono text-base uppercase tracking-wider text-gray-500">Closing as</span>
                   <select
                     value={receptionistId}
                     onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
-                    className="px-2 py-1.5 rounded-lg border border-gray-200 font-mono text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
+                    className="px-2 py-1.5 rounded-lg border border-gray-200 font-mono text-base bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
                   >
                     <option value="">Select…</option>
                     {receptionists.map((r) => (
@@ -340,19 +343,19 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
                   value={pin}
                   onChange={(e) => { setPin(e.target.value); setError(null); }}
                   placeholder="PIN"
-                  className="px-2 py-1.5 w-24 rounded-lg border border-gray-200 font-mono text-xs tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
+                  className="px-2 py-1.5 w-24 rounded-lg border border-gray-200 font-mono text-base tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
                 />
               </div>
               <div className="ml-auto flex items-center gap-2">
                 <button onClick={onClose}
-                  className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50">
+                  className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-base font-bold hover:bg-gray-50">
                   CANCEL
                 </button>
                 <button
                   onClick={handleContinueToClose}
                   disabled={busy || hasOpenTickets || !receptionistId || pin.length === 0}
                   title={hasOpenTickets ? 'Close all open tickets first' : undefined}
-                  className={`px-4 py-2 rounded-lg font-mono text-xs font-bold transition-colors ${
+                  className={`px-4 py-2 rounded-lg font-mono text-base font-bold transition-colors ${
                     hasOpenTickets
                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                       : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed'
@@ -397,10 +400,10 @@ function OpenTicketsBanner({ tickets }: { tickets: Ticket[] }) {
     <div className="mx-6 mt-3 mb-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
       <AlertTriangle size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
-        <p className="font-mono text-sm font-bold text-amber-800">
+        <p className="font-mono text-base font-bold text-amber-800">
           Please close ticket before closing day.
         </p>
-        <p className="font-mono text-xs text-amber-700 mt-0.5">
+        <p className="font-mono text-base text-amber-700 mt-0.5">
           {tickets.length} open ticket{tickets.length === 1 ? '' : 's'}:{' '}
           {tickets
             .slice(0, 6)
@@ -417,81 +420,174 @@ function ReadyBanner() {
   return (
     <div className="mx-6 mt-3 mb-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 flex items-center gap-3">
       <CheckCircle2 size={16} className="text-emerald-600 flex-shrink-0" />
-      <p className="font-mono text-xs font-bold text-emerald-800">
+      <p className="font-mono text-base font-bold text-emerald-800">
         All tickets closed — continue to close the shift.
       </p>
     </div>
   );
 }
 
-function TabBtn({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+type TabColor = 'slate' | 'pink' | 'emerald' | 'sky' | 'amber' | 'violet';
+
+const TAB_PALETTE: Record<TabColor, { active: string; inactive: string }> = {
+  slate:   { active: 'bg-slate-700 text-white border-slate-700',     inactive: 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200' },
+  pink:    { active: 'bg-pink-500 text-white border-pink-500',       inactive: 'bg-pink-50 text-pink-700 border-pink-200 hover:bg-pink-100' },
+  emerald: { active: 'bg-emerald-500 text-white border-emerald-500', inactive: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' },
+  sky:     { active: 'bg-sky-500 text-white border-sky-500',         inactive: 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100' },
+  amber:   { active: 'bg-amber-500 text-white border-amber-500',     inactive: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' },
+  violet:  { active: 'bg-violet-500 text-white border-violet-500',   inactive: 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100' },
+};
+
+function TabBtn({
+  active, children, onClick, color = 'slate',
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  onClick: () => void;
+  color?: TabColor;
+}) {
+  const palette = TAB_PALETTE[color];
+  // Folder-tab look:
+  //  - rounded top corners only (rounded-t-lg)
+  //  - border on top + sides; bottom border is transparent on the active tab
+  //    so it visually merges with the content area below
+  //  - active tab lifts via -mb-px so its bottom edge sits on top of the
+  //    container border, completing the folder-tab silhouette
+  const base = 'px-4 py-2 font-mono text-base tracking-wider font-bold whitespace-nowrap rounded-t-lg border-t border-l border-r transition-colors';
+  const state = active
+    ? `${palette.active} -mb-px border-b border-b-transparent shadow-sm relative z-10`
+    : `${palette.inactive} border-b-0`;
   return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 font-mono text-[11px] tracking-wider font-bold rounded-t-lg transition-colors ${
-        active ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'
-      }`}
-    >
+    <button onClick={onClick} className={`${base} ${state}`}>
       {children}
     </button>
   );
 }
 
-function PaymentsSummary({ lines, declaredCents }: { lines: ShiftBalanceLine[]; declaredCents: number }) {
+function PaymentsSummary({
+  lines, declaredCents, breakdown,
+}: {
+  lines: ShiftBalanceLine[];
+  declaredCents: number;
+  breakdown: Breakdown;
+}) {
+  const totals = lines.reduce((acc, l) => {
+    const errorCents = l.method === 'cash' && declaredCents > 0 ? declaredCents - l.youHaveCents : 0;
+    return {
+      startingBalance: acc.startingBalance + (l.method === 'cash' ? l.startingBalanceCents : 0),
+      paymentCount: acc.paymentCount + l.paymentCount,
+      paymentAmount: acc.paymentAmount + l.paymentAmountCents,
+      changeOut: acc.changeOut + (l.method === 'cash' ? l.changeOutCents : 0),
+      drawerEntries: acc.drawerEntries + (l.method === 'cash' ? l.drawerEntriesCents : 0),
+      youHave: acc.youHave + l.youHaveCents,
+      errors: acc.errors + errorCents,
+    };
+  }, { startingBalance: 0, paymentCount: 0, paymentAmount: 0, changeOut: 0, drawerEntries: 0, youHave: 0, errors: 0 });
+
+  const serviceSalesCents = breakdown.services;
+  const giftSalesCents = breakdown.giftCert;
+  const grandTotalCents = serviceSalesCents + giftSalesCents;
+
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="grid grid-cols-[90px_repeat(7,_1fr)] gap-1 px-3 py-2 bg-gray-100 border-b border-gray-200 font-mono text-[10px] tracking-wider font-semibold text-gray-500 uppercase">
-        <span></span>
-        <span className="text-right">Starting Balance</span>
-        <span className="text-right"># of Pays</span>
-        <span className="text-right">Payment Amount</span>
-        <span className="text-right">Change Out</span>
-        <span className="text-right">Drawer Entries</span>
-        <span className="text-right">You Have</span>
-        <span className="text-right">Errors</span>
+    <div className="flex flex-col gap-4">
+      <div className="border border-gray-200 rounded-lg overflow-hidden">
+        <div className="grid grid-cols-[90px_repeat(7,_1fr)] gap-1 px-3 py-2 bg-gray-100 border-b border-gray-200 font-mono text-base tracking-wider font-semibold text-gray-500 uppercase">
+          <span></span>
+          <span className="text-right">Starting Balance</span>
+          <span className="text-right"># of Pays</span>
+          <span className="text-right">Payment Amount</span>
+          <span className="text-right">Change Out</span>
+          <span className="text-right">Drawer Entries</span>
+          <span className="text-right">You Have</span>
+          <span className="text-right">Errors</span>
+        </div>
+        {lines.map((line) => {
+          const errorCents =
+            line.method === 'cash' && declaredCents > 0
+              ? declaredCents - line.youHaveCents
+              : 0;
+          return (
+            <div key={line.method}
+              className="grid grid-cols-[90px_repeat(7,_1fr)] gap-1 px-3 py-2.5 border-b border-gray-100 items-center bg-white">
+              <span className="font-mono text-base font-bold text-gray-900">
+                {line.method === 'visa_mc' ? 'Visa/MC' : line.method[0].toUpperCase() + line.method.slice(1)}
+              </span>
+              <span className="font-mono text-base text-gray-800 text-right tabular-nums">
+                {formatMoneyCents(line.method === 'cash' ? line.startingBalanceCents : 0)}
+              </span>
+              <span className="font-mono text-base text-gray-800 text-right tabular-nums">{line.paymentCount}</span>
+              <span className="font-mono text-base text-gray-800 text-right tabular-nums">{formatMoneyCents(line.paymentAmountCents)}</span>
+              <span className="font-mono text-base text-gray-800 text-right tabular-nums">
+                {formatMoneyCents(line.method === 'cash' ? line.changeOutCents : 0)}
+              </span>
+              <span className="font-mono text-base text-gray-800 text-right tabular-nums">
+                {formatMoneyCents(line.method === 'cash' ? line.drawerEntriesCents : 0)}
+              </span>
+              <span className="font-mono text-base font-bold text-gray-900 text-right tabular-nums">
+                {formatMoneyCents(line.youHaveCents)}
+              </span>
+              <span className={`font-mono text-base text-right tabular-nums font-semibold ${
+                errorCents === 0 ? 'text-gray-400' : errorCents > 0 ? 'text-emerald-600' : 'bg-red-100 text-red-700 px-1 rounded'
+              }`}>
+                {formatMoneyCents(errorCents)}
+              </span>
+            </div>
+          );
+        })}
+        {/* Column totals — sums each numeric column across cash/card/gift. */}
+        <div className="grid grid-cols-[90px_repeat(7,_1fr)] gap-1 px-3 py-2.5 bg-gray-50 border-t-2 border-gray-300 items-center">
+          <span className="font-mono text-base tracking-wider font-bold text-gray-700 uppercase">Total</span>
+          <span className="font-mono text-base font-bold text-gray-900 text-right tabular-nums">{formatMoneyCents(totals.startingBalance)}</span>
+          <span className="font-mono text-base font-bold text-gray-900 text-right tabular-nums">{totals.paymentCount}</span>
+          <span className="font-mono text-base font-bold text-gray-900 text-right tabular-nums">{formatMoneyCents(totals.paymentAmount)}</span>
+          <span className="font-mono text-base font-bold text-gray-900 text-right tabular-nums">{formatMoneyCents(totals.changeOut)}</span>
+          <span className="font-mono text-base font-bold text-gray-900 text-right tabular-nums">{formatMoneyCents(totals.drawerEntries)}</span>
+          <span className="font-mono text-base font-bold text-gray-900 text-right tabular-nums">{formatMoneyCents(totals.youHave)}</span>
+          <span className={`font-mono text-base font-bold text-right tabular-nums ${
+            totals.errors === 0 ? 'text-gray-400' : totals.errors > 0 ? 'text-emerald-600' : 'text-red-700'
+          }`}>
+            {totals.errors !== 0 ? formatMoneyCents(totals.errors) : '—'}
+          </span>
+        </div>
       </div>
-      {lines.map((line) => {
-        const errorCents =
-          line.method === 'cash' && declaredCents > 0
-            ? declaredCents - line.youHaveCents
-            : 0;
-        return (
-          <div key={line.method}
-            className="grid grid-cols-[90px_repeat(7,_1fr)] gap-1 px-3 py-2.5 border-b border-gray-100 last:border-b-0 items-center bg-white">
-            <span className="font-mono text-xs font-bold text-gray-900">
-              {line.method === 'visa_mc' ? 'Visa/MC' : line.method[0].toUpperCase() + line.method.slice(1)}
-            </span>
-            <span className="font-mono text-sm text-gray-800 text-right tabular-nums">
-              {formatMoneyCents(line.method === 'cash' ? line.startingBalanceCents : 0)}
-            </span>
-            <span className="font-mono text-sm text-gray-800 text-right tabular-nums">{line.paymentCount}</span>
-            <span className="font-mono text-sm text-gray-800 text-right tabular-nums">{formatMoneyCents(line.paymentAmountCents)}</span>
-            <span className="font-mono text-sm text-gray-800 text-right tabular-nums">
-              {formatMoneyCents(line.method === 'cash' ? line.changeOutCents : 0)}
-            </span>
-            <span className="font-mono text-sm text-gray-800 text-right tabular-nums">
-              {formatMoneyCents(line.method === 'cash' ? line.drawerEntriesCents : 0)}
-            </span>
-            <span className="font-mono text-sm font-bold text-gray-900 text-right tabular-nums">
-              {formatMoneyCents(line.youHaveCents)}
-            </span>
-            <span className={`font-mono text-sm text-right tabular-nums font-semibold ${
-              errorCents === 0 ? 'text-gray-400' : errorCents > 0 ? 'text-emerald-600' : 'bg-red-100 text-red-700 px-1 rounded'
-            }`}>
-              {formatMoneyCents(errorCents)}
-            </span>
-          </div>
-        );
-      })}
+
+      {/* Sales breakdown — service revenue + gift-card-sale revenue + grand
+          total. Item-side summary, derived from ticket_items by kind. */}
+      <div className="border border-gray-200 rounded-lg overflow-hidden">
+        <div className="px-3 py-2 bg-gray-100 border-b border-gray-200 font-mono text-base tracking-wider font-semibold text-gray-500 uppercase">
+          Sales Breakdown
+        </div>
+        <div className="px-3 py-2.5 flex items-center justify-between border-b border-gray-100">
+          <span className="font-mono text-base text-gray-700">Service Sales Total</span>
+          <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(serviceSalesCents)}</span>
+        </div>
+        <div className="px-3 py-2.5 flex items-center justify-between border-b border-gray-100">
+          <span className="font-mono text-base text-gray-700">Gift Sales Total</span>
+          <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(giftSalesCents)}</span>
+        </div>
+        <div className="px-3 py-2.5 flex items-center justify-between bg-gray-50 border-t-2 border-gray-300">
+          <span className="font-mono text-base tracking-wider font-bold text-gray-700 uppercase">Grand Total</span>
+          <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(grandTotalCents)}</span>
+        </div>
+      </div>
     </div>
   );
 }
 
+// Cash float left in the drawer at end of shift. Anything counted above this
+// is the deposit ("Amount to take out"). Hard-coded for now; lift to settings
+// if it ever needs to vary per salon.
+const REGISTER_FLOAT_CENTS = 40000;
+
 function ReconcileCash({
-  expectedCashCents, count, setCount, declaredCents, varianceCents,
+  startingCashCents, cashIntakeCents, changeOutCents, drawerEntriesCents,
+  count, setCount, declaredCents, varianceCents,
   varianceNote, setVarianceNote, readOnly = false,
 }: {
-  expectedCashCents: number;
+  startingCashCents: number;
+  cashIntakeCents: number;
+  changeOutCents: number;
+  drawerEntriesCents: number;
   count: DenominationCount;
   setCount: (next: DenominationCount) => void;
   declaredCents: number;
@@ -502,47 +598,100 @@ function ReconcileCash({
 }) {
   const isOver = varianceCents > 0;
   const isShort = varianceCents < 0;
+  const takeOutCents = Math.max(0, declaredCents - REGISTER_FLOAT_CENTS);
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-      <div className="flex flex-col gap-4">
-        <p className="font-mono text-xs text-gray-500">
-          {readOnly
-            ? 'Closing denomination count recorded at end of shift.'
-            : 'Count the actual cash in the drawer by denomination. Variance = counted − expected.'}
-        </p>
-        <MoneyCountTable value={count} onChange={setCount} disabled={readOnly} hideCoins billsAscending />
-        <div>
-          <label className="font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
-            Variance Note {!readOnly && varianceCents !== 0 && <span className="text-red-500">*required</span>}
-          </label>
-          {readOnly ? (
-            <p className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 font-mono text-sm text-gray-700 min-h-[72px] whitespace-pre-wrap">
-              {varianceNote.trim() ? varianceNote : <span className="text-gray-400">— none —</span>}
-            </p>
-          ) : (
-            <textarea
-              value={varianceNote} onChange={(e) => setVarianceNote(e.target.value)}
-              rows={3}
-              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 resize-none"
-              placeholder="e.g. tip-out paid in cash; missed pay-out entry"
-            />
+    <div className="flex flex-col gap-5">
+      <p className="font-mono text-base text-gray-500">
+        {readOnly
+          ? 'Closing denomination count recorded at end of shift.'
+          : 'Count the actual cash in the drawer by denomination. Variance = counted − expected.'}
+      </p>
+
+      {/* Two equal-size cards side by side: Bills Count + Expected/Counted/Variance.
+          Wrapped in identical bg-gray-50 rounded-xl containers so they read as a
+          matched pair. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+        <div className="bg-gray-50 rounded-xl p-5 flex flex-col gap-3">
+          <h3 className="font-mono text-base tracking-wider font-semibold text-gray-500 uppercase">
+            Bills Count
+          </h3>
+          <MoneyCountTable value={count} onChange={setCount} disabled={readOnly} hideCoins billsAscending />
+        </div>
+        <div className="bg-gray-50 rounded-xl p-5 flex flex-col gap-2">
+          <h3 className="font-mono text-base tracking-wider font-semibold text-gray-700 uppercase">
+            Expected vs Counted
+          </h3>
+
+          {/* Cash build-up: where the expected drawer total came from.
+              Labels and values share the same text-base size so the card reads
+              as a balanced grid rather than tiny-label / big-number rows. */}
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-base text-gray-700">Starting Cash</span>
+            <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(startingCashCents)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-base text-gray-700">Cash Intake</span>
+            <span className="font-mono text-base font-bold text-gray-900 tabular-nums">+{formatMoneyCents(cashIntakeCents)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-base text-gray-700">Change Given</span>
+            <span className="font-mono text-base font-bold text-gray-900 tabular-nums">−{formatMoneyCents(changeOutCents)}</span>
+          </div>
+          {drawerEntriesCents !== 0 && (
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-base text-gray-700">{drawerEntriesCents > 0 ? 'Pay-In' : 'Pay-Out'}</span>
+              <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{(drawerEntriesCents > 0 ? '+' : '−') + formatMoneyCents(Math.abs(drawerEntriesCents))}</span>
+            </div>
           )}
+
+          <div className="border-t border-gray-200 my-1" />
+
+          {/* Reconciliation: what's actually in the drawer vs what should be. */}
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-base text-gray-700">Register Count Total</span>
+            <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(declaredCents)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-base text-gray-700">Cash Error</span>
+            <span className={`font-mono text-base font-bold tabular-nums ${
+              isOver ? 'text-emerald-600' : isShort ? 'text-red-500' : 'text-gray-900'
+            }`}>
+              {(varianceCents > 0 ? '+' : '') + formatMoneyCents(varianceCents)}
+            </span>
+          </div>
+          {varianceCents === 0 && declaredCents > 0 && (
+            <p className="font-mono text-base text-emerald-600">✓ Drawer balances.</p>
+          )}
+
+          <div className="border-t border-gray-200 my-1" />
+
+          {/* Deposit split: float stays in the register, the rest comes out. */}
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-base text-gray-700">Leave in Register</span>
+            <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(REGISTER_FLOAT_CENTS)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-base text-gray-700">Amount to Take Out</span>
+            <span className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(takeOutCents)}</span>
+          </div>
         </div>
       </div>
-      <div className="bg-gray-50 rounded-xl p-5 flex flex-col gap-3 self-start">
-        <Row label="Expected Cash" value={formatMoneyCents(expectedCashCents)} />
-        <Row label="Counted Cash" value={formatMoneyCents(declaredCents)} />
-        <div className="border-t border-gray-200 my-1" />
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-xs text-gray-500">Variance</span>
-          <span className={`font-mono text-lg font-bold ${
-            isOver ? 'text-emerald-600' : isShort ? 'text-red-500' : 'text-gray-900'
-          }`}>
-            {(varianceCents > 0 ? '+' : '') + formatMoneyCents(varianceCents)}
-          </span>
-        </div>
-        {varianceCents === 0 && declaredCents > 0 && (
-          <p className="font-mono text-xs text-emerald-600 mt-1">✓ Drawer balances.</p>
+
+      <div>
+        <label className="font-mono text-base tracking-wider font-semibold text-gray-400 uppercase">
+          Variance Note {!readOnly && varianceCents !== 0 && <span className="text-red-500">*required</span>}
+        </label>
+        {readOnly ? (
+          <p className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 font-mono text-base text-gray-700 min-h-[72px] whitespace-pre-wrap">
+            {varianceNote.trim() ? varianceNote : <span className="text-gray-400">— none —</span>}
+          </p>
+        ) : (
+          <textarea
+            value={varianceNote} onChange={(e) => setVarianceNote(e.target.value)}
+            rows={3}
+            className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-base focus:outline-none focus:border-gray-400 resize-none"
+            placeholder="e.g. tip-out paid in cash; missed pay-out entry"
+          />
         )}
       </div>
     </div>
@@ -582,17 +731,17 @@ function PaymentTransactionsTab({
     <div className="space-y-3">
       <div className="flex items-center gap-3 flex-wrap">
         <p className="font-bebas text-base tracking-widest text-gray-900">{title.toUpperCase()}</p>
-        <span className="font-mono text-[10px] text-gray-400">{filtered.length} entries</span>
+        <span className="font-mono text-base text-gray-400">{filtered.length} entries</span>
         {!readOnly && (
-          <span className="font-mono text-[10px] text-pink-600 font-semibold">CLICK AMOUNT TO EDIT</span>
+          <span className="font-mono text-base text-pink-600 font-semibold">CLICK AMOUNT TO EDIT</span>
         )}
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <label className="flex items-center gap-2">
-            <span className="font-mono text-[10px] font-bold text-gray-400 tracking-wider">SORT</span>
+            <span className="font-mono text-base font-bold text-gray-400 tracking-wider">SORT</span>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as SortBy)}
-              className="px-2 py-1.5 rounded-lg border border-gray-200 font-mono text-xs bg-white focus:outline-none focus:border-gray-400"
+              className="px-2 py-1.5 rounded-lg border border-gray-200 font-mono text-base bg-white focus:outline-none focus:border-gray-400"
             >
               <option value="customer">Customer</option>
               <option value="amount">Amount</option>
@@ -603,7 +752,7 @@ function PaymentTransactionsTab({
       </div>
 
       <div className="border border-gray-100 rounded-xl overflow-hidden">
-        <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+        <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100 font-mono text-base tracking-wider font-semibold text-gray-400 uppercase">
           <span>Transaction For</span>
           <span className="text-right">Amount</span>
           <span>Type</span>
@@ -611,7 +760,7 @@ function PaymentTransactionsTab({
           <span>Staff</span>
         </div>
         {filtered.length === 0 ? (
-          <div className="px-3 py-10 text-center font-mono text-xs text-gray-400">
+          <div className="px-3 py-10 text-center font-mono text-base text-gray-400">
             No transactions.
           </div>
         ) : (
@@ -620,8 +769,8 @@ function PaymentTransactionsTab({
           ))
         )}
         <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 bg-gray-50 border-t border-gray-100 items-center">
-          <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Total</span>
-          <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoneyCents(total)}</span>
+          <span className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">Total</span>
+          <span className="font-mono text-base font-bold text-gray-900 text-right">{formatMoneyCents(total)}</span>
           <span /><span /><span />
         </div>
       </div>
@@ -666,7 +815,7 @@ function PaymentRow({
 
   return (
     <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center">
-      <span className="font-mono text-sm text-gray-900 truncate">{payment.clientName}</span>
+      <span className="font-mono text-base text-gray-900 truncate">{payment.clientName}</span>
       {editing ? (
         <input
           autoFocus
@@ -679,14 +828,14 @@ function PaymentRow({
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
             if (e.key === 'Escape') cancel();
           }}
-          className="px-2 py-1 rounded-md border border-pink-300 bg-white font-mono text-sm font-semibold text-gray-900 text-right focus:outline-none focus:ring-2 focus:ring-pink-300 w-full"
+          className="px-2 py-1 rounded-md border border-pink-300 bg-white font-mono text-base font-semibold text-gray-900 text-right focus:outline-none focus:ring-2 focus:ring-pink-300 w-full"
         />
       ) : (
         <button
           type="button"
           onClick={startEdit}
           disabled={readOnly}
-          className={`font-mono text-sm font-semibold text-right tabular-nums ${
+          className={`font-mono text-base font-semibold text-right tabular-nums ${
             readOnly
               ? 'text-gray-900 cursor-default'
               : 'text-gray-900 hover:bg-pink-50 hover:ring-1 hover:ring-pink-200 rounded-md px-1 cursor-text'
@@ -699,8 +848,8 @@ function PaymentRow({
       <span>
         <MethodPill method={payment.method} />
       </span>
-      <span className="font-mono text-sm text-gray-700 text-right">#{payment.ticketNumber}</span>
-      <span className="font-mono text-sm text-gray-700 truncate">{payment.staffName || '—'}</span>
+      <span className="font-mono text-base text-gray-700 text-right">#{payment.ticketNumber}</span>
+      <span className="font-mono text-base text-gray-700 truncate">{payment.staffName || '—'}</span>
     </div>
   );
 }
@@ -715,7 +864,7 @@ function MethodPill({ method }: { method: PaymentMethod }) {
     cash: 'CASH', visa_mc: 'CARD', gift: 'GIFT',
   };
   return (
-    <span className={`inline-block px-2 py-0.5 rounded-full font-mono text-[10px] font-bold tracking-wider ${map[method]}`}>
+    <span className={`inline-block px-2 py-0.5 rounded-full font-mono text-base font-bold tracking-wider ${map[method]}`}>
       {label[method]}
     </span>
   );
@@ -732,14 +881,14 @@ function TicketListTab({ tickets }: { tickets: Ticket[] }) {
     <div className="space-y-3">
       <div className="flex items-center gap-3">
         <p className="font-bebas text-base tracking-widest text-gray-900">TICKETS CLOSED THIS SHIFT</p>
-        <span className="font-mono text-[10px] text-gray-400">{sorted.length} tickets</span>
-        <span className="ml-auto font-mono text-sm font-bold text-gray-900">
+        <span className="font-mono text-base text-gray-400">{sorted.length} tickets</span>
+        <span className="ml-auto font-mono text-base font-bold text-gray-900">
           Total {formatMoneyCents(totalCents)}
         </span>
       </div>
 
       <div className="border border-gray-100 rounded-xl overflow-hidden">
-        <div className="grid grid-cols-[60px_1fr_140px_1fr_100px_100px] gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+        <div className="grid grid-cols-[60px_1fr_140px_1fr_100px_100px] gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100 font-mono text-base tracking-wider font-semibold text-gray-400 uppercase">
           <span>#</span>
           <span>Client</span>
           <span>Staff</span>
@@ -748,40 +897,31 @@ function TicketListTab({ tickets }: { tickets: Ticket[] }) {
           <span className="text-right">Total</span>
         </div>
         {sorted.length === 0 ? (
-          <div className="px-3 py-10 text-center font-mono text-xs text-gray-400">
+          <div className="px-3 py-10 text-center font-mono text-base text-gray-400">
             No tickets closed against this shift.
           </div>
         ) : (
           sorted.map((t) => (
             <div key={t.id}
               className="grid grid-cols-[60px_1fr_140px_1fr_100px_100px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center">
-              <span className="font-mono text-sm font-bold text-gray-900">#{t.ticketNumber}</span>
-              <span className="font-mono text-sm text-gray-900 truncate">{t.clientName || 'Walk-in'}</span>
-              <span className="font-mono text-xs text-gray-700 truncate">
+              <span className="font-mono text-base font-bold text-gray-900">#{t.ticketNumber}</span>
+              <span className="font-mono text-base text-gray-900 truncate">{t.clientName || 'Walk-in'}</span>
+              <span className="font-mono text-base text-gray-700 truncate">
                 {t.primaryManicuristName || '—'}
               </span>
-              <span className="font-mono text-[11px] text-gray-500 truncate">
+              <span className="font-mono text-base text-gray-500 truncate">
                 {t.items.length > 0 ? t.items.map((i) => i.name).join(', ') : '—'}
               </span>
-              <span className="font-mono text-sm text-gray-700 text-right">
+              <span className="font-mono text-base text-gray-700 text-right">
                 {t.tipCents > 0 ? formatMoneyCents(t.tipCents) : '—'}
               </span>
-              <span className="font-mono text-sm font-bold text-gray-900 text-right">
+              <span className="font-mono text-base font-bold text-gray-900 text-right">
                 {formatMoneyCents(t.totalCents)}
               </span>
             </div>
           ))
         )}
       </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="font-mono text-xs text-gray-500">{label}</span>
-      <span className="font-mono text-base font-bold text-gray-900">{value}</span>
     </div>
   );
 }
@@ -859,10 +999,10 @@ function SalesValidationPopup({
           </button>
         </div>
 
-        <div className="px-6 pt-2 border-b border-gray-100 flex items-center gap-1 flex-wrap">
-          <TabBtn active={vtab === 'payments'}   onClick={() => setVtab('payments')}>PAYMENT SUMMARY</TabBtn>
-          <TabBtn active={vtab === 'validation'} onClick={() => setVtab('validation')}>SALES VALIDATION</TabBtn>
-          <TabBtn active={vtab === 'reports'}    onClick={() => setVtab('reports')}>REPORTS &amp; OVERNIGHT</TabBtn>
+        <div className="px-6 pt-2 border-b border-gray-100 flex items-center gap-1 flex-nowrap overflow-x-auto">
+          <TabBtn color="slate" active={vtab === 'payments'}   onClick={() => setVtab('payments')}>PAYMENTS</TabBtn>
+          <TabBtn color="pink"  active={vtab === 'validation'} onClick={() => setVtab('validation')}>VALIDATION</TabBtn>
+          <TabBtn color="sky"   active={vtab === 'reports'}    onClick={() => setVtab('reports')}>REPORTS</TabBtn>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
@@ -883,6 +1023,7 @@ function SalesValidationPopup({
               expectedCashCents={expectedCashCents}
               declaredCents={declaredCents}
               varianceCents={varianceCents}
+              breakdown={breakdown}
             />
           ) : (
             <ReportsOvernightTab shift={shift} totalReceiptsCents={breakdown.totalReceipts} />
@@ -891,12 +1032,12 @@ function SalesValidationPopup({
 
         <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between gap-3">
           <button onClick={onBack}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50">
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-base font-bold hover:bg-gray-50">
             <ChevronLeft size={14} /> BACK TO SUMMARY
           </button>
           <div className="ml-auto flex items-center gap-3">
             {errorCents !== 0 && (
-              <span className="font-mono text-[11px] font-bold text-red-600">
+              <span className="font-mono text-base font-bold text-red-600">
                 ERROR {formatMoneyCents(errorCents)} — verify before closing
               </span>
             )}
@@ -908,7 +1049,7 @@ function SalesValidationPopup({
                 else if (vtab === 'validation') setVtab('reports');
                 else onContinue();
               }}
-              className="px-6 py-2 rounded-full bg-pink-500 text-white font-mono text-xs font-bold hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm">
+              className="px-6 py-2 rounded-full bg-pink-500 text-white font-mono text-base font-bold hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm">
               {vtab === 'reports' ? 'CONFIRM CLOSING' : 'CONTINUE'}
             </button>
           </div>
@@ -936,7 +1077,7 @@ function SalesValidationTab({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="rounded-xl border border-gray-200 overflow-hidden">
           <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-            <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Receipts</span>
+            <span className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">Receipts</span>
           </div>
           <div className="px-4 py-3 space-y-2">
             <SummaryRow label="Services"   value={breakdown.services} />
@@ -952,8 +1093,8 @@ function SalesValidationTab({
 
         <div className="rounded-xl border border-gray-200 overflow-hidden">
           <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 grid grid-cols-2">
-            <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Payment Type</span>
-            <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase text-right">Amount</span>
+            <span className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">Payment Type</span>
+            <span className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase text-right">Amount</span>
           </div>
           <div className="px-4 py-3 space-y-2">
             <SummaryRow label="Cash"    value={payByMethod.cash} />
@@ -966,8 +1107,8 @@ function SalesValidationTab({
             <SummaryRow label="Total Payments" value={totalPayments} bold accent />
             <div className="mt-2 flex items-center justify-between rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
               <div className="flex flex-col">
-                <span className="font-mono text-sm font-bold text-emerald-800">Cash in Envelope</span>
-                <span className="font-mono text-[10px] text-emerald-700">
+                <span className="font-mono text-base font-bold text-emerald-800">Cash in Envelope</span>
+                <span className="font-mono text-base text-emerald-700">
                   (less starting cash {formatMoneyCents(startingCashCents)})
                 </span>
               </div>
@@ -980,7 +1121,7 @@ function SalesValidationTab({
       </div>
 
       <div className="flex items-center justify-center gap-3 pt-1">
-        <span className="font-mono text-xs tracking-wider font-bold text-gray-500 uppercase">Error</span>
+        <span className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">Error</span>
         <span className={`font-mono text-lg font-bold tabular-nums ${
           errorCents === 0 ? 'text-gray-700' : 'text-red-600'
         }`}>
@@ -992,27 +1133,28 @@ function SalesValidationTab({
 }
 
 function PaymentSummaryTab({
-  lines, expectedCashCents, declaredCents, varianceCents,
+  lines, expectedCashCents, declaredCents, varianceCents, breakdown,
 }: {
   lines: ShiftBalanceLine[];
   expectedCashCents: number;
   declaredCents: number;
   varianceCents: number;
+  breakdown: Breakdown;
 }) {
   return (
     <div className="space-y-4">
-      <PaymentsSummary lines={lines} declaredCents={declaredCents} />
+      <PaymentsSummary lines={lines} declaredCents={declaredCents} breakdown={breakdown} />
       <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 grid grid-cols-3 gap-4 text-center">
         <div>
-          <p className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Expected Cash</p>
+          <p className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">Expected Cash</p>
           <p className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(expectedCashCents)}</p>
         </div>
         <div>
-          <p className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Counted Cash</p>
+          <p className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">Counted Cash</p>
           <p className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(declaredCents)}</p>
         </div>
         <div>
-          <p className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Variance</p>
+          <p className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">Variance</p>
           <p className={`font-mono text-base font-bold tabular-nums ${
             varianceCents === 0 ? 'text-gray-900' : varianceCents > 0 ? 'text-emerald-600' : 'text-red-600'
           }`}>
@@ -1045,7 +1187,7 @@ function ReportsOvernightTab({
     <div className="space-y-4">
       <div className="rounded-xl border border-gray-200 overflow-hidden">
         <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-          <span className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">End-of-Day Reports</span>
+          <span className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">End-of-Day Reports</span>
         </div>
         <div className="px-4 py-3 space-y-3">
           <div className="text-center py-2">
@@ -1053,18 +1195,18 @@ function ReportsOvernightTab({
               {prettyDate}
             </p>
           </div>
-          <p className="font-mono text-xs text-gray-600">
+          <p className="font-mono text-base text-gray-600">
             After closing, end-of-day reports will be available in the Blueprint
             section (Sales, Staff, Manicurist Sales, Gift Certificates,
             Receptionist Hours).
           </p>
           <div className="rounded-lg bg-gray-50 px-3 py-2 max-w-xs mx-auto text-center">
-            <p className="font-mono text-[10px] tracking-wider font-bold text-gray-500 uppercase">Total Receipts</p>
-            <p className="font-mono text-sm font-bold text-gray-900 tabular-nums">{formatMoneyCents(totalReceiptsCents)}</p>
+            <p className="font-mono text-base tracking-wider font-bold text-gray-500 uppercase">Total Receipts</p>
+            <p className="font-mono text-base font-bold text-gray-900 tabular-nums">{formatMoneyCents(totalReceiptsCents)}</p>
           </div>
         </div>
       </div>
-      <p className="font-mono text-[11px] text-gray-400 text-center">
+      <p className="font-mono text-base text-gray-400 text-center">
         Overnight processing runs automatically once the shift closes.
       </p>
     </div>
@@ -1081,8 +1223,8 @@ function SummaryRow({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className={`font-mono text-sm ${bold ? 'font-bold text-gray-900' : 'text-gray-700'}`}>{label}</span>
-      <span className={`font-mono ${bold ? 'text-base font-bold' : 'text-sm'} ${accent ? 'text-pink-600' : 'text-gray-900'} tabular-nums`}>
+      <span className={`font-mono text-base ${bold ? 'font-bold text-gray-900' : 'text-gray-700'}`}>{label}</span>
+      <span className={`font-mono ${bold ? 'text-base font-bold' : 'text-base'} ${accent ? 'text-pink-600' : 'text-gray-900'} tabular-nums`}>
         {formatMoneyCents(value)}
       </span>
     </div>
@@ -1106,10 +1248,10 @@ function ConfirmCloseDialog({
           <h2 className="font-bebas text-xl tracking-widest text-gray-900">CLOSE SHIFT?</h2>
         </div>
         <div className="px-6 py-5">
-          <p className="font-mono text-sm text-gray-800">
+          <p className="font-mono text-base text-gray-800">
             Do you want to close shift?
           </p>
-          <p className="font-mono text-[11px] text-gray-500 mt-2 leading-relaxed">
+          <p className="font-mono text-base text-gray-500 mt-2 leading-relaxed">
             Once closed, the drawer is sealed for the day. Payments and tickets
             on this shift become read-only (an admin can still unlock and
             re-close to make corrections).
@@ -1118,12 +1260,12 @@ function ConfirmCloseDialog({
         <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
           <button onClick={onCancel}
             disabled={busy}
-            className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-xs font-bold hover:bg-gray-50 disabled:opacity-50">
+            className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-base font-bold hover:bg-gray-50 disabled:opacity-50">
             NO
           </button>
           <button onClick={onConfirm}
             disabled={busy}
-            className="px-5 py-2 rounded-lg bg-red-600 text-white font-mono text-xs font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            className="px-5 py-2 rounded-lg bg-red-600 text-white font-mono text-base font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
             {busy ? 'CLOSING…' : 'YES, CLOSE SHIFT'}
           </button>
         </div>
