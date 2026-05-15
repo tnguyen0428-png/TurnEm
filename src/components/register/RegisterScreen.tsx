@@ -170,35 +170,35 @@ export default function RegisterScreen() {
             <button
               onClick={() => setShowClockModal(true)}
               title="Clock in / Clock out"
-              className="relative flex items-center justify-center w-10 h-10 rounded-lg border border-gray-200 bg-gradient-to-br from-amber-50 to-indigo-50 hover:from-amber-100 hover:to-indigo-100 text-gray-700"
+              className="relative flex items-center justify-center h-12 w-12 rounded-lg border border-gray-200 bg-gradient-to-br from-amber-50 to-indigo-50 hover:from-amber-100 hover:to-indigo-100 text-gray-700"
             >
-              <Sun size={16} className="text-amber-500 -mr-1.5" />
-              <Moon size={14} className="text-indigo-500" />
+              <Sun size={20} className="text-amber-500 -mr-1.5" />
+              <Moon size={18} className="text-indigo-500" />
             </button>
             {closedShifts.map((cs) => (
               <button
                 key={cs.id}
                 onClick={() => setViewShift(cs)}
                 title={cs.closedAt ? `Closed ${new Date(cs.closedAt).toLocaleString()} — click to view` : 'Click to view'}
-                className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 font-mono text-[10px] font-bold tracking-wider border border-gray-200 transition-colors"
+                className="h-12 px-4 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 font-mono text-sm font-bold tracking-wider border border-gray-200 transition-colors flex items-center"
               >
                 SHIFT CLOSED — {formatMoneyCents(cs.declaredCashCents ?? 0)}
               </button>
             ))}
             {shift ? (
               <>
-                <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-mono text-[10px] font-bold tracking-wider border border-emerald-200">
+                <span className="h-12 px-4 rounded-lg bg-emerald-50 text-emerald-700 font-mono text-sm font-bold tracking-wider border border-emerald-200 flex items-center">
                   SHIFT OPEN — {formatMoneyCents(shift.openingCashCents)} START
                 </span>
                 <button onClick={() => setShowCloseShift(true)}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-400 font-mono text-xs font-bold transition-colors">
-                  <Lock size={12} /> CLOSE SHIFT
+                  className="h-12 px-4 flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-400 font-mono text-sm font-bold transition-colors">
+                  <Lock size={16} /> CLOSE SHIFT
                 </button>
               </>
             ) : (
               <button onClick={() => setShowOpenShift(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800 font-mono text-xs font-bold">
-                <Unlock size={12} /> OPEN SHIFT
+                className="h-12 px-4 flex items-center gap-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800 font-mono text-sm font-bold">
+                <Unlock size={16} /> OPEN SHIFT
               </button>
             )}
             <button onClick={handleNewBlank}
