@@ -100,6 +100,10 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const [time, setTime] = useState(draft?.time ?? '10:00');
   const [notes, setNotes] = useState('');
   const [sameTime, setSameTime] = useState(false);
+  // Receptionist-confirmation when booking would overlap an existing
+  // appointment in the same column. Holds a list of human-readable conflict
+  // labels until the user confirms (proceed) or cancels (close the dialog).
+  const [pendingConflicts, setPendingConflicts] = useState<string[] | null>(null);
   const [partyGroup, setPartyGroup] = useState(false);
 
   const sortedServices = useMemo(
@@ -185,9 +189,112 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     );
   }
 
+  function durOf(svcName: string, manId: string | null, apptAdj?: number): number {
+    const base = state.salonServices.find((s) => s.name === svcName)?.duration ?? 60;
+    const staffAdj = manId
+      ? ((state.manicurists.find((mm) => mm.id === manId)?.timeAdjustments?.[svcName]) || 0)
+      : 0;
+    return Math.max(base + staffAdj + (apptAdj || 0), 5);
+  }
+
+  // Build a per-column list of busy intervals across all OTHER appointments
+  // on the same date. Used to detect overlap when the receptionist tries to
+  // save a new (or moved/edited) appointment.
+  function computeOtherAppointmentOccupancy(): Map<string, Array<{ apptId: string; clientName: string; startMin: number; endMin: number; timeLabel: string }>> {
+    const map = new Map<string, Array<{ apptId: string; clientName: string; startMin: number; endMin: number; timeLabel: string }>>();
+    for (const a of state.appointments) {
+      if (mode === 'edit' && editing && a.id === editing.id) continue;
+      if (a.date !== date) continue;
+      if (a.status === 'cancelled' || a.status === 'no-show') continue;
+      const svcs = (a.services?.length ? a.services : [a.service as string]).filter(Boolean);
+      const allReqs = a.serviceRequests || [];
+      const [sh, sm] = a.time.split(':').map(Number);
+      const apptStartMin = sh * 60 + sm;
+      let elapsed = 0;
+      const occCount: Record<string, number> = {};
+      for (let i = 0; i < svcs.length; i++) {
+        const svcName = svcs[i];
+        const occ = occCount[svcName] ?? 0;
+        occCount[svcName] = occ + 1;
+        const reqsForSvc = allReqs.filter((r) => r.service === svcName);
+        const req = reqsForSvc[occ] ?? null;
+        const manId = (req && req.manicuristIds.length > 0)
+          ? req.manicuristIds[0]
+          : (a.manicuristId ?? null);
+        const dur = durOf(svcName, manId, req?.durationAdjustment);
+        let startMin: number;
+        if (req?.startTime) {
+          const [h, m] = req.startTime.split(':').map(Number);
+          startMin = h * 60 + m;
+        } else if (a.sameTime) {
+          startMin = apptStartMin;
+        } else {
+          startMin = apptStartMin + elapsed;
+        }
+        if (manId) {
+          const arr = map.get(manId) ?? [];
+          arr.push({
+            apptId: a.id,
+            clientName: a.clientName || 'Client',
+            startMin,
+            endMin: startMin + dur,
+            timeLabel: req?.startTime ?? a.time,
+          });
+          map.set(manId, arr);
+        }
+        if (!a.sameTime) elapsed += dur;
+      }
+    }
+    return map;
+  }
+
+  function findConflicts(): string[] {
+    const occupancy = computeOtherAppointmentOccupancy();
+    const [sh, sm] = time.split(':').map(Number);
+    const apptStartMin = sh * 60 + sm;
+    let elapsed = 0;
+    const conflicts: string[] = [];
+    for (const s of selectedServices) {
+      const manId =
+        s.requestedManicuristIds[0]
+        ?? (mode === 'edit' && editing ? editing.manicuristId : null)
+        ?? state.appointmentDraft?.manicuristId
+        ?? null;
+      if (!manId) {
+        if (!sameTime) elapsed += durOf(s.serviceName as string, null, s.durationAdjustment);
+        continue;
+      }
+      const dur = durOf(s.serviceName as string, manId, s.durationAdjustment);
+      const startMin = sameTime ? apptStartMin : apptStartMin + elapsed;
+      const endMin = startMin + dur;
+      const arr = occupancy.get(manId) ?? [];
+      for (const iv of arr) {
+        if (iv.startMin < endMin && iv.endMin > startMin) {
+          const manName = state.manicurists.find((mm) => mm.id === manId)?.name ?? '?';
+          conflicts.push(`${manName} at ${iv.timeLabel} (${iv.clientName}, ${s.serviceName})`);
+        }
+      }
+      if (!sameTime) elapsed += dur;
+    }
+    return conflicts;
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (selectedServices.length === 0) return;
+
+    // Receptionist confirmation gate: if the booking would land on an
+    // already-occupied column at the target time, ask before committing.
+    // pendingConflicts === null means the check hasn't run yet for this
+    // click; once the user confirms we re-run handleSubmit and it skips
+    // the check (pendingConflicts is set to an empty array as a sentinel).
+    if (pendingConflicts === null) {
+      const conflicts = findConflicts();
+      if (conflicts.length > 0) {
+        setPendingConflicts(conflicts);
+        return;
+      }
+    }
 
     const services = selectedServices.map((s) => s.serviceName as ServiceType);
 
@@ -362,7 +469,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       onClose={handleClose}
       width="max-w-2xl"
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form data-appointment-form onSubmit={handleSubmit} className="space-y-4">
         {mode === 'edit' && editing && (
           <div className="font-mono text-[10px] tracking-wider text-gray-400 uppercase space-y-0.5">
             {editing.bookedByReceptionistId && (
@@ -711,6 +818,46 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           {mode === 'edit' ? 'SAVE CHANGES' : 'BOOK APPOINTMENT'}
         </button>
       </form>
+
+      {pendingConflicts !== null && pendingConflicts.length > 0 && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setPendingConflicts(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h3 className="font-bebas text-2xl tracking-widest text-amber-700">OVERLAP CONFIRMATION</h3>
+              <p className="font-mono text-base text-gray-600 mt-1">This booking overlaps an existing appointment. Confirm to book on top, or cancel and adjust.</p>
+            </div>
+            <div className="px-5 py-3 max-h-60 overflow-y-auto">
+              <ul className="space-y-1.5">
+                {pendingConflicts.map((c, i) => (
+                  <li key={i} className="font-mono text-base text-gray-800 flex items-start gap-2">
+                    <span className="text-amber-500 mt-0.5">⚠</span>
+                    <span>{c}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="px-5 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-2">
+              <button type="button"
+                onClick={() => setPendingConflicts(null)}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 font-mono text-base font-bold hover:bg-gray-100">
+                CANCEL
+              </button>
+              <button type="button"
+                onClick={() => {
+                  // Sentinel: empty array marks "already confirmed" so the
+                  // next handleSubmit skips the conflict check.
+                  setPendingConflicts([]);
+                  // Re-trigger save synthetically.
+                  const form = document.querySelector<HTMLFormElement>('form[data-appointment-form]');
+                  form?.requestSubmit();
+                }}
+                className="px-4 py-2 rounded-lg bg-amber-500 text-white font-mono text-base font-bold hover:bg-amber-600">
+                BOOK ANYWAY
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     {recap && (
       <BookingRecapModal
         info={recap}
