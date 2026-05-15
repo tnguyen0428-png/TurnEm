@@ -368,7 +368,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   function handleHeaderTwoClick(id: string) {
     const now = Date.now();
     const last = lastHeaderClickRef.current;
-    if (last && last.id === id && now - last.at < 350) {
+    const elapsed = last ? now - last.at : null;
+    console.info('[appt book] handleHeaderTwoClick', { id, last, elapsed });
+    if (last && last.id === id && elapsed !== null && elapsed < 350) {
+      console.info('[appt book] -> toggling popover for', id);
       setServicesPopoverFor((cur) => (cur === id ? null : id));
       lastHeaderClickRef.current = null;
     } else {
@@ -1138,12 +1141,14 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   onDragEnd={onColDragEnd}
                   onDragOver={(e) => m && onColDragOver(e, m.id)}
                   onDrop={(e) => m && onColDrop(e, m.id)}
-                  onMouseDown={(e) => {
+                  onClick={(e) => {
                     if (!m) return;
-                    // Only count primary-button mousedowns; right-clicks etc.
-                    // should not affect the two-click detection.
-                    if (e.button !== 0) return;
+                    // `click` only fires when there is no drag; this lets
+                    // us coexist with drag-to-reorder. Two clicks within
+                    // 350ms toggle the services popover.
+                    console.info('[appt book] header click', m.id);
                     handleHeaderTwoClick(m.id);
+                    e.stopPropagation();
                   }}
                   title={m ? 'Drag to reorder · double-click for services' : undefined}
                   className={`relative flex-shrink-0 flex items-center justify-center gap-1.5 px-2 border-r border-gray-200 transition-colors ${
