@@ -118,13 +118,38 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'ADD_CLIENT':
       return { ...state, queue: [...state.queue, action.client] };
 
-    case 'UPDATE_CLIENT':
+    case 'UPDATE_CLIENT': {
+      const existing = state.queue.find((c) => c.id === action.id);
+      const updatedQueue = state.queue.map((c) =>
+        c.id === action.id ? { ...c, ...action.updates } : c
+      );
+      // If the client is currently assigned to a manicurist AND turnValue
+      // changed (e.g. receptionist added an Eyebrow Wax mid-visit, or
+      // toggled a service to a request), apply the delta to the
+      // manicurist's totalTurns so the running counter on the staff
+      // portal stays in sync. ASSIGN_CLIENT credits the initial value;
+      // this case handles every subsequent edit.
+      let updatedManicurists = state.manicurists;
+      if (
+        existing &&
+        existing.assignedManicuristId &&
+        action.updates.turnValue !== undefined &&
+        action.updates.turnValue !== existing.turnValue
+      ) {
+        const delta = action.updates.turnValue - existing.turnValue;
+        const targetStaffId = existing.assignedManicuristId;
+        updatedManicurists = state.manicurists.map((m) =>
+          m.id === targetStaffId
+            ? { ...m, totalTurns: Math.max(0, m.totalTurns + delta) }
+            : m,
+        );
+      }
       return {
         ...state,
-        queue: state.queue.map((c) =>
-          c.id === action.id ? { ...c, ...action.updates } : c
-        ),
+        queue: updatedQueue,
+        manicurists: updatedManicurists,
       };
+    }
 
     case 'SET_EDITING_CLIENT':
       return { ...state, editingClientId: action.clientId };
