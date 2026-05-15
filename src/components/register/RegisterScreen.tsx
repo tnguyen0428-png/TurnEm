@@ -202,7 +202,7 @@ export default function RegisterScreen() {
               </button>
             )}
             <button onClick={handleNewBlank}
-              className="h-12 px-4 flex items-center gap-2 rounded-lg border border-yellow-300 bg-yellow-300 text-yellow-900 hover:bg-yellow-400 hover:border-yellow-400 font-mono text-sm font-bold transition-colors">
+              className="h-12 px-4 flex items-center gap-2 rounded-lg border border-yellow-400 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 hover:border-yellow-500 font-mono text-sm font-bold transition-colors">
               + NEW TICKET
             </button>
           </div>
