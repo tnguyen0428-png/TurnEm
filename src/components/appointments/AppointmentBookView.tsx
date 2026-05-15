@@ -363,37 +363,44 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // draggable elements when the first mousedown initiates a drag-tracking
   // state. mousedown fires reliably regardless, so we count two of them
   // within ~350ms on the same header as a "double click".
-  const [servicesPopoverFor, setServicesPopoverFor] = useState<string | null>(null);
+  // Track which manicurist's popover is open AND its screen-space anchor
+  // so the popover can render as position:fixed and escape the header's
+  // `overflow-hidden` clipping. Anchor is captured at click time from the
+  // header column's bounding rect.
+  const [servicesPopover, setServicesPopover] = useState<{ id: string; left: number; top: number } | null>(null);
   const lastHeaderClickRef = useRef<{ id: string; at: number } | null>(null);
-  function handleHeaderTwoClick(id: string) {
+  function handleHeaderTwoClick(id: string, target: HTMLElement) {
     const now = Date.now();
     const last = lastHeaderClickRef.current;
     const elapsed = last ? now - last.at : null;
-    console.info('[appt book] handleHeaderTwoClick', { id, last, elapsed });
     if (last && last.id === id && elapsed !== null && elapsed < 350) {
-      console.info('[appt book] -> toggling popover for', id);
-      setServicesPopoverFor((cur) => (cur === id ? null : id));
+      const rect = target.getBoundingClientRect();
+      setServicesPopover((cur) =>
+        cur && cur.id === id
+          ? null
+          : { id, left: rect.left, top: rect.bottom + 4 },
+      );
       lastHeaderClickRef.current = null;
     } else {
       lastHeaderClickRef.current = { id, at: now };
     }
   }
   useEffect(() => {
-    if (!servicesPopoverFor) return;
+    if (!servicesPopover) return;
     const onDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && target.closest('[data-services-popover]')) return;
       if (target && target.closest('[data-services-header]')) return;
-      setServicesPopoverFor(null);
+      setServicesPopover(null);
     };
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setServicesPopoverFor(null); };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setServicesPopover(null); };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onEsc);
     return () => {
       window.removeEventListener('mousedown', onDown);
       window.removeEventListener('keydown', onEsc);
     };
-  }, [servicesPopoverFor]);
+  }, [servicesPopover]);
 
   // ── Left-click drag-to-pan state (hold left mouse button on empty calendar
   //    space and drag to swipe the view around) ─────────────────────────────
@@ -1130,8 +1137,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               const isReorderTarget = m && colDropTargetId === m.id;
               const isReorderSource = m && colDragId === m.id;
               const accentColor = m ? m.color : '#d1d5db';
-              const isPopoverOpen = !!m && servicesPopoverFor === m.id;
-              const skills = m?.skills ?? [];
               return (
                 <div
                   key={mId ?? 'any'}
@@ -1143,11 +1148,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   onDrop={(e) => m && onColDrop(e, m.id)}
                   onClick={(e) => {
                     if (!m) return;
-                    // `click` only fires when there is no drag; this lets
-                    // us coexist with drag-to-reorder. Two clicks within
-                    // 350ms toggle the services popover.
-                    console.info('[appt book] header click', m.id);
-                    handleHeaderTwoClick(m.id);
+                    // `click` only fires when there's no drag, so this
+                    // coexists cleanly with drag-to-reorder. Two clicks
+                    // within 350 ms on the same header toggle the popover.
+                    handleHeaderTwoClick(m.id, e.currentTarget as HTMLElement);
                     e.stopPropagation();
                   }}
                   title={m ? 'Drag to reorder · double-click for services' : undefined}
@@ -1182,57 +1186,9 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     style={{ height: 3, backgroundColor: accentColor }}
                   />
 
-                  {/* Services popover — pinned to the bottom of the header,
-                      hovering over the body. Skills come from manicurist.skills
-                      which holds the list of service names this staff member
-                      is qualified to perform. */}
-                  {isPopoverOpen && m && (
-                    <div
-                      data-services-popover
-                      className="absolute top-full left-1 right-1 z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-2 text-left"
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex items-center justify-between mb-1.5 pb-1.5 border-b border-gray-100">
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            aria-hidden
-                            style={{
-                              width: 0, height: 0,
-                              borderTop: '4px solid transparent',
-                              borderBottom: '4px solid transparent',
-                              borderLeft: `6px solid ${accentColor}`,
-                            }}
-                          />
-                          <span className="font-mono text-[10px] tracking-wider font-bold text-gray-700 uppercase">
-                            Services
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setServicesPopoverFor(null)}
-                          className="text-gray-400 hover:text-gray-700 font-mono text-xs leading-none px-1"
-                          aria-label="Close"
-                        >×</button>
-                      </div>
-                      {skills.length === 0 ? (
-                        <p className="font-mono text-[10px] text-gray-400 italic px-1 py-2">
-                          No services assigned.
-                        </p>
-                      ) : (
-                        <ul className="space-y-0.5 max-h-64 overflow-y-auto pr-1">
-                          {skills.map((s) => (
-                            <li
-                              key={s}
-                              className="font-mono text-[11px] text-gray-700 px-1.5 py-0.5 rounded hover:bg-gray-50"
-                            >
-                              {s}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
+                  {/* Popover for this column is rendered separately at the
+                      root of the component as a fixed-position element so
+                      the header's overflow-x-auto/y-hidden doesn't clip it. */}
                 </div>
               );
             })}
@@ -1355,6 +1311,69 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               setEditingSchedule(null);
             }}
           />
+        );
+      })()}
+
+      {/* Services popover — rendered at the component root with
+          position:fixed so it escapes the header's overflow clipping.
+          Anchored to the bounding rect captured when the header was
+          double-clicked. */}
+      {servicesPopover && (() => {
+        const m = state.manicurists.find((mm) => mm.id === servicesPopover.id);
+        if (!m) return null;
+        const skills = m.skills ?? [];
+        return (
+          <div
+            data-services-popover
+            className="fixed z-[100] bg-white border border-gray-200 rounded-lg shadow-xl p-2 text-left"
+            style={{
+              left: servicesPopover.left,
+              top: servicesPopover.top,
+              minWidth: 180,
+              maxWidth: 260,
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-1.5 pb-1.5 border-b border-gray-100">
+              <div className="flex items-center gap-1.5">
+                <span
+                  aria-hidden
+                  style={{
+                    width: 0, height: 0,
+                    borderTop: '4px solid transparent',
+                    borderBottom: '4px solid transparent',
+                    borderLeft: `6px solid ${m.color}`,
+                  }}
+                />
+                <span className="font-mono text-[10px] tracking-wider font-bold text-gray-700 uppercase">
+                  {m.name} · Services
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setServicesPopover(null)}
+                className="text-gray-400 hover:text-gray-700 font-mono text-sm leading-none px-1"
+                aria-label="Close"
+              >×</button>
+            </div>
+            {skills.length === 0 ? (
+              <p className="font-mono text-[10px] text-gray-400 italic px-1 py-2">
+                No services assigned.
+              </p>
+            ) : (
+              <ul className="space-y-0.5 max-h-[60vh] overflow-y-auto pr-1">
+                {skills.map((s) => (
+                  <li
+                    key={s}
+                    className="font-mono text-[11px] text-gray-700 px-1.5 py-0.5 rounded hover:bg-gray-50"
+                  >
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         );
       })()}
     </>
