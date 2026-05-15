@@ -5,14 +5,24 @@ import { getPriorityQueue } from '../../utils/priority';
 import QueueCard from './QueueCard';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import { fetchOpenShift } from '../../lib/shifts';
 
 export default function WaitingPanel() {
   const { state, dispatch } = useApp();
   const [removeId, setRemoveId] = useState<string | null>(null);
+  // Block manicurist assignment until a shift is open. The popup gates the
+  // standard "assign client" entry point in the waiting panel so a receptionist
+  // can't credit turns or kick off ticketing before the day's shift exists.
+  const [noShiftReminder, setNoShiftReminder] = useState(false);
 
   const priorityQueue = getPriorityQueue(state.queue, state.manicurists, state.salonServices);
 
-  function handleAssign(clientId: string) {
+  async function handleAssign(clientId: string) {
+    const shift = await fetchOpenShift();
+    if (!shift) {
+      setNoShiftReminder(true);
+      return;
+    }
     dispatch({ type: 'SET_SELECTED_CLIENT', clientId });
     dispatch({ type: 'SET_MODAL', modal: 'assignConfirm' });
   }
@@ -138,6 +148,14 @@ export default function WaitingPanel() {
           danger
           onConfirm={confirmRemove}
           onCancel={() => setRemoveId(null)}
+        />
+      )}
+      {noShiftReminder && (
+        <ConfirmDialog
+          message="No shift is open. Open today's shift on the Register tab before assigning a manicurist."
+          confirmLabel="GOT IT"
+          onConfirm={() => setNoShiftReminder(false)}
+          onCancel={() => setNoShiftReminder(false)}
         />
       )}
     </div>
