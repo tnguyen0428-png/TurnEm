@@ -182,7 +182,7 @@ export default function RegisterScreen() {
                 title={cs.closedAt ? `Closed ${new Date(cs.closedAt).toLocaleString()} — click to view` : 'Click to view'}
                 className="h-12 px-4 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 font-mono text-sm font-bold tracking-wider border border-gray-200 transition-colors flex items-center"
               >
-                SHIFT CLOSED — {formatMoneyCents(cs.declaredCashCents ?? 0)}
+                SHIFT CLOSED
               </button>
             ))}
             {shift ? (
