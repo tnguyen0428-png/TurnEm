@@ -130,6 +130,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const [slotHeight, setSlotHeight] = useState(40);
 
   const manicurists = state.manicurists.filter((m) => m.showInBook !== false);
+  // build-bust-v1
 
   // ── Off-hours / vacation visual overlay ───────────────────────────────────
   // For each manicurist column we compute the grey bands to draw based on the
