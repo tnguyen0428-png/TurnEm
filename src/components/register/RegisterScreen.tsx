@@ -257,8 +257,8 @@ export default function RegisterScreen() {
             ))}
             {shift ? (
               <>
-                <span className="h-12 px-4 rounded-lg bg-emerald-50 text-emerald-700 font-mono text-sm font-bold tracking-wider border border-emerald-200 flex items-center">
-                  SHIFT OPEN
+                <span className="h-12 px-4 rounded-lg bg-emerald-50 text-emerald-700 font-mono text-sm font-bold tracking-wider border border-emerald-200 flex items-center gap-2">
+                  <Unlock size={16} /> SHIFT OPEN
                 </span>
                 <button onClick={() => setShowCloseShift(true)}
                   className="h-12 px-4 flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-400 font-mono text-sm font-bold transition-colors">
