@@ -196,8 +196,10 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     const existingReqs = editing?.serviceRequests || [];
     // If the user explicitly changed the appointment time in the modal, drop all per-service
     // startTime overrides so the whole appointment moves to the new time instead of the
-    // old per-service times overriding it.
+    // old per-service times overriding it. Same when "Same time" is checked — the
+    // intent is every service starts at the appointment time, no per-service override.
     const timeChanged = mode === 'edit' && editing && editing.time !== time;
+    const forceUnifiedTime = timeChanged || sameTime;
     const occCount: Record<string, number> = {};
     const serviceRequests: ServiceRequest[] = [];
 
@@ -207,7 +209,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       // Find existing entry for this service/occurrence (preserves startTime from dragging)
       const reqsForSvc = existingReqs.filter((r) => r.service === s.serviceName);
       const existingReq = reqsForSvc[occ] ?? null;
-      const preservedStartTime = timeChanged ? undefined : existingReq?.startTime;
+      const preservedStartTime = forceUnifiedTime ? undefined : existingReq?.startTime;
       // Only attach the per-appointment adjustment when it is non-zero so the
       // JSON payload stays tidy and toggling back to 0 clears it from the row.
       const apptAdj = s.durationAdjustment !== 0 ? { durationAdjustment: s.durationAdjustment } : {};
@@ -225,7 +227,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         // No client request — keep existing placement entry (startTime + column from drag),
         // but drop the startTime if the user just moved the whole appointment via the time field.
         // Always overwrite durationAdjustment from current modal state so toggling it down to 0 clears it.
-        const base = timeChanged ? { ...existingReq, startTime: undefined } : existingReq;
+        const base = forceUnifiedTime ? { ...existingReq, startTime: undefined } : existingReq;
         const { durationAdjustment: _drop, ...rest } = base;
         void _drop;
         serviceRequests.push({ ...rest, ...apptAdj });
