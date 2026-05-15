@@ -368,23 +368,6 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // `overflow-hidden` clipping. Anchor is captured at click time from the
   // header column's bounding rect.
   const [servicesPopover, setServicesPopover] = useState<{ id: string; left: number; top: number } | null>(null);
-  const lastHeaderClickRef = useRef<{ id: string; at: number } | null>(null);
-  function handleHeaderTwoClick(id: string, target: HTMLElement) {
-    const now = Date.now();
-    const last = lastHeaderClickRef.current;
-    const elapsed = last ? now - last.at : null;
-    if (last && last.id === id && elapsed !== null && elapsed < 350) {
-      const rect = target.getBoundingClientRect();
-      setServicesPopover((cur) =>
-        cur && cur.id === id
-          ? null
-          : { id, left: rect.left, top: rect.bottom + 4 },
-      );
-      lastHeaderClickRef.current = null;
-    } else {
-      lastHeaderClickRef.current = { id, at: now };
-    }
-  }
   useEffect(() => {
     if (!servicesPopover) return;
     const onDown = (e: MouseEvent) => {
@@ -1146,33 +1129,44 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   onDragEnd={onColDragEnd}
                   onDragOver={(e) => m && onColDragOver(e, m.id)}
                   onDrop={(e) => m && onColDrop(e, m.id)}
-                  onClick={(e) => {
-                    if (!m) return;
-                    // `click` only fires when there's no drag, so this
-                    // coexists cleanly with drag-to-reorder. Two clicks
-                    // within 350 ms on the same header toggle the popover.
-                    handleHeaderTwoClick(m.id, e.currentTarget as HTMLElement);
-                    e.stopPropagation();
-                  }}
-                  title={m ? 'Drag to reorder · double-click for services' : undefined}
+                  title={m ? 'Drag to reorder · double-click the triangle for services' : undefined}
                   className={`relative flex-shrink-0 flex items-center justify-center gap-1.5 px-2 border-r border-gray-200 transition-colors ${
                     m ? 'cursor-grab active:cursor-grabbing' : ''
                   } ${isReorderSource ? 'opacity-40' : ''} ${
                     isReorderTarget ? 'bg-pink-50 ring-2 ring-pink-300 ring-inset' : ''
                   }`}
                   style={{ width: colWidth }}>
-                  {/* Color triangle to the left of the name (CSS-only). Sized
-                      to match the font weight of the name beside it. */}
+                  {/* Color triangle to the left of the name — also serves as
+                      the services-popover trigger. Single-click toggles it.
+                      draggable={false} + stopPropagation on mousedown keeps
+                      the parent's drag-to-reorder gesture from eating the
+                      click. cursor-pointer makes it clear this is tappable. */}
                   {m && (
                     <span
-                      aria-hidden
+                      role="button"
+                      tabIndex={0}
+                      draggable={false}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onDragStart={(e) => e.preventDefault()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = (e.currentTarget.parentElement as HTMLElement)
+                          ?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
+                        setServicesPopover((cur) =>
+                          cur && cur.id === m.id
+                            ? null
+                            : { id: m.id, left: rect.left, top: rect.bottom + 4 },
+                        );
+                      }}
+                      title="Show services"
                       style={{
                         width: 0,
                         height: 0,
-                        borderTop: '6px solid transparent',
-                        borderBottom: '6px solid transparent',
-                        borderLeft: `8px solid ${accentColor}`,
+                        borderTop: '7px solid transparent',
+                        borderBottom: '7px solid transparent',
+                        borderLeft: `10px solid ${accentColor}`,
                         flexShrink: 0,
+                        cursor: 'pointer',
                       }}
                     />
                   )}
