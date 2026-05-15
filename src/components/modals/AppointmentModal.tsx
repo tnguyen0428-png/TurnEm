@@ -101,9 +101,22 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const [notes, setNotes] = useState('');
   const [sameTime, setSameTime] = useState(false);
   // Receptionist-confirmation when booking would overlap an existing
-  // appointment in the same column. Holds a list of human-readable conflict
-  // labels until the user confirms (proceed) or cancels (close the dialog).
-  const [pendingConflicts, setPendingConflicts] = useState<string[] | null>(null);
+  // appointment in the same column. Holds the new-booking summary + the
+  // list of conflicting existing appointments until the user confirms
+  // (proceed) or cancels (close the dialog).
+  interface ConflictInfo {
+    manName: string;
+    timeLabel: string;
+    otherClient: string;
+    serviceName: string;
+  }
+  interface BookingPreview {
+    clientName: string;
+    timeLabel: string;
+    rows: Array<{ serviceName: string; manName: string }>;
+    conflicts: ConflictInfo[];
+  }
+  const [pendingConflicts, setPendingConflicts] = useState<BookingPreview | null>(null);
   const [partyGroup, setPartyGroup] = useState(false);
 
   const sortedServices = useMemo(
@@ -248,18 +261,23 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     return map;
   }
 
-  function findConflicts(): string[] {
+  function findBookingPreview(): BookingPreview {
     const occupancy = computeOtherAppointmentOccupancy();
     const [sh, sm] = time.split(':').map(Number);
     const apptStartMin = sh * 60 + sm;
     let elapsed = 0;
-    const conflicts: string[] = [];
+    const conflicts: ConflictInfo[] = [];
+    const rows: Array<{ serviceName: string; manName: string }> = [];
     for (const s of selectedServices) {
       const manId =
         s.requestedManicuristIds[0]
         ?? (mode === 'edit' && editing ? editing.manicuristId : null)
         ?? state.appointmentDraft?.manicuristId
         ?? null;
+      const manName = manId
+        ? (state.manicurists.find((mm) => mm.id === manId)?.name ?? '?')
+        : 'Unassigned';
+      rows.push({ serviceName: s.serviceName as string, manName });
       if (!manId) {
         if (!sameTime) elapsed += durOf(s.serviceName as string, null, s.durationAdjustment);
         continue;
@@ -270,13 +288,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const arr = occupancy.get(manId) ?? [];
       for (const iv of arr) {
         if (iv.startMin < endMin && iv.endMin > startMin) {
-          const manName = state.manicurists.find((mm) => mm.id === manId)?.name ?? '?';
-          conflicts.push(`${manName} at ${iv.timeLabel} (${iv.clientName}, ${s.serviceName})`);
+          conflicts.push({
+            manName,
+            timeLabel: iv.timeLabel,
+            otherClient: iv.clientName,
+            serviceName: s.serviceName as string,
+          });
         }
       }
       if (!sameTime) elapsed += dur;
     }
-    return conflicts;
+    const newClientName = clientName.trim() || 'Walk-in';
+    return { clientName: newClientName, timeLabel: time, rows, conflicts };
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -287,11 +310,11 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     // already-occupied column at the target time, ask before committing.
     // pendingConflicts === null means the check hasn't run yet for this
     // click; once the user confirms we re-run handleSubmit and it skips
-    // the check (pendingConflicts is set to an empty array as a sentinel).
+    // the check (pendingConflicts.conflicts is set to [] as a sentinel).
     if (pendingConflicts === null) {
-      const conflicts = findConflicts();
-      if (conflicts.length > 0) {
-        setPendingConflicts(conflicts);
+      const preview = findBookingPreview();
+      if (preview.conflicts.length > 0) {
+        setPendingConflicts(preview);
         return;
       }
     }
@@ -819,23 +842,44 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         </button>
       </form>
 
-      {pendingConflicts !== null && pendingConflicts.length > 0 && (
+      {pendingConflicts !== null && pendingConflicts.conflicts.length > 0 && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setPendingConflicts(null)}>
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-100">
               <h3 className="font-bebas text-2xl tracking-widest text-amber-700">OVERLAP CONFIRMATION</h3>
               <p className="font-mono text-base text-gray-600 mt-1">This booking overlaps an existing appointment. Confirm to book on top, or cancel and adjust.</p>
             </div>
-            <div className="px-5 py-3 max-h-60 overflow-y-auto">
-              <ul className="space-y-1.5">
-                {pendingConflicts.map((c, i) => (
-                  <li key={i} className="font-mono text-base text-gray-800 flex items-start gap-2">
-                    <span className="text-amber-500 mt-0.5">⚠</span>
-                    <span>{c}</span>
+
+            {/* The new booking — client + time + each service line w/ assigned staff. */}
+            <div className="px-5 py-3 border-b border-gray-100">
+              <p className="font-mono text-base font-bold tracking-wider text-gray-500 uppercase">Booking</p>
+              <p className="font-mono text-base font-bold text-gray-900 mt-1">{pendingConflicts.clientName} — {pendingConflicts.timeLabel}</p>
+              <ul className="mt-2 space-y-1">
+                {pendingConflicts.rows.map((r, i) => (
+                  <li key={i} className="font-mono text-base text-gray-800 flex items-baseline gap-2">
+                    <span className="text-gray-400">•</span>
+                    <span className="font-semibold">{r.manName}</span>
+                    <span className="text-gray-500">— {r.serviceName}</span>
                   </li>
                 ))}
               </ul>
             </div>
+
+            {/* Conflicts — existing appointments this booking overlaps. */}
+            <div className="px-5 py-3 max-h-60 overflow-y-auto">
+              <p className="font-mono text-base font-bold tracking-wider text-gray-500 uppercase">Conflicts</p>
+              <ul className="mt-2 space-y-1.5">
+                {pendingConflicts.conflicts.map((c, i) => (
+                  <li key={i} className="font-mono text-base text-gray-800 flex items-start gap-2">
+                    <span className="text-amber-500 mt-0.5">⚠</span>
+                    <span>
+                      <span className="font-semibold">{c.manName}</span> at {c.timeLabel} — already has {c.otherClient} ({c.serviceName})
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
             <div className="px-5 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-2">
               <button type="button"
                 onClick={() => setPendingConflicts(null)}
@@ -844,10 +888,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               </button>
               <button type="button"
                 onClick={() => {
-                  // Sentinel: empty array marks "already confirmed" so the
-                  // next handleSubmit skips the conflict check.
-                  setPendingConflicts([]);
-                  // Re-trigger save synthetically.
+                  // Sentinel: empty conflicts marks "already confirmed" so
+                  // the next handleSubmit skips the conflict check.
+                  setPendingConflicts({ ...pendingConflicts, conflicts: [] });
                   const form = document.querySelector<HTMLFormElement>('form[data-appointment-form]');
                   form?.requestSubmit();
                 }}
