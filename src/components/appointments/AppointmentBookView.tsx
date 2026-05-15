@@ -223,6 +223,68 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       !queuedApptIds.has(a.id)
   );
 
+  // Per-column busy intervals for the visible day, used by Same-Time fan-out
+  // to skip columns that already have an appointment running at the target
+  // time. Without this, a candidate column whose previous appointment runs
+  // late into the target slot (e.g. Kimberly's 8:45 Gel Fill bleeding into
+  // 9:00) would be picked, stacking the new block on top of the existing one.
+  // We rebuild this per render — cost is low (dayAppts is one day's worth)
+  // and recomputing keeps it consistent with any UI edits.
+  const occupancyByColumn = useMemo(() => {
+    const map = new Map<string, Array<{ apptId: string; startMin: number; endMin: number }>>();
+    function pushBusy(manId: string, apptId: string, startMin: number, endMin: number) {
+      const arr = map.get(manId) ?? [];
+      arr.push({ apptId, startMin, endMin });
+      map.set(manId, arr);
+    }
+    function durFor(svcName: string, manId: string | null, apptAdj?: number): number {
+      const base = state.salonServices.find((s) => s.name === svcName)?.duration ?? 60;
+      const staffAdj = manId
+        ? ((state.manicurists.find((mm) => mm.id === manId)?.timeAdjustments?.[svcName]) || 0)
+        : 0;
+      return Math.max(base + staffAdj + (apptAdj || 0), 5);
+    }
+    for (const a of dayAppts) {
+      const svcs = (a.services?.length ? a.services : [a.service as string]).filter(Boolean);
+      const allReqs = a.serviceRequests || [];
+      const [sh, sm] = a.time.split(':').map(Number);
+      const apptStartMin = sh * 60 + sm;
+      let elapsed = 0;
+      const occCount: Record<string, number> = {};
+      for (let i = 0; i < svcs.length; i++) {
+        const svcName = svcs[i];
+        const occ = occCount[svcName] ?? 0;
+        occCount[svcName] = occ + 1;
+        const reqsForSvc = allReqs.filter((r) => r.service === svcName);
+        const req = reqsForSvc[occ] ?? null;
+        const manId = (req && req.manicuristIds.length > 0)
+          ? req.manicuristIds[0]
+          : (a.manicuristId ?? null);
+        const dur = durFor(svcName, manId, req?.durationAdjustment);
+        let startMin: number;
+        if (req?.startTime) {
+          const [h, m] = req.startTime.split(':').map(Number);
+          startMin = h * 60 + m;
+        } else if (a.sameTime) {
+          startMin = apptStartMin;
+        } else {
+          startMin = apptStartMin + elapsed;
+        }
+        if (manId) pushBusy(manId, a.id, startMin, startMin + dur);
+        if (!a.sameTime) elapsed += dur;
+      }
+    }
+    return map;
+  }, [dayAppts, state.salonServices, state.manicurists]);
+
+  // True if column `manId` already has another appointment overlapping the
+  // half-open interval [startMin, endMin) — i.e. a real time conflict, not
+  // just a same-start-time check.
+  function columnBusyInRange(manId: string, startMin: number, endMin: number, excludeApptId: string): boolean {
+    const arr = occupancyByColumn.get(manId) ?? [];
+    return arr.some((iv) => iv.apptId !== excludeApptId && iv.startMin < endMin && iv.endMin > startMin);
+  }
+
   // ── Auto-fit columns + slots to viewport ────────────────────────────────
   useLayoutEffect(() => {
     if (!containerRef.current) return;
@@ -416,6 +478,13 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       let elapsedMins = 0;
       let isFirst = true;
 
+      // When "Same time" is checked on the appointment, multi-service bookings
+      // should fan out across DIFFERENT staff columns at the same start time
+      // instead of stacking under one manicurist 45 minutes apart. We track
+      // which columns are already taken by earlier services on this appt so
+      // each new no-request service picks the next available skilled column.
+      const usedColumnIds = new Set<string>();
+
       for (let i = 0; i < svcs.length; i++) {
         const svcName = svcs[i];
         const occ = occurrenceCount[svcName] ?? 0;
@@ -435,18 +504,58 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           // route the block to the first visible-in-book manicurist who can.
           // This prevents a "gel pedi" added to a fill-with-Sam booking from
           // silently disappearing because Sam doesn't do pedicures.
+          //
+          // Same-time fan-out: if appt.sameTime is on AND the appointment's
+          // primary column is already taken by an earlier service in this
+          // appt, route this service to the next available skilled column.
+          // That turns "Emma at 9am for 2 pedicures with Same time" into
+          // "Tommy 9am + next skilled tech 9am" instead of "Tommy 9am + Tommy
+          // 9:45am".
           const fallbackMId = appt.manicuristId ?? null;
           const colMani = fallbackMId ? state.manicurists.find((m) => m.id === fallbackMId) : null;
           const colManiHasSkill = !colMani || colMani.skills.length === 0 || colMani.skills.includes(svcName);
-          if (colManiHasSkill && fallbackMId) {
+          // Compute the target time window this service needs in a column.
+          // For Same Time bookings every service starts at appt.time; otherwise
+          // it stacks after previously-placed services in this appt.
+          const apptStartMin = startH * 60 + startM;
+          const tentativeStartMin = appt.sameTime ? apptStartMin : apptStartMin + elapsedMins;
+          // We don't know the staff yet, so use the booking's primary for the
+          // duration estimate — good enough for the conflict check.
+          const tentativeDur = svcDuration(svcName, fallbackMId, req?.durationAdjustment);
+          const tentativeEndMin = tentativeStartMin + tentativeDur;
+
+          const primaryAvailable = colManiHasSkill && fallbackMId
+            && !(appt.sameTime && usedColumnIds.has(fallbackMId))
+            && !(appt.sameTime && columnBusyInRange(fallbackMId, tentativeStartMin, tentativeEndMin, appt.id));
+          if (primaryAvailable) {
             assignedMId = fallbackMId;
           } else {
-            const skilledColMani = manicurists.find(
-              (m) => m.skills.length === 0 || m.skills.includes(svcName)
+            // Same Time fan-out: prefer a skilled column not used by this
+            // appt AND whose existing schedule doesn't overlap the target
+            // time window (full duration-aware check).
+            const freeAndSkilled = manicurists.find(
+              (m) =>
+                (m.skills.length === 0 || m.skills.includes(svcName)) &&
+                !usedColumnIds.has(m.id) &&
+                !columnBusyInRange(m.id, tentativeStartMin, tentativeEndMin, appt.id)
             );
-            assignedMId = skilledColMani?.id ?? null;
+            if (freeAndSkilled) {
+              assignedMId = freeAndSkilled.id;
+            } else {
+              // No free column for the requested service — best-effort
+              // fallback so the block is still visible. The receptionist
+              // sees a stacked block and can resolve manually.
+              const skilledColMani = manicurists.find(
+                (m) =>
+                  (m.skills.length === 0 || m.skills.includes(svcName)) &&
+                  !usedColumnIds.has(m.id)
+              );
+              assignedMId = skilledColMani?.id ?? fallbackMId ?? null;
+            }
           }
         }
+
+        if (assignedMId) usedColumnIds.add(assignedMId);
 
         // Pass the assigned manicurist plus any per-appointment adjustment
         // so the block height (and the running elapsedMins used for stacking
@@ -459,6 +568,13 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           if (req?.startTime) {
             blockTopPx = timeToTopPx(req.startTime, slotHeight);
             blockTime  = req.startTime;
+          } else if (appt.sameTime) {
+            // Same Time means every service starts at the appointment time —
+            // no per-service stacking. Without this override the stacker
+            // would still place service 1 at appt.time + service0.duration
+            // (e.g. 12:45) even though we routed it to a different column.
+            blockTopPx = timeToTopPx(appt.time, slotHeight);
+            blockTime  = appt.time;
           } else {
             const startMins = (startH - START_HOUR) * 60 + startM + elapsedMins;
             blockTopPx = startMins / SLOT_MINUTES * slotHeight;
