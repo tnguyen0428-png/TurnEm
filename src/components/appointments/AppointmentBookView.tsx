@@ -352,6 +352,28 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const [colDragId, setColDragId]         = useState<string | null>(null);
   const [colDropTargetId, setColDropTargetId] = useState<string | null>(null);
 
+  // ── Services popover: double-clicking a manicurist's column header opens
+  //    a small panel below the header listing the services that manicurist
+  //    can perform (from their `skills` array). Tap anywhere or pick another
+  //    header to dismiss. Stored as the manicurist id, or null when closed.
+  const [servicesPopoverFor, setServicesPopoverFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!servicesPopoverFor) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('[data-services-popover]')) return;
+      if (target && target.closest('[data-services-header]')) return;
+      setServicesPopoverFor(null);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setServicesPopoverFor(null); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onEsc);
+    };
+  }, [servicesPopoverFor]);
+
   // ── Left-click drag-to-pan state (hold left mouse button on empty calendar
   //    space and drag to swipe the view around) ─────────────────────────────
   // Pan is initiated only when the mousedown target is NOT inside an
@@ -1087,22 +1109,44 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               const isReorderTarget = m && colDropTargetId === m.id;
               const isReorderSource = m && colDragId === m.id;
               const accentColor = m ? m.color : '#d1d5db';
+              const isPopoverOpen = !!m && servicesPopoverFor === m.id;
+              const skills = m?.skills ?? [];
               return (
                 <div
                   key={mId ?? 'any'}
+                  data-services-header
                   draggable={!!m}
                   onDragStart={(e) => m && onColDragStart(e, m.id)}
                   onDragEnd={onColDragEnd}
                   onDragOver={(e) => m && onColDragOver(e, m.id)}
                   onDrop={(e) => m && onColDrop(e, m.id)}
-                  title={m ? 'Drag to reorder column' : undefined}
-                  className={`relative flex-shrink-0 flex items-center justify-center px-2 border-r border-gray-200 transition-colors ${
+                  onDoubleClick={() => {
+                    if (!m) return;
+                    setServicesPopoverFor((cur) => (cur === m.id ? null : m.id));
+                  }}
+                  title={m ? 'Drag to reorder · double-click for services' : undefined}
+                  className={`relative flex-shrink-0 flex items-center justify-center gap-1.5 px-2 border-r border-gray-200 transition-colors ${
                     m ? 'cursor-grab active:cursor-grabbing' : ''
                   } ${isReorderSource ? 'opacity-40' : ''} ${
                     isReorderTarget ? 'bg-pink-50 ring-2 ring-pink-300 ring-inset' : ''
                   }`}
                   style={{ width: colWidth }}>
-                  <span className="font-mono text-lg font-bold text-gray-700 truncate text-center">
+                  {/* Color triangle to the left of the name (CSS-only). Sized
+                      to match the font weight of the name beside it. */}
+                  {m && (
+                    <span
+                      aria-hidden
+                      style={{
+                        width: 0,
+                        height: 0,
+                        borderTop: '6px solid transparent',
+                        borderBottom: '6px solid transparent',
+                        borderLeft: `8px solid ${accentColor}`,
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
+                  <span className="font-mono text-lg font-bold text-gray-700 truncate text-center tracking-wider uppercase">
                     {m ? m.name : 'ANY'}
                   </span>
                   {/* Color bar under the name */}
@@ -1111,6 +1155,58 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     className="absolute left-2 right-2 bottom-1 rounded-full pointer-events-none"
                     style={{ height: 3, backgroundColor: accentColor }}
                   />
+
+                  {/* Services popover — pinned to the bottom of the header,
+                      hovering over the body. Skills come from manicurist.skills
+                      which holds the list of service names this staff member
+                      is qualified to perform. */}
+                  {isPopoverOpen && m && (
+                    <div
+                      data-services-popover
+                      className="absolute top-full left-1 right-1 z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-2 text-left"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-between mb-1.5 pb-1.5 border-b border-gray-100">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            aria-hidden
+                            style={{
+                              width: 0, height: 0,
+                              borderTop: '4px solid transparent',
+                              borderBottom: '4px solid transparent',
+                              borderLeft: `6px solid ${accentColor}`,
+                            }}
+                          />
+                          <span className="font-mono text-[10px] tracking-wider font-bold text-gray-700 uppercase">
+                            Services
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setServicesPopoverFor(null)}
+                          className="text-gray-400 hover:text-gray-700 font-mono text-xs leading-none px-1"
+                          aria-label="Close"
+                        >×</button>
+                      </div>
+                      {skills.length === 0 ? (
+                        <p className="font-mono text-[10px] text-gray-400 italic px-1 py-2">
+                          No services assigned.
+                        </p>
+                      ) : (
+                        <ul className="space-y-0.5 max-h-64 overflow-y-auto pr-1">
+                          {skills.map((s) => (
+                            <li
+                              key={s}
+                              className="font-mono text-[11px] text-gray-700 px-1.5 py-0.5 rounded hover:bg-gray-50"
+                            >
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
