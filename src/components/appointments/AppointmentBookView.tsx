@@ -485,6 +485,13 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       // each new no-request service picks the next available skilled column.
       const usedColumnIds = new Set<string>();
 
+      // Per-column elapsed minutes for Same Time bookings. Two services sent
+      // to the SAME column inside a Same Time appointment should still stack
+      // sequentially (4:00 + 4:30) instead of overlapping at 4:00. This map
+      // tracks how many minutes are already booked in each column by earlier
+      // services in this same appointment.
+      const columnElapsedMap = new Map<string, number>();
+
       for (let i = 0; i < svcs.length; i++) {
         const svcName = svcs[i];
         const occ = occurrenceCount[svcName] ?? 0;
@@ -569,12 +576,17 @@ export default function AppointmentBookView({ selectedDate }: Props) {
             blockTopPx = timeToTopPx(req.startTime, slotHeight);
             blockTime  = req.startTime;
           } else if (appt.sameTime) {
-            // Same Time means every service starts at the appointment time —
-            // no per-service stacking. Without this override the stacker
-            // would still place service 1 at appt.time + service0.duration
-            // (e.g. 12:45) even though we routed it to a different column.
-            blockTopPx = timeToTopPx(appt.time, slotHeight);
-            blockTime  = appt.time;
+            // Same Time: each column independently stacks its services from
+            // appt.time. So if both Gel Polish Hand and Polish Change Feet
+            // are requested for Panda, Hand starts at 4:00 and Feet starts
+            // at 4:30. Services routed to different columns all start at
+            // 4:00 — the "same time" promise holds across the appointment
+            // but doesn't force same-time overlap inside one column.
+            const colElapsed = assignedMId ? (columnElapsedMap.get(assignedMId) ?? 0) : 0;
+            const startMins = (startH - START_HOUR) * 60 + startM + colElapsed;
+            blockTopPx = startMins / SLOT_MINUTES * slotHeight;
+            const totalMins = startH * 60 + startM + colElapsed;
+            blockTime = `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`;
           } else {
             const startMins = (startH - START_HOUR) * 60 + startM + elapsedMins;
             blockTopPx = startMins / SLOT_MINUTES * slotHeight;
@@ -598,6 +610,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         // That keeps later services stacked after earlier ones regardless of
         // which manicurist each lands on.
         elapsedMins += dur;
+        if (appt.sameTime && assignedMId) {
+          const prev = columnElapsedMap.get(assignedMId) ?? 0;
+          columnElapsedMap.set(assignedMId, prev + dur);
+        }
       }
     }
     return blocks;
