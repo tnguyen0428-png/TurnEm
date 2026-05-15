@@ -374,7 +374,10 @@ export default function TicketModal({
       unitPriceCents: parseDollarsToCents(l.priceInput),
       quantity: l.quantity,
       discountCents: parseDollarsToCents(l.discountInput),
-      queueEntryId: l.queueEntryId ?? null,
+      // Heal legacy nulls: if this line has no queueEntryId of its own but
+      // the ticket itself does, write the ticket's qid back so the next save
+      // doesn't need the fallback.
+      queueEntryId: l.queueEntryId ?? (l.kind === 'service' ? (ticket.queueEntryId ?? null) : null),
     }));
   }
 
@@ -471,9 +474,14 @@ export default function TicketModal({
     for (const l of lines) {
       if (l.kind !== 'service' || !l.existingId) continue;
       const orig = originalStaffByItemId.get(l.existingId);
-      if (!orig || !orig.queueEntryId) continue;
+      if (!orig) continue;
+      // Resolve visitId from the line's queueEntryId; fall back to the
+      // ticket-level queueEntryId for legacy items where the item's link
+      // was null at creation time.
+      const sourceQid = orig.queueEntryId ?? ticket.queueEntryId ?? null;
+      if (!sourceQid) continue;
       const nameChanged = orig.name !== l.name || orig.serviceId !== l.serviceId;
-      const visitId = orig.queueEntryId.includes('#') ? orig.queueEntryId.split('#')[0] : orig.queueEntryId;
+      const visitId = sourceQid.includes('#') ? sourceQid.split('#')[0] : sourceQid;
       const entry = state.completed.find((e) => e.id === visitId);
       if (!entry) continue;
       const wasRequested = (entry.requestedServices ?? []).includes(orig.name as ServiceType);
@@ -483,7 +491,7 @@ export default function TicketModal({
 
       const pending = pendingFor(visitId, entry);
       pending.touched = true;
-      const idxMatch = orig.queueEntryId.match(/#svc(\d+)$/);
+      const idxMatch = sourceQid.match(/#svc(\d+)$/);
       const idx = idxMatch ? Number(idxMatch[1]) : pending.newServices.indexOf(orig.name as ServiceType);
       if (idx < 0 || idx >= pending.newServices.length) continue;
 
