@@ -356,7 +356,25 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   //    a small panel below the header listing the services that manicurist
   //    can perform (from their `skills` array). Tap anywhere or pick another
   //    header to dismiss. Stored as the manicurist id, or null when closed.
+  //
+  // We use manual two-mousedown detection (timestamp + last id) instead of
+  // the native `dblclick` event because the column header is also
+  // draggable=true for reorder. Browsers often swallow `dblclick` on
+  // draggable elements when the first mousedown initiates a drag-tracking
+  // state. mousedown fires reliably regardless, so we count two of them
+  // within ~350ms on the same header as a "double click".
   const [servicesPopoverFor, setServicesPopoverFor] = useState<string | null>(null);
+  const lastHeaderClickRef = useRef<{ id: string; at: number } | null>(null);
+  function handleHeaderTwoClick(id: string) {
+    const now = Date.now();
+    const last = lastHeaderClickRef.current;
+    if (last && last.id === id && now - last.at < 350) {
+      setServicesPopoverFor((cur) => (cur === id ? null : id));
+      lastHeaderClickRef.current = null;
+    } else {
+      lastHeaderClickRef.current = { id, at: now };
+    }
+  }
   useEffect(() => {
     if (!servicesPopoverFor) return;
     const onDown = (e: MouseEvent) => {
@@ -1120,9 +1138,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   onDragEnd={onColDragEnd}
                   onDragOver={(e) => m && onColDragOver(e, m.id)}
                   onDrop={(e) => m && onColDrop(e, m.id)}
-                  onDoubleClick={() => {
+                  onMouseDown={(e) => {
                     if (!m) return;
-                    setServicesPopoverFor((cur) => (cur === m.id ? null : m.id));
+                    // Only count primary-button mousedowns; right-clicks etc.
+                    // should not affect the two-click detection.
+                    if (e.button !== 0) return;
+                    handleHeaderTwoClick(m.id);
                   }}
                   title={m ? 'Drag to reorder · double-click for services' : undefined}
                   className={`relative flex-shrink-0 flex items-center justify-center gap-1.5 px-2 border-r border-gray-200 transition-colors ${
