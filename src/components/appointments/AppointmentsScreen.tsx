@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import {
-  Plus, CalendarCheck, Phone, Pencil, Trash2, UserCheck,
+  Plus, Calendar, CalendarCheck, Phone, Pencil, Trash2, UserCheck,
   XCircle, AlertTriangle, ChevronLeft, ChevronRight, LayoutGrid, List, Maximize2, Minimize2,
 } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
@@ -43,6 +43,21 @@ export default function AppointmentsScreen() {
 
   const [bookMode, setBookMode] = useState<'book' | 'list'>('book');
   const [selectedDate, setSelectedDate] = useState(today);
+  // Ref to the hidden date input — the visible Calendar icon button triggers
+  // showPicker() on this so receptionists can jump to dates further out
+  // without spamming the ChevronRight arrow.
+  const datePickerRef = useRef<HTMLInputElement>(null);
+  function openDatePicker() {
+    const el = datePickerRef.current;
+    if (!el) return;
+    // showPicker is the modern way; fall back to .click() / focus on older
+    // browsers that don't support it.
+    if (typeof el.showPicker === 'function') {
+      try { el.showPicker(); return; } catch { /* fall through */ }
+    }
+    el.focus();
+    el.click();
+  }
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [expanded, setExpanded] = useState(true);
@@ -145,6 +160,20 @@ export default function AppointmentsScreen() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
+      {/* Hidden native date input — kept here at the top of the JSX so it
+          stays mounted regardless of which toolbar (compact vs full) is
+          visible. The Calendar icon buttons in either toolbar trigger
+          showPicker() on this single input via openDatePicker(). */}
+      <input
+        ref={datePickerRef}
+        type="date"
+        value={selectedDate}
+        onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+        aria-label="Pick appointment date"
+        className="sr-only"
+        tabIndex={-1}
+      />
+
       {/* ── Compact top bar (expanded book mode) ─────────────────────────────── */}
       {expanded && bookMode === 'book' && (
         <div className="flex-shrink-0 border-b border-gray-100 bg-white px-4 py-2 flex items-center gap-3">
@@ -152,6 +181,7 @@ export default function AppointmentsScreen() {
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-1.5 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={14} /></button>
             <button onClick={() => setSelectedDate(today)} className={`px-2.5 py-1 rounded-lg font-mono text-[10px] font-semibold transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-1.5 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronRight size={14} /></button>
+            <button onClick={openDatePicker} title="Pick a date" className="p-1.5 rounded-lg hover:bg-white text-pink-500 transition-all"><Calendar size={14} /></button>
           </div>
           <span className="font-bebas text-base tracking-[2px] text-gray-700 flex-1 truncate">{formatDateFull(selectedDate)}</span>
           {dayTotal > 0 && <span className="font-mono text-[10px] text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
@@ -170,12 +200,12 @@ export default function AppointmentsScreen() {
               <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronLeft size={16} /></button>
               <button onClick={() => setSelectedDate(today)} className={`px-3 py-1 rounded-lg font-mono text-xs font-semibold transition-all ${isToday ? 'bg-pink-500 text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:shadow-sm'}`}>TODAY</button>
               <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronRight size={16} /></button>
+              <button onClick={openDatePicker} title="Pick a date" className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm text-pink-500 transition-all"><Calendar size={16} /></button>
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="font-bebas text-xl tracking-[2px] text-gray-900 truncate">{formatDateFull(selectedDate)}</h2>
               {dayTotal > 0 && <p className="font-mono text-[10px] text-gray-400">{dayScheduled} scheduled &middot; {dayTotal} total</p>}
             </div>
-            <input type="date" value={selectedDate} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} className="px-2 py-1.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-500 focus:outline-none focus:ring-2 focus:ring-pink-200 bg-white hidden sm:block" />
             <div className="flex items-center bg-gray-100 rounded-xl p-1 gap-0.5">
               <button onClick={() => setBookMode('book')} title="Book view" className={`p-1.5 rounded-lg transition-all ${bookMode === 'book' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><LayoutGrid size={15} /></button>
               <button onClick={() => setBookMode('list')} title="List view" className={`p-1.5 rounded-lg transition-all ${bookMode === 'list' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><List size={15} /></button>
