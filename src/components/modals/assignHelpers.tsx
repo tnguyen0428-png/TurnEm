@@ -84,33 +84,40 @@ export function getDistinctServices(
 
     // Upstream paths (addApptToQueue, handleCheckIn) clear manicuristIds on
     // non-request entries, so any populated manicuristIds here is a real
-    // customer request. Don't gate on clientRequest === true — that flag may
-    // be missing on legacy data, but if manicuristIds survived the upstream
-    // strip we know it's a request.
-    const req = (client.serviceRequests || []).find(
-      (r) => r.service === s && Array.isArray(r.manicuristIds) && r.manicuristIds.length > 0
-    );
-
-    if (req && req.manicuristIds && req.manicuristIds.length > 0) {
-      // Counter must be scoped to the service name. Using
-      // req.manicuristIds.join(',') as the key was wrong: two different
-      // services (e.g. Gel Fill and Gel Pedicure) that both happen to
-      // request the same single manicurist would share the same key, so the
-      // second service would find the counter already at 1 and fall through
-      // to requestedId: null. Each service has its own ServiceRequest entry,
-      // so the counter belongs per-service.
-      const usageKey = s;
-      const usageCount = requestedManicuristUsage.get(usageKey) ?? 0;
-
-      if (usageCount < req.manicuristIds.length) {
-        const requestedId = req.manicuristIds[usageCount];
-        result.push({ service: s, index: idx, requestedId });
-        requestedManicuristUsage.set(usageKey, usageCount + 1);
-      } else {
-        result.push({ service: s, index: idx, requestedId: null });
+    // customer request.
+    //
+    // Two shapes of serviceRequests are supported and must both surface every
+    // requested manicurist instead of only the first:
+    //   A. Multiple ServiceRequest entries for the same service name, each
+    //      carrying a single manicuristId. E.g. two Gel Pedicures both
+    //      requesting Kayla → [{service:'Gel Pedi', manicuristIds:['kayla']},
+    //                          {service:'Gel Pedi', manicuristIds:['kayla']}].
+    //   B. A single ServiceRequest entry whose manicuristIds array has length
+    //      N for N occurrences. Legacy shape.
+    // Flatten both into a single ordered list of manicuristIds, then walk it
+    // by the per-service occurrence counter. The previous code used
+    // Array.find() which only returned the first matching entry — for shape
+    // A with N>1 occurrences, occurrences past the first dropped their
+    // requestedId.
+    const flatRequested: string[] = [];
+    for (const r of (client.serviceRequests || [])) {
+      if (r.service !== s) continue;
+      if (!Array.isArray(r.manicuristIds)) continue;
+      for (const id of r.manicuristIds) {
+        if (id) flatRequested.push(id);
       }
+    }
+
+    const usageKey = s;
+    const usageCount = requestedManicuristUsage.get(usageKey) ?? 0;
+
+    if (usageCount < flatRequested.length) {
+      const requestedId = flatRequested[usageCount];
+      result.push({ service: s, index: idx, requestedId });
+      requestedManicuristUsage.set(usageKey, usageCount + 1);
     } else {
       result.push({ service: s, index: idx, requestedId: null });
+      requestedManicuristUsage.set(usageKey, usageCount + 1);
     }
   }
   return result;
