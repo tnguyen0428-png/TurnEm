@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Receipt, ChevronLeft, ChevronRight, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
+import { supabase } from '../../lib/supabase';
 import {
   fetchTicketsForDate,
   formatMoneyCents,
@@ -48,6 +49,60 @@ export default function RegisterScreen() {
   }, [dateLA]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Realtime: any insert / update / delete on tickets, ticket_items, or
+  // payments for any ticket on this business date should trigger a refetch
+  // so the cashier always sees the latest state. Without this, edits made
+  // upstream — queue→ticket reconciliation when a service is added in the
+  // queue, another tab reassigning staff, etc. — leave the Register list
+  // and the currently-open ticket modal stale until the cashier closes/
+  // reopens or hits the manual refresh button.
+  //
+  // Defensive: a 30s interval refetch + visibilitychange + focus listener
+  // handle the case where the WebSocket dropped (mobile background, sleep,
+  // flaky wifi). These mirror what the staff portal already does.
+  useEffect(() => {
+    let cancelled = false;
+    let healthy = false;
+    const channel = supabase
+      .channel('register-tickets-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' },      () => { if (!cancelled) void refresh(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket_items' }, () => { if (!cancelled) void refresh(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' },     () => { if (!cancelled) void refresh(); })
+      .subscribe((status) => {
+        healthy = status === 'SUBSCRIBED';
+        if (healthy && !cancelled) void refresh();
+      });
+
+    function onVisible() {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (cancelled) return;
+      void refresh();
+      if (!healthy) {
+        try {
+          channel.subscribe((status) => {
+            healthy = status === 'SUBSCRIBED';
+            if (healthy && !cancelled) void refresh();
+          });
+        } catch (e) {
+          console.warn('[register] resubscribe failed:', e);
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    const intervalId = window.setInterval(() => {
+      if (!cancelled) void refresh();
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      window.clearInterval(intervalId);
+      supabase.removeChannel(channel);
+    };
+  }, [refresh]);
 
   useEffect(() => {
     const completedForDate = state.completed.filter(
@@ -95,6 +150,21 @@ export default function RegisterScreen() {
   );
 
   const [openTicket, setOpenTicket] = useState<Ticket | null>(null);
+
+  // Keep the currently-open ticket modal in sync with the freshly-fetched
+  // tickets list. If the cashier has the modal open and another part of
+  // the app updates this ticket (e.g. queue→ticket reconciliation adds a
+  // new line, another tab edits payments), find the matching row in the
+  // refreshed `tickets` list and rebind it so the modal re-renders with
+  // the new line items + totals.
+  useEffect(() => {
+    if (!openTicket) return;
+    const fresh = tickets.find((t) => t.id === openTicket.id);
+    if (!fresh) return;
+    if (fresh.updatedAt !== openTicket.updatedAt) {
+      setOpenTicket(fresh);
+    }
+  }, [tickets, openTicket]);
   const [showOpenShift, setShowOpenShift] = useState(false);
   const [showCloseShift, setShowCloseShift] = useState(false);
   const [viewShift, setViewShift] = useState<Shift | null>(null);

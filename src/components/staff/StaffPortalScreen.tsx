@@ -180,10 +180,11 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     // Initial fetch on mount so the portal has data before the first event.
     void refresh();
 
-    // Realtime: any insert/update/delete on the watched tables triggers a
-    // single refresh. Now covers salon_services (catalog/price edits) and
-    // appointments (schedule changes) so the staff tablet doesn't need a
-    // page reload to see updated prices or new bookings.
+    // We track the channel's subscription state so the fallback refresh
+    // logic below can tell whether realtime is healthy. Mobile browsers
+    // suspend WebSockets aggressively when the tab backgrounds; if the
+    // channel drops we kick off a reconnect via re-subscribe.
+    let channelHealthy = false;
     const channel = supabase
       .channel('staff-portal-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'manicurists' },        () => { void refresh(); })
@@ -191,13 +192,43 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       .on('postgres_changes', { event: '*', schema: 'public', table: 'completed_services' }, () => { void refresh(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'salon_services' },     () => { void refresh(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' },       () => { void refresh(); })
-      .subscribe();
+      .subscribe((status) => {
+        channelHealthy = status === 'SUBSCRIBED';
+        if (channelHealthy) void refresh();
+      });
+
+    // Mobile recovery: visibility/focus refetch + 30s defensive interval.
+    function reconnectChannel() {
+      try {
+        channel.subscribe((status) => {
+          channelHealthy = status === 'SUBSCRIBED';
+          if (channelHealthy) void refresh();
+        });
+      } catch (e) {
+        console.warn('[staff portal] resubscribe failed:', e);
+      }
+    }
+    function onVisible() {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void refresh();
+      if (!channelHealthy) reconnectChannel();
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    const intervalId = window.setInterval(() => {
+      void refresh();
+      if (!channelHealthy) reconnectChannel();
+    }, 30000);
 
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      window.clearInterval(intervalId);
       supabase.removeChannel(channel);
     };
   }, [dispatch]);
+
 
   // Live amount lookup keyed by `${visit_id}|${staff_id}` → total cents on the
   // matching ticket. Declared up here (not inline with the useEffect that
@@ -309,6 +340,43 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       .filter((e) => e.manicuristId === manicurist.id && getLocalDateStr(new Date(e.completedAt)) === todayStr)
       .sort((a, b) => b.completedAt - a.completedAt);
   }, [state.completed, manicurist.id, todayStr]);
+  // The queue entry this manicurist is currently working on (if any).
+  // Renders as a prominent emerald banner above the Services list. The
+  // moment COMPLETE_SERVICE fires, the entry moves to state.completed and
+  // the banner disappears (the completed row appears in the list below).
+  //
+  // Resilient lookup: prefer manicurist.currentClient (canonical pointer
+  // on the manicurists row), fall back to state.queue scanning by
+  // assignedManicuristId. The fallback covers the case where the
+  // manicurists row's realtime echo hasn't arrived yet but the queue row
+  // has already flipped to inProgress.
+  const inProgressEntry = useMemo(() => {
+    if (manicurist.currentClient) {
+      const byId = state.queue.find(
+        (c) => c.id === manicurist.currentClient && c.status === 'inProgress',
+      );
+      if (byId) return byId;
+    }
+    const byStaff = state.queue.find(
+      (c) => c.assignedManicuristId === manicurist.id && c.status === 'inProgress',
+    );
+    return byStaff ?? null;
+  }, [state.queue, manicurist.currentClient, manicurist.id]);
+
+  // Diagnostic — surfaces in Safari Web Inspector / Chrome remote debug.
+  useEffect(() => {
+    console.info('[staff portal] in-progress snapshot', {
+      manicuristId: manicurist.id,
+      manicuristName: manicurist.name,
+      manicuristStatus: manicurist.status,
+      currentClient: manicurist.currentClient,
+      queueLen: state.queue.length,
+      inProgressMatched: inProgressEntry?.id ?? null,
+      inProgressClient: inProgressEntry?.clientName ?? null,
+      inProgressServices: inProgressEntry?.services ?? null,
+    });
+  }, [manicurist.id, manicurist.name, manicurist.status, manicurist.currentClient, state.queue.length, inProgressEntry]);
+
 
   // Catalog-price fallback for the staff's services when a ticket hasn't
   // been written yet. salonServices.price is in dollars (not cents).
@@ -737,6 +805,53 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             >
               I'M BACK
             </button>
+          </div>
+        )}
+
+        {/* In-progress banner — prominent green panel shown above the
+            Services list whenever this manicurist has an active client.
+            Mirrors the manicurist "ON" pill style at the top of the
+            screen so it's instantly recognizable. */}
+        {inProgressEntry && (
+          <div className="bg-emerald-50 border-2 border-emerald-500 rounded-2xl shadow-sm p-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500 text-white font-mono text-[10px] font-bold tracking-wider uppercase leading-none">
+                In Service
+              </span>
+              <span className="font-mono text-base font-bold text-emerald-900 truncate max-w-[180px]">
+                {firstName(inProgressEntry.clientName)}
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {inProgressEntry.services.map((s, i) => {
+                const reqList = (inProgressEntry.serviceRequests ?? [])
+                  .find((r) => r.service === s && r.clientRequest === true);
+                const isRequested = !!reqList && (reqList.manicuristIds?.length ?? 0) > 0;
+                return (
+                  <span key={`${s}-${i}`} className="inline-flex items-center gap-1">
+                    <span className="inline-block px-2.5 py-1 rounded-md bg-white border border-emerald-300 font-mono text-xs text-emerald-700 font-semibold">
+                      {s}
+                    </span>
+                    {isRequested && (
+                      <span className="font-mono text-[9px] font-bold bg-purple-500 text-white rounded px-1 py-0.5 leading-none">
+                        R
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex items-center gap-3">
+              <span className="font-mono text-[11px] text-emerald-700 font-semibold">
+                {(inProgressEntry.turnValue || 0).toFixed(1)} turns
+              </span>
+              {inProgressEntry.startedAt && (
+                <span className="flex items-center gap-1 font-mono text-[11px] text-emerald-700 font-semibold">
+                  <Clock size={11} />
+                  started {formatTime(inProgressEntry.startedAt)}
+                </span>
+              )}
+            </div>
           </div>
         )}
 

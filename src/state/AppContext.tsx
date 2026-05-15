@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketStaff, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines } from '../lib/tickets';
+import { appendItemsToTicket, backfillTicketStaff, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, syncEntryToTicket } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -1392,6 +1392,48 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
       });
     } catch (err) {
       console.error('[syncQueue] auto-create ticket failed for', entry.id, err);
+    }
+  }
+
+  // ── queue-edit → ticket reconciliation ─────────────────────────────────
+  //
+  // For every entry that's currently assigned to a manicurist AND was
+  // assigned in the previous tick (so a ticket exists or was about to),
+  // call syncEntryToTicket. The helper compares the queue's truth to the
+  // ticket's truth itself and only writes when they actually diverge, so
+  // it's idempotent — calling it broadly costs one Supabase round-trip
+  // per assigned entry but never produces a spurious change.
+  //
+  // We deliberately AVOID gating on a JS-side diff (servicesChanged etc)
+  // because the prev reference comparison can mis-detect changes when
+  // React batches multiple dispatches into one render, leaving the
+  // ticket out of sync with the queue. The helper's own DB-side diff is
+  // the source of truth.
+  //
+  // The justAssigned path above already covers the null→assigned
+  // transition. The orphan cleanup below covers removed-without-
+  // completion. This sits in the middle: same-id-and-still-assigned
+  // entries whose content might have changed mid-visit.
+  //
+  // Conservative on the ticket side: only ticket_items rows tagged with
+  // this entry's queue_entry_id (or `entry.id#svc<n>` siblings) are
+  // touched. Manually-added cashier lines, retail, and gift card sales
+  // are left alone.
+  for (const entry of queue) {
+    if (!entry.assignedManicuristId) continue;            // not assigned → no ticket yet
+    const previous = prevById.get(entry.id);
+    if (!previous) continue;                              // new entry → justAssigned handled it
+    if (!previous.assignedManicuristId) continue;         // null→assigned → justAssigned handled it
+    try {
+      const did = await syncEntryToTicket(entry, manicurists, salonServices);
+      if (did) {
+        console.info('[syncQueue] reconciled ticket for', entry.id, {
+          services: entry.services,
+          staffId: entry.assignedManicuristId,
+        });
+      }
+    } catch (err) {
+      console.error('[syncQueue] syncEntryToTicket failed for', entry.id, err);
     }
   }
 

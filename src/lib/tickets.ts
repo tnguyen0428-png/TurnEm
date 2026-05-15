@@ -1060,6 +1060,260 @@ export async function appendItemsToTicket(
 }
 
 /**
+ * Reconcile a single queue entry's ticket lines to match the entry's CURRENT
+ * services + assigned manicurist. Used by syncQueue so that edits made to a
+ * client in the queue (added/removed/renamed services, reassigned staff,
+ * request changes) flow into the matching open ticket in the register
+ * without the cashier having to manually re-add the service at checkout.
+ *
+ * Scope: ONLY touches ticket_items rows whose `queue_entry_id` is `entry.id`
+ * or `entry.id#svc<idx>`. Manually-added cashier lines, retail, gift card
+ * sales — anything not tagged with this entry's queue_entry_id — is left
+ * alone.
+ *
+ * Cashier-friendly: existing items are updated in place when the same slot
+ * still maps to a desired service, so the cashier's `unit_price_cents` and
+ * `discount_cents` overrides survive a queue edit. Only new services get the
+ * catalog price applied; renamed lines keep whatever override was on them.
+ *
+ * Returns true if anything on the ticket changed (used by callers for logs).
+ * Silently no-ops if the entry has no assigned manicurist (no ticket yet)
+ * or if the ticket is closed/voided (don't touch settled work).
+ */
+export async function syncEntryToTicket(
+  entry: {
+    id: string;
+    parentQueueId?: string | null;
+    services: string[];
+    serviceRequests?: Array<{ service: string; manicuristIds: string[] }>;
+    assignedManicuristId: string | null;
+  },
+  manicurists: Array<{ id: string; name: string; color: string }>,
+  salonServices: Array<{ id: string; name: string; price: number }>,
+): Promise<boolean> {
+  if (!entry.assignedManicuristId) return false;
+
+  const visitId = entry.parentQueueId ?? entry.id;
+
+  const { data: tRow, error: tErr } = await supabase
+    .from('tickets')
+    .select('id, status, primary_manicurist_id, discount_cents, tax_cents, tip_cents')
+    .eq('queue_entry_id', visitId)
+    .eq('status', 'open')
+    .maybeSingle();
+  if (tErr) {
+    console.warn('[tickets] syncEntryToTicket find ticket:', tErr.message);
+    return false;
+  }
+  if (!tRow) return false;
+  const ticket = tRow as {
+    id: string;
+    status: string;
+    primary_manicurist_id: string | null;
+    discount_cents: number;
+    tax_cents: number;
+    tip_cents: number;
+  };
+
+  // All existing ticket_items rows for THIS entry. Matched by prefix so
+  // both `entry.id` (single-service entries) and `entry.id#svc<idx>`
+  // (multi-service or split-multi) come back together.
+  type ItemRow = {
+    id: string;
+    queue_entry_id: string | null;
+    name: string;
+    service_id: string | null;
+    staff1_id: string | null;
+    staff2_id: string | null;
+    unit_price_cents: number;
+    ext_price_cents: number;
+    quantity: number;
+    discount_cents: number;
+    sort_order: number;
+  };
+  const { data: itemRows, error: iErr } = await supabase
+    .from('ticket_items')
+    .select('id, queue_entry_id, name, service_id, staff1_id, staff2_id, unit_price_cents, ext_price_cents, quantity, discount_cents, sort_order')
+    .eq('ticket_id', ticket.id)
+    .like('queue_entry_id', `${entry.id}%`);
+  if (iErr) {
+    console.warn('[tickets] syncEntryToTicket items fetch:', iErr.message);
+    return false;
+  }
+  const existing = (itemRows ?? []) as ItemRow[];
+
+  // Resolve the entry's assigned manicurist (used as the per-line staff
+  // when no per-service request override exists).
+  const assignedM = manicurists.find((m) => m.id === entry.assignedManicuristId) ?? null;
+
+  type Desired = {
+    name: string;
+    serviceId: string | null;
+    staff1Id: string | null;
+    staff1Name: string;
+    staff1Color: string;
+    queueEntryId: string;
+    catalogUnitPriceCents: number;
+  };
+  const desired: Desired[] = entry.services.map((svcName, idx) => {
+    const svc = salonServices.find((s) => s.name === svcName);
+    const sr = (entry.serviceRequests ?? []).find((r) => r.service === svcName);
+    const lineMid = sr?.manicuristIds?.[0] ?? assignedM?.id ?? null;
+    const lineM = lineMid ? manicurists.find((mm) => mm.id === lineMid) ?? null : assignedM;
+    return {
+      name: svcName,
+      serviceId: svc?.id ?? null,
+      staff1Id: lineM?.id ?? null,
+      staff1Name: lineM?.name ?? '',
+      staff1Color: lineM?.color ?? '#9ca3af',
+      queueEntryId: entry.services.length > 1 ? `${entry.id}#svc${idx}` : entry.id,
+      catalogUnitPriceCents: Math.round((svc?.price ?? 0) * 100),
+    };
+  });
+
+  // Greedy match — try queue_entry_id slot first (exact), then service
+  // name, then any unused existing row (covers wholesale rename / staff
+  // swap cases). usedExisting prevents the same row matching twice.
+  const usedExisting = new Set<string>();
+  const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  const inserts: Array<Record<string, unknown>> = [];
+  let nextSortOrder = existing.reduce((mx, r) => Math.max(mx, r.sort_order ?? 0), 0) + 1;
+
+  for (const d of desired) {
+    let match: ItemRow | undefined =
+      existing.find((e) => !usedExisting.has(e.id) && e.queue_entry_id === d.queueEntryId);
+    if (!match) match = existing.find((e) => !usedExisting.has(e.id) && e.name === d.name);
+    if (!match) match = existing.find((e) => !usedExisting.has(e.id));
+
+    if (match) {
+      usedExisting.add(match.id);
+      const patch: Record<string, unknown> = {};
+      if (match.name !== d.name) {
+        patch.name = d.name;
+        patch.service_id = d.serviceId;
+        // Preserve the cashier's `unit_price_cents` override. If they
+        // discounted the line at checkout we don't want a queue rename
+        // resetting them to catalog price.
+      }
+      if (match.staff1_id !== d.staff1Id) {
+        patch.staff1_id = d.staff1Id;
+        patch.staff1_name = d.staff1Name;
+        patch.staff1_color = d.staff1Color;
+      }
+      if (match.queue_entry_id !== d.queueEntryId) {
+        patch.queue_entry_id = d.queueEntryId;
+      }
+      if (Object.keys(patch).length > 0) {
+        updates.push({ id: match.id, patch });
+      }
+    } else {
+      // New service line — use catalog price; cashier can adjust later.
+      inserts.push({
+        ticket_id: ticket.id,
+        kind: 'service',
+        name: d.name,
+        service_id: d.serviceId,
+        staff1_id: d.staff1Id,
+        staff1_name: d.staff1Name,
+        staff1_color: d.staff1Color,
+        staff2_id: null,
+        staff2_name: '',
+        staff2_color: '#9ca3af',
+        unit_price_cents: d.catalogUnitPriceCents,
+        quantity: 1,
+        discount_cents: 0,
+        ext_price_cents: Math.max(0, d.catalogUnitPriceCents),
+        sort_order: nextSortOrder++,
+        queue_entry_id: d.queueEntryId,
+      });
+    }
+  }
+
+  // Anything in `existing` that didn't get matched is a removed service.
+  const deletes = existing.filter((e) => !usedExisting.has(e.id)).map((e) => e.id);
+
+  let changed = false;
+  for (const u of updates) {
+    const { error } = await supabase.from('ticket_items').update(u.patch).eq('id', u.id);
+    if (error) {
+      console.error('[tickets] syncEntryToTicket update:', error.message);
+      return false;
+    }
+    changed = true;
+  }
+  if (inserts.length > 0) {
+    const { error } = await supabase
+      .from('ticket_items')
+      .upsert(inserts, { onConflict: 'ticket_id,queue_entry_id', ignoreDuplicates: true });
+    if (error) {
+      console.error('[tickets] syncEntryToTicket insert:', error.message);
+      return false;
+    }
+    changed = true;
+  }
+  if (deletes.length > 0) {
+    const { error } = await supabase.from('ticket_items').delete().in('id', deletes);
+    if (error) {
+      console.error('[tickets] syncEntryToTicket delete:', error.message);
+      return false;
+    }
+    changed = true;
+  }
+
+  // Backfill the ticket's primary manicurist if this entry IS the primary
+  // visit AND the ticket either has no primary yet, or the previous primary
+  // matched the staff this entry was reassigned away from. Conservative —
+  // we never overwrite a cashier-picked primary that doesn't match either.
+  if (assignedM) {
+    const isPrimaryVisit = (entry.parentQueueId ?? entry.id) === visitId;
+    if (isPrimaryVisit) {
+      const cur = ticket.primary_manicurist_id;
+      const oldStaffIds = new Set(existing.map((e) => e.staff1_id).filter((x): x is string => !!x));
+      if (!cur || (cur !== assignedM.id && oldStaffIds.has(cur))) {
+        const { error } = await supabase
+          .from('tickets')
+          .update({
+            primary_manicurist_id: assignedM.id,
+            primary_manicurist_name: assignedM.name,
+            primary_manicurist_color: assignedM.color,
+          })
+          .eq('id', ticket.id)
+          .eq('status', 'open');
+        if (error) {
+          console.warn('[tickets] syncEntryToTicket primary update:', error.message);
+        } else {
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if (!changed) return false;
+
+  // Recompute subtotal + total from current items.
+  const { data: freshItems } = await supabase
+    .from('ticket_items')
+    .select('unit_price_cents, quantity, discount_cents')
+    .eq('ticket_id', ticket.id);
+  const subtotal = ((freshItems ?? []) as Array<{ unit_price_cents: number; quantity: number; discount_cents: number }>)
+    .reduce((s, it) => s + Math.max(0, it.unit_price_cents * it.quantity - it.discount_cents), 0);
+  const total = Math.max(
+    0,
+    subtotal - (ticket.discount_cents ?? 0) + (ticket.tax_cents ?? 0) + (ticket.tip_cents ?? 0),
+  );
+  const { error: uErr } = await supabase
+    .from('tickets')
+    .update({ subtotal_cents: subtotal, total_cents: total, updated_at: new Date().toISOString() })
+    .eq('id', ticket.id)
+    .eq('status', 'open');
+  if (uErr) {
+    console.warn('[tickets] syncEntryToTicket totals update:', uErr.message);
+  }
+
+  return true;
+}
+
+/**
  * Allocate the next ticket number for the given business date. Race-prone at
  * scale, but the salon's daily volume is far below the threshold where that
  * matters. If a collision happens, the unique constraint will surface it and

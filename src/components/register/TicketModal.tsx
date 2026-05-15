@@ -226,6 +226,10 @@ export default function TicketModal({
   const totalCents = Math.max(0, subtotalCents - ticketDiscountCents + taxCents + tipCents);
   const pendingPaidCents = pending.reduce((s, p) => s + parseDollarsToCents(p.amountInput), 0);
   const dueCents = totalCents - (isOpen ? pendingPaidCents : ticket.paidCents);
+  // PROCESS is only allowed once the cashier has captured payment that
+  // matches the total exactly. Without this gate, hitting PROCESS on a
+  // partially-paid ticket leaves the cashier with a closed ticket whose
+  // payments don't reconcile against the day's drawer.
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
   const sortedServices = useMemo(
@@ -382,6 +386,12 @@ export default function TicketModal({
     }));
   }
 
+  const canProcess =
+    isOpen &&
+    lines.length > 0 &&
+    pending.length > 0 &&
+    Math.abs(pendingPaidCents - totalCents) === 0;
+
   // True if any discount (line-level OR ticket-level) is currently applied.
   const hasAnyDiscount =
     ticketDiscountCents > 0 ||
@@ -446,101 +456,140 @@ export default function TicketModal({
       void reallocateTurnsForStaffChanges(changes);
     }
 
-    // Service-edit sync: any line whose service name OR request flag changed
-    // and that's tied to a queue entry needs to propagate to the matching
-    // completed_services row so History and the staff-mobile services list
-    // reflect the new state. We group by visitId so all changed slots on the
-    // same completed_services entry are merged into one UPDATE_COMPLETED.
+    // Service-edit sync: reconcile each touched visit's completed_services row
+    // against the FINAL line state in the ticket. This is intentionally a
+    // reconciliation pass (rebuild from current lines) rather than a diff
+    // (compare to originalStaffByItemId) — the diff approach only catches
+    // renames of EXISTING lines and silently drops two common edit shapes:
+    //   1. Delete the old line + add a new one from the catalog dropdown
+    //      (the natural way receptionists "change a service" in the UI).
+    //   2. Add an extra line for an additional service performed during
+    //      checkout.
+    // Reconciling per-visit fixes all four shapes uniformly: rename,
+    // R-toggle, removal, addition.
+    //
+    // Visit attribution is resilient to lines that lack a queue_entry_id
+    // (legacy items, manually-added catalog lines): we collect candidate
+    // visits from BOTH the original ticket items AND the current lines, and
+    // when the ticket touches exactly one visit (the common single-visit
+    // case) every service line is attributed to that visit. For multi-visit
+    // tickets, lines with their own queue_entry_id map directly; orphaned
+    // new lines fall back to staff1Id matching across the candidate set.
     //
     // Turn-value math (mirrors MultiServiceAssign):
     //   - non-request service     => contributes its full catalog turnValue
     //   - client-requested service => contributes 1 if Combo, 0.5 otherwise
-    // The reducer's UPDATE_COMPLETED handler re-derives the manicurist's
-    // totalTurns based on the new turnValue, so the staff card updates in
-    // place.
-    type Pending = { newServices: ServiceType[]; newRequested: ServiceType[]; touched: boolean };
-    const pendingByVisit = new Map<string, Pending>();
-    function pendingFor(visitId: string, entry: { services: ServiceType[]; requestedServices?: ServiceType[] }): Pending {
-      const existing = pendingByVisit.get(visitId);
-      if (existing) return existing;
-      const fresh: Pending = {
-        newServices: entry.services.slice(),
-        newRequested: (entry.requestedServices ?? []).slice(),
-        touched: false,
-      };
-      pendingByVisit.set(visitId, fresh);
-      return fresh;
+    // We bypass dispatch UPDATE_COMPLETED + reducer + trackSave because the
+    // ticket_items write above sets isApplyingRemoteRef.current and the sync
+    // effect would skip the completed_services flush. Writing directly to
+    // Supabase ensures the change lands; realtime then echoes back into
+    // state.completed via REMOTE_COMPLETED_UPSERT for the UI.
+
+    function visitIdOf(qid: string | null | undefined): string | null {
+      if (!qid) return null;
+      return qid.includes('#') ? qid.split('#')[0] : qid;
     }
 
+    // Collect every visit ID this ticket might touch, from the original
+    // items + the current lines + the ticket header. Then resolve each to
+    // an actual state.completed entry. If a candidate id doesn't resolve
+    // directly (e.g. ticket.queueEntryId is the parent UUID of a SPLIT
+    // visit while completed_services has child rows), also accept any
+    // entry whose id starts with the candidate — that gathers the children.
+    const candidateIds = new Set<string>();
+    for (const orig of originalStaffByItemId.values()) {
+      const v = visitIdOf(orig.queueEntryId);
+      if (v) candidateIds.add(v);
+    }
     for (const l of lines) {
-      if (l.kind !== 'service' || !l.existingId) continue;
-      const orig = originalStaffByItemId.get(l.existingId);
-      if (!orig) continue;
-      // Resolve visitId from the line's queueEntryId; fall back to the
-      // ticket-level queueEntryId for legacy items where the item's link
-      // was null at creation time.
-      const sourceQid = orig.queueEntryId ?? ticket.queueEntryId ?? null;
-      if (!sourceQid) continue;
-      const nameChanged = orig.name !== l.name || orig.serviceId !== l.serviceId;
-      const visitId = sourceQid.includes('#') ? sourceQid.split('#')[0] : sourceQid;
-      const entry = state.completed.find((e) => e.id === visitId);
-      if (!entry) continue;
-      const wasRequested = (entry.requestedServices ?? []).includes(orig.name as ServiceType);
-      const isRequested = !!l.isRequested;
-      const requestChanged = wasRequested !== isRequested;
-      if (!nameChanged && !requestChanged) continue;
+      if (l.kind !== 'service') continue;
+      const v = visitIdOf(l.queueEntryId);
+      if (v) candidateIds.add(v);
+    }
+    const ticketVisit = visitIdOf(ticket.queueEntryId);
+    if (ticketVisit) candidateIds.add(ticketVisit);
 
-      const pending = pendingFor(visitId, entry);
-      pending.touched = true;
-      const idxMatch = sourceQid.match(/#svc(\d+)$/);
-      const idx = idxMatch ? Number(idxMatch[1]) : pending.newServices.indexOf(orig.name as ServiceType);
-      if (idx < 0 || idx >= pending.newServices.length) continue;
-
-      // Apply service-name replacement if needed.
-      if (nameChanged) {
-        pending.newServices[idx] = l.name as ServiceType;
-      }
-      // Apply request-flag change. Drop ANY occurrence of the prior service
-      // name from the request list, then add the (possibly renamed) service
-      // back in if the line is now requested.
-      pending.newRequested = pending.newRequested.filter((s) => s !== (orig.name as ServiceType));
-      if (isRequested) {
-        const newName = (nameChanged ? l.name : orig.name) as ServiceType;
-        if (!pending.newRequested.includes(newName)) pending.newRequested.push(newName);
+    type CandidateEntry = (typeof state.completed)[number];
+    const candidateEntries: CandidateEntry[] = [];
+    const seenEntryIds = new Set<string>();
+    for (const cid of candidateIds) {
+      for (const e of state.completed) {
+        if (seenEntryIds.has(e.id)) continue;
+        if (e.id === cid || e.id.startsWith(`${cid}-`)) {
+          candidateEntries.push(e);
+          seenEntryIds.add(e.id);
+        }
       }
     }
 
-    for (const [visitId, pending] of pendingByVisit) {
-      if (!pending.touched) continue;
-      const entry = state.completed.find((e) => e.id === visitId);
-      if (!entry) continue;
-      const newTurnValue = pending.newServices.reduce((sum, name) => {
+    type Bucket = { entry: CandidateEntry; services: ServiceType[]; requested: ServiceType[] };
+    const bucketByEntry = new Map<string, Bucket>();
+    for (const e of candidateEntries) {
+      bucketByEntry.set(e.id, { entry: e, services: [], requested: [] });
+    }
+
+    // Attribute each surviving service line to one bucket.
+    for (const l of lines) {
+      if (l.kind !== 'service') continue;
+      const name = l.name.trim();
+      if (!name) continue;
+
+      let target: Bucket | undefined;
+      const lineVisit = visitIdOf(l.queueEntryId);
+      if (lineVisit && bucketByEntry.has(lineVisit)) {
+        target = bucketByEntry.get(lineVisit);
+      } else if (candidateEntries.length === 1) {
+        // Single-visit ticket: every line belongs to the one visit.
+        target = bucketByEntry.get(candidateEntries[0].id);
+      } else if (l.staff1Id) {
+        // Multi-visit ticket with a line that lacks its own visit binding —
+        // best-effort match by staff. Picks the first candidate whose
+        // manicurist matches; if several do, this collapses them onto the
+        // earliest. Acceptable for the rare manual-add-after-split path.
+        target = candidateEntries
+          .map((e) => bucketByEntry.get(e.id))
+          .find((b): b is Bucket => !!b && b.entry.manicuristId === l.staff1Id);
+      }
+      if (!target) continue;
+      target.services.push(name as ServiceType);
+      if (l.isRequested) target.requested.push(name as ServiceType);
+    }
+
+    // Stable string key for shallow array equality — services/requested are
+    // order-sensitive in the reducer, so we DON'T sort here.
+    const arrKey = (a: readonly string[]) => JSON.stringify(a);
+
+    for (const [, bucket] of bucketByEntry) {
+      const { entry, services: newServices, requested: newRequested } = bucket;
+      // Don't blank out a row if every line for this visit was trashed —
+      // that's almost certainly a mid-edit mistake. Use History → Void to
+      // wipe a visit intentionally.
+      if (newServices.length === 0) continue;
+      const sameServices = arrKey(entry.services) === arrKey(newServices);
+      const sameRequested =
+        arrKey(entry.requestedServices ?? []) === arrKey(newRequested);
+      if (sameServices && sameRequested) continue;
+
+      const newTurnValue = newServices.reduce((sum, name) => {
         const svc = state.salonServices.find((s) => s.name === name);
         const base = svc?.turnValue ?? 0;
         if (base === 0) return sum;
-        if (pending.newRequested.includes(name)) {
+        if (newRequested.includes(name)) {
           return sum + (svc?.category === 'Combo' ? 1 : 0.5);
         }
         return sum + base;
       }, 0);
 
-      // Write directly to Supabase. Going through dispatch UPDATE_COMPLETED
-      // + the reducer + the trackSave effect races against the isApplyingRemoteRef
-      // flag — when updateOpenTicket's ticket_items write fires its own realtime
-      // tick, the global flag is true at the moment our local state change
-      // settles, and the effect skips syncing completed_services. Bypass that
-      // by writing completed_services straight to the DB; realtime then echoes
-      // back into state.completed via REMOTE_COMPLETED_UPSERT for the UI.
       void (async () => {
         const turnDelta = newTurnValue - entry.turnValue;
         const { error } = await supabase.from('completed_services').update({
-          services: pending.newServices,
-          service: pending.newServices[0] ?? '',
-          requested_services: pending.newRequested,
+          services: newServices,
+          service: newServices[0] ?? '',
+          requested_services: newRequested,
           turn_value: newTurnValue,
-          is_requested: pending.newRequested.length > 0,
+          is_requested: newRequested.length > 0,
           edited: true,
-        }).eq('id', visitId);
+        }).eq('id', entry.id);
         if (error) {
           console.error('[ticket modal] completed_services sync failed:', error.message);
           return;
@@ -645,11 +694,11 @@ export default function TicketModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-3">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[96vh] flex flex-col animate-modal-in">
         {/* Header */}
-        <div className="px-5 py-2.5 border-b border-gray-100 flex items-center justify-between">
+        <div className="px-5 py-2.5 border-b border-gray-200 flex items-center justify-between">
           <div className="flex items-baseline gap-3">
             <h2 className="font-bebas text-2xl tracking-widest text-gray-900">CHECK OUT TICKET</h2>
-            <span className="font-mono text-xs text-gray-400">#{ticket.ticketNumber}</span>
-            <span className="font-mono text-xs text-gray-400">{formatBusinessDate(ticket.businessDate)}</span>
+            <span className="font-mono text-xs text-gray-600">#{ticket.ticketNumber}</span>
+            <span className="font-mono text-xs text-gray-600">{formatBusinessDate(ticket.businessDate)}</span>
             {ticket.status === 'closed' && (
               <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-mono text-xs font-bold tracking-wider">CLOSED</span>
             )}
@@ -663,7 +712,7 @@ export default function TicketModal({
               <span className="px-2 py-0.5 rounded-full bg-pink-100 text-pink-600 font-mono text-xs font-bold tracking-wider">OPEN</span>
             )}
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-600 hover:text-gray-900">
             <X size={18} />
           </button>
         </div>
@@ -681,7 +730,7 @@ export default function TicketModal({
                   <input
                     type="text" value={clientFirstName} onChange={(e) => setClientFirstName(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
                     placeholder="Walk-in"
                   />
                 </Field>
@@ -689,7 +738,7 @@ export default function TicketModal({
                   <input
                     type="text" value={clientLastName} onChange={(e) => setClientLastName(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
                     placeholder="—"
                   />
                 </Field>
@@ -697,7 +746,7 @@ export default function TicketModal({
                   <input
                     type="tel" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
                     placeholder="(555) 555-5555"
                   />
                 </Field>
@@ -706,7 +755,7 @@ export default function TicketModal({
                     value={primaryManicuristId ?? ''}
                     onChange={(e) => setPrimaryManicuristId(e.target.value || null)}
                     disabled={!canEdit}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-500"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
                   >
                     <option value="">—</option>
                     {manicurists.map((m) => (
@@ -717,8 +766,8 @@ export default function TicketModal({
               </div>
 
               {/* Line items grid — scrolls inside if needed so the rest stays in view */}
-              <div className="border border-gray-100 rounded-xl overflow-hidden flex flex-col min-h-0">
-                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_36px_30px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 text-[11px] tracking-wider font-mono font-semibold text-gray-400 uppercase">
+              <div className="border border-gray-200 rounded-xl overflow-hidden flex flex-col min-h-0">
+                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_36px_30px] gap-2 px-3 py-1.5 bg-gray-100 border-b border-gray-200 text-[11px] tracking-wider font-mono font-semibold text-gray-700 uppercase">
                   <span className="text-center">#</span>
                   <span className="text-center">Qty</span>
                   <span>Service</span>
@@ -731,7 +780,7 @@ export default function TicketModal({
                 </div>
                 <div className="flex-1 min-h-0 overflow-y-auto">
                   {lines.length === 0 ? (
-                    <div className="px-3 py-4 text-center font-mono text-xs text-gray-400">
+                    <div className="px-3 py-4 text-center font-mono text-xs text-gray-600">
                       No line items yet.
                     </div>
                   ) : (
@@ -752,7 +801,7 @@ export default function TicketModal({
                       return (
                         <div
                           key={idx}
-                          className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_36px_30px] gap-2 items-center px-3 py-1 border-b border-gray-50 last:border-b-0"
+                          className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_36px_30px] gap-2 items-center px-3 py-1 border-b border-gray-100 last:border-b-0"
                         >
                           {badgeNumber !== null ? (
                             <span className="justify-self-center w-7 h-7 rounded-full border-2 border-red-500 text-red-600 font-mono text-base font-bold flex items-center justify-center">
@@ -765,14 +814,14 @@ export default function TicketModal({
                             type="number" min={1} step={1} value={line.quantity}
                             onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value || '1', 10)) })}
                             disabled={!canEdit}
-                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-center focus:outline-none disabled:bg-gray-50"
+                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-center focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           />
                           <input
                             type="text" value={line.name}
                             onChange={(e) => updateLine(idx, { name: e.target.value })}
                             disabled={!canEdit}
                             placeholder="Service name"
-                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm focus:outline-none disabled:bg-gray-50"
+                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           />
                           <select
                             value={line.staff1Id ?? ''}
@@ -785,7 +834,7 @@ export default function TicketModal({
                               });
                             }}
                             disabled={!canEdit}
-                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm focus:outline-none disabled:bg-gray-50"
+                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           >
                             <option value="">—</option>
                             {manicurists.map((m) => (
@@ -797,7 +846,7 @@ export default function TicketModal({
                             onChange={(e) => updateLine(idx, { priceInput: e.target.value })}
                             onBlur={(e) => updateLine(idx, { priceInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
                             disabled={!canEdit}
-                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-gray-50"
+                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-right focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           />
                           <input
                             type="text" inputMode="decimal" value={line.discountInput}
@@ -805,7 +854,7 @@ export default function TicketModal({
                             onBlur={(e) => updateLine(idx, { discountInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
                             disabled={!canEdit || !note.trim()}
                             title={!note.trim() ? 'Add a note before applying a discount.' : undefined}
-                            className="px-1.5 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-right focus:outline-none disabled:bg-gray-100 disabled:text-gray-700 disabled:cursor-not-allowed"
                           />
                           <span className="px-1.5 py-1 font-mono text-sm font-semibold text-gray-900 text-right">
                             {formatMoneyCents(ext)}
@@ -819,7 +868,7 @@ export default function TicketModal({
                               className={`justify-self-center w-7 h-7 rounded-full text-xs font-bold transition-colors ${
                                 line.isRequested
                                   ? 'bg-red-500 text-white border-2 border-red-500 hover:bg-red-600'
-                                  : 'bg-white text-gray-300 border-2 border-gray-200 hover:border-red-400 hover:text-red-500'
+                                  : 'bg-white text-gray-500 border-2 border-gray-300 hover:border-red-400 hover:text-red-500'
                               } disabled:opacity-50 disabled:cursor-not-allowed`}
                             >
                               R
@@ -827,7 +876,7 @@ export default function TicketModal({
                           ) : <span />}
                           {canEdit ? (
                             <button onClick={() => removeLine(idx)}
-                              className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors">
+                              className="p-1 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors">
                               <Trash2 size={14} />
                             </button>
                           ) : <span />}
@@ -840,14 +889,14 @@ export default function TicketModal({
 
                 {/* Add line */}
                 {canEdit && (
-                  <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-center px-3 py-1.5 bg-gray-50/60 border-t border-gray-100">
+                  <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-center px-3 py-1.5 bg-gray-100 border-t border-gray-200">
                     <select
                       value={pickerCategory}
                       onChange={(e) => {
                         setPickerCategory(e.target.value);
                         setPickerServiceId('');
                       }}
-                      className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:border-gray-400"
+                      className="px-2 py-1.5 rounded-md border border-gray-300 font-mono text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-500"
                     >
                       <option value="">Category…</option>
                       {availableCategories.map((cat) => (
@@ -864,7 +913,7 @@ export default function TicketModal({
                         setPickerCategory('');
                         setPickerServiceId('');
                       }}
-                      className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
+                      className="px-2 py-1.5 rounded-md border border-gray-300 font-mono text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                     >
                       <option value="">Service…</option>
                       {servicesInCategory.map((s) => (
@@ -872,11 +921,11 @@ export default function TicketModal({
                       ))}
                     </select>
                     <button onClick={addBlankCustomLine}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-white font-mono text-xs font-semibold transition-colors">
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-300 text-gray-800 hover:bg-white font-mono text-xs font-semibold transition-colors">
                       <Plus size={14} /> CUSTOM
                     </button>
                     <button onClick={() => setShowGiftModal(true)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-pink-200 bg-pink-50 text-pink-700 hover:bg-pink-100 hover:border-pink-300 font-mono text-xs font-semibold transition-colors">
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-pink-300 bg-pink-50 text-pink-800 hover:bg-pink-100 hover:border-pink-400 font-mono text-xs font-semibold transition-colors">
                       <Plus size={14} /> GIFT
                     </button>
                   </div>
@@ -890,12 +939,12 @@ export default function TicketModal({
                     type="text"
                     value={note} onChange={(e) => setNote(e.target.value)}
                     disabled={!canEdit}
-                    className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400 disabled:bg-gray-50"
+                    className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100"
                     placeholder="Note…"
                   />
                   {canEdit && !note && (
                     <button onClick={() => setShowNote(false)}
-                      className="px-2 py-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 font-mono text-xs">
+                      className="px-2 py-1.5 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 font-mono text-xs">
                       ×
                     </button>
                   )}
@@ -903,7 +952,7 @@ export default function TicketModal({
               ) : (
 canEdit && (
                   <button onClick={() => setShowNote(true)}
-                    className="self-start px-2 py-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-50 font-mono text-xs">
+                    className="self-start px-2 py-1 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 font-mono text-xs">
                     + Add note
                   </button>
                 )
@@ -912,7 +961,7 @@ canEdit && (
 
             {/* Right column — totals + payments */}
             <div className="flex flex-col gap-2 min-h-0 overflow-y-auto">
-              <div className="bg-gray-50 rounded-xl p-3 flex flex-col gap-1.5">
+              <div className="bg-gray-100 rounded-xl p-3 flex flex-col gap-1.5">
                 <Row label="Subtotal" value={formatMoneyCents(subtotalCents)} />
                 <RowEdit label="Discount" value={ticketDiscountInput}
                   onChange={(v) => setTicketDiscountInput(v)}
@@ -927,7 +976,7 @@ canEdit && (
                   onChange={(v) => setTipInput(v)}
                   onBlur={(v) => setTipInput((parseDollarsToCents(v) / 100).toFixed(2))}
                   disabled={!canEdit} />
-                <div className="border-t border-gray-200 my-0.5" />
+                <div className="border-t border-gray-300 my-0.5" />
                 <Row label="Total" value={formatMoneyCents(totalCents)} bold />
               </div>
 
@@ -942,35 +991,35 @@ canEdit && (
                     <PayBtn label="Gift" tone="gift" onClick={() => addPending('gift')} />
                   </div>
                   {pending.length > 0 && (
-                    <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                    <div className="border border-gray-200 rounded-xl divide-y divide-gray-100">
                       {pending.map((p, idx) => (
-                        <div key={idx} className="px-2.5 py-1.5 flex items-center gap-1.5">
-                          <span className="font-mono text-[11px] font-bold text-gray-500 w-14">
+                        <div key={idx} className="px-2.5 py-2 flex items-center gap-1.5">
+                          <span className="font-mono text-sm font-bold text-gray-700 w-16">
                             {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
                           </span>
-                          <span className="font-mono text-xs text-gray-400">$</span>
+                          <span className="font-mono text-sm text-gray-600">$</span>
                           <input
                             type="text" inputMode="decimal" value={p.amountInput}
                             onChange={(e) => patchPending(idx, { amountInput: e.target.value })}
                             onBlur={(e) => patchPending(idx, { amountInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
-                            className="flex-1 px-2 py-1 rounded-md border border-gray-200 font-mono text-sm text-right focus:outline-none focus:border-gray-400"
+                            className="flex-1 px-2 py-1 rounded-md border border-gray-300 font-mono text-base text-right text-gray-900 focus:outline-none focus:border-gray-500"
                           />
                           <button onClick={() => removePending(idx)}
-                            className="p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50">
-                            <Trash2 size={12} />
+                            className="p-1 rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50">
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       ))}
                       {pending.some((p) => p.method === 'gift') && (
-                        <div className="px-2.5 py-1.5">
-                          <label className="font-mono text-[10px] tracking-wider text-gray-400 uppercase">Gift card code</label>
+                        <div className="px-2.5 py-2">
+                          <label className="font-mono text-xs tracking-wider text-gray-700 uppercase font-semibold">Gift card code</label>
                           {pending.map((p, idx) =>
                             p.method !== 'gift' ? null : (
                               <input
                                 key={idx} type="text"
                                 value={p.giftCardCode ?? ''}
                                 onChange={(e) => patchPending(idx, { giftCardCode: e.target.value })}
-                                className="mt-0.5 w-full px-2 py-1 rounded-md border border-gray-200 font-mono text-sm focus:outline-none focus:border-gray-400"
+                                className="mt-1 w-full px-2 py-1 rounded-md border border-gray-300 font-mono text-base text-gray-900 focus:outline-none focus:border-gray-500"
                                 placeholder="GC-####"
                               />
                             ),
@@ -979,7 +1028,7 @@ canEdit && (
                       )}
                     </div>
                   )}
-                  <div className="bg-gray-50 rounded-xl p-3 flex flex-col gap-1.5">
+                  <div className="bg-gray-100 rounded-xl p-3 flex flex-col gap-1.5">
                     <Row
                       label="Amount Paid"
                       value={formatMoneyCents(pendingPaidCents)}
@@ -995,21 +1044,21 @@ canEdit && (
                 </>
               ) : (
                 <>
-                  <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                  <div className="border border-gray-200 rounded-xl divide-y divide-gray-100">
                     {ticket.payments.length === 0 ? (
-                      <div className="px-3 py-2 font-mono text-xs text-gray-400 text-center">No payments captured.</div>
+                      <div className="px-3 py-2.5 font-mono text-sm text-gray-600 text-center">No payments captured.</div>
                     ) : (
                       ticket.payments.map((p) => (
-                        <div key={p.id} className="px-2.5 py-1.5 flex items-center justify-between">
-                          <span className="font-mono text-xs font-bold text-gray-500">
+                        <div key={p.id} className="px-2.5 py-2 flex items-center justify-between">
+                          <span className="font-mono text-sm font-bold text-gray-700">
                             {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
                           </span>
-                          <span className="font-mono text-sm text-gray-900">{formatMoneyCents(p.amountCents)}</span>
+                          <span className="font-mono text-base text-gray-900">{formatMoneyCents(p.amountCents)}</span>
                         </div>
                       ))
                     )}
                   </div>
-                  <div className="bg-gray-50 rounded-xl p-3 flex flex-col gap-1.5">
+                  <div className="bg-gray-100 rounded-xl p-3 flex flex-col gap-1.5">
                     <Row label="Amount Paid" value={formatMoneyCents(ticket.paidCents)} bold />
                   </div>
                 </>
@@ -1019,8 +1068,8 @@ canEdit && (
         </div>
 
         {/* Footer — simplified action row. */}
-        <div className="px-5 py-2.5 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
-          {error && <p className="font-mono text-xs text-red-500 w-full sm:w-auto">{error}</p>}
+        <div className="px-5 py-2.5 border-t border-gray-200 flex items-center justify-between gap-3 flex-wrap">
+          {error && <p className="font-mono text-xs text-red-600 w-full sm:w-auto">{error}</p>}
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <FooterBtn
               label="HISTORY"
@@ -1055,15 +1104,27 @@ canEdit && (
               <>
                 <span className="w-px h-6 bg-gray-200 mx-1" />
                 <button onClick={() => { void doSave(); }} disabled={busy !== 'idle'}
-                  className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-mono text-xs font-bold disabled:opacity-50">
+                  className="px-3 py-1.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-xs font-bold disabled:opacity-50">
                   {busy === 'saving' ? 'SAVING…' : 'SAVE'}
                 </button>
                 <button onClick={handleVoid} disabled={busy !== 'idle'}
-                  className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 font-mono text-xs font-bold disabled:opacity-50">
+                  className="px-3 py-1.5 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 font-mono text-xs font-bold disabled:opacity-50">
                   {busy === 'voiding' ? 'VOIDING…' : 'VOID'}
                 </button>
-                <button onClick={handleProcess} disabled={busy !== 'idle'}
-                  className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50">
+                <button
+                  onClick={handleProcess}
+                  disabled={busy !== 'idle' || !canProcess}
+                  title={
+                    !canProcess
+                      ? lines.length === 0
+                        ? 'Add at least one item before processing.'
+                        : pending.length === 0
+                        ? 'Add a payment first.'
+                        : `Payments ${formatMoneyCents(pendingPaidCents)} ≠ total ${formatMoneyCents(totalCents)}.`
+                      : undefined
+                  }
+                  className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-900"
+                >
                   {busy === 'processing' ? 'PROCESSING…' : 'PROCESS'}
                 </button>
               </>
@@ -1071,7 +1132,7 @@ canEdit && (
             {!isOpen && !unlockedForEdit && (
               <>
                 <button onClick={() => setShowEditGate(true)}
-                  className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-mono text-xs font-bold">
+                  className="px-3 py-1.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-xs font-bold">
                   EDIT
                 </button>
                 <button onClick={onClose}
@@ -1101,7 +1162,7 @@ canEdit && (
                   {busy === 'saving' ? 'SAVING…' : 'SAVE'}
                 </button>
                 <button onClick={onClose}
-                  className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-mono text-xs font-bold">
+                  className="px-3 py-1.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-xs font-bold">
                   CANCEL
                 </button>
               </>
@@ -1174,7 +1235,7 @@ function formatBusinessDate(iso: string): string {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <label className="font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">{label}</label>
+      <label className="font-mono text-[10px] tracking-wider font-semibold text-gray-600 uppercase">{label}</label>
       {children}
     </div>
   );
@@ -1183,8 +1244,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Row({ label, value, bold, highlight }: { label: string; value: string; bold?: boolean; highlight?: boolean }) {
   return (
     <div className="flex items-center justify-between">
-      <span className={`font-mono text-sm ${bold ? 'font-bold text-gray-900' : 'text-gray-500'}`}>{label}</span>
-      <span className={`font-mono text-sm ${bold ? 'font-bold' : ''} ${highlight ? 'text-pink-600' : 'text-gray-900'}`}>{value}</span>
+      <span className={`font-mono text-base ${bold ? 'font-bold text-gray-900' : 'text-gray-700'}`}>{label}</span>
+      <span className={`font-mono text-base ${bold ? 'font-bold' : ''} ${highlight ? 'text-pink-600' : 'text-gray-900'}`}>{value}</span>
     </div>
   );
 }
@@ -1202,16 +1263,16 @@ function RowEdit({
 }) {
   return (
     <div className="flex items-center justify-between gap-2" title={title}>
-      <span className="font-mono text-sm text-gray-500">{label}</span>
+      <span className="font-mono text-base text-gray-700">{label}</span>
       <div className="flex items-center gap-1">
-        <span className="font-mono text-xs text-gray-400">$</span>
+        <span className="font-mono text-sm text-gray-600">$</span>
         <input
           type="text" inputMode="decimal" value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={(e) => onBlur(e.target.value)}
           disabled={disabled}
           title={title}
-          className="w-20 px-2 py-0.5 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-400 font-mono text-sm text-right focus:outline-none disabled:bg-transparent bg-white disabled:text-gray-400 disabled:cursor-not-allowed"
+          className="w-24 px-2 py-0.5 rounded-md border border-transparent hover:border-gray-300 focus:border-gray-500 font-mono text-base text-right text-gray-900 focus:outline-none disabled:bg-transparent bg-white disabled:text-gray-500 disabled:cursor-not-allowed"
         />
       </div>
     </div>
@@ -1229,16 +1290,16 @@ function PayBtn({
 }) {
   const toneClasses =
     tone === 'cash'
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300'
+      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400'
       : tone === 'card'
-      ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:border-sky-300'
+      ? 'border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 hover:border-sky-400'
       : tone === 'gift'
-      ? 'border-pink-200 bg-pink-50 text-pink-700 hover:bg-pink-100 hover:border-pink-300'
-      : 'border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300';
+      ? 'border-pink-300 bg-pink-50 text-pink-800 hover:bg-pink-100 hover:border-pink-400'
+      : 'border-gray-300 text-gray-800 hover:bg-gray-50 hover:border-gray-400';
   return (
     <button
       onClick={onClick}
-      className={`px-2 py-2 rounded-lg border ${toneClasses} font-bebas text-base tracking-widest transition-colors`}
+      className={`px-2 py-2.5 rounded-lg border-2 ${toneClasses} font-bebas text-lg tracking-widest transition-colors`}
     >
       {label}
     </button>
@@ -1258,8 +1319,8 @@ function FooterBtn({
 }) {
   const toneClasses =
     tone === 'danger'
-      ? 'border-red-200 text-red-500 hover:bg-red-50'
-      : 'border-gray-200 text-gray-700 hover:bg-gray-50';
+      ? 'border-red-300 text-red-600 hover:bg-red-50'
+      : 'border-gray-300 text-gray-800 hover:bg-gray-100';
   return (
     <button
       onClick={onClick}
