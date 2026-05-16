@@ -26,6 +26,75 @@ interface SelectedService {
   durationAdjustment: number;
 }
 
+// Parse a free-form time string ("130", "11", "9:30 am", "1330") into the
+// canonical 24-hour "HH:MM" string the rest of the app expects.
+//
+// Salon hours are 8 AM to 8 PM, so when no AM/PM is given we auto-assign:
+//   hours 1-7   → PM (1 PM…7 PM)
+//   hour  8-11  → AM (8 AM…11 AM)
+//   hour  12    → 12 PM (noon)
+//   hours 13-23 → already 24-hour, kept as-is
+// Returns null when the string can't be interpreted.
+function parseTimeInput(raw: string): string | null {
+  if (!raw) return null;
+  const s = raw.trim().toLowerCase();
+  if (!s) return null;
+
+  // Honor explicit AM/PM suffix if present
+  let forced: 'am' | 'pm' | null = null;
+  if (/p\.?m?\.?$/.test(s)) forced = 'pm';
+  else if (/a\.?m?\.?$/.test(s)) forced = 'am';
+  const body = s.replace(/[ap]\.?m?\.?$/, '').trim();
+
+  let h: number;
+  let m: number;
+  if (body.includes(':')) {
+    const [hStr, mStr] = body.split(':');
+    h = parseInt(hStr, 10);
+    m = parseInt(mStr || '0', 10);
+  } else {
+    const digits = body.replace(/\D/g, '');
+    if (digits.length === 0) return null;
+    if (digits.length <= 2) {
+      h = parseInt(digits, 10);
+      m = 0;
+    } else if (digits.length === 3) {
+      h = parseInt(digits.slice(0, 1), 10);
+      m = parseInt(digits.slice(1), 10);
+    } else if (digits.length === 4) {
+      h = parseInt(digits.slice(0, 2), 10);
+      m = parseInt(digits.slice(2), 10);
+    } else {
+      return null;
+    }
+  }
+  if (isNaN(h) || isNaN(m) || m < 0 || m >= 60) return null;
+
+  if (forced === 'am') {
+    if (h === 12) h = 0;
+  } else if (forced === 'pm') {
+    if (h < 12) h += 12;
+  } else {
+    // Auto: 1-7 → PM (salon closed in early morning), 8-12 stay (8 AM–12 PM),
+    // 13+ already 24-hour.
+    if (h >= 1 && h <= 7) h += 12;
+  }
+  if (h < 0 || h > 23) return null;
+
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+function formatTo12Hr(hhmm: string): string {
+  if (!hhmm || !hhmm.includes(':')) return hhmm;
+  const [hStr, mStr] = hhmm.split(':');
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  if (isNaN(h) || isNaN(m)) return hhmm;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return h12 + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+}
+
 export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const { state, dispatch } = useApp();
 
@@ -100,6 +169,20 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [date, setDate] = useState(draft?.date ?? today);
   const [time, setTime] = useState(draft?.time ?? '10:00');
+  // Free-form time entry: receptionist can type '130' (auto → 1:30 PM),
+  // '11' (→ 11:00 AM), '9:30am', etc. We keep the raw input here for
+  // display and parse it on blur back into `time` (HH:MM 24-hour).
+  const [timeRaw, setTimeRaw] = useState(formatTo12Hr(draft?.time ?? '10:00'));
+  useEffect(() => { setTimeRaw(formatTo12Hr(time)); }, [time]);
+  function commitTime() {
+    const parsed = parseTimeInput(timeRaw);
+    if (parsed) {
+      setTime(parsed);
+      setTimeRaw(formatTo12Hr(parsed));
+    } else {
+      setTimeRaw(formatTo12Hr(time));
+    }
+  }
   const [notes, setNotes] = useState('');
   const [sameTime, setSameTime] = useState(false);
   // Receptionist-confirmation when booking would overlap an existing
@@ -812,11 +895,15 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           <div>
             <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">TIME</label>
             <input
-              type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              value={timeRaw}
+              onChange={(e) => setTimeRaw(e.target.value)}
+              onBlur={commitTime}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitTime(); } }}
+              placeholder="9:30 AM"
               required
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>
         </div>
