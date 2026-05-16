@@ -619,6 +619,14 @@ export default function TicketModal({
   async function handleProcess() {
     setError(null);
     if (lines.length === 0) { setError('Add at least one item.'); return; }
+    // Block checkout if any service line is still unassigned. Cashier needs
+    // to know who to credit before money changes hands.
+    const unassignedServices = lines.filter((l) => l.kind === 'service' && !l.staff1Id);
+    if (unassignedServices.length > 0) {
+      const names = unassignedServices.map((l) => l.name).join(', ');
+      setError(`Assign a manicurist to: ${names}`);
+      return;
+    }
     if (pending.length === 0) { setError('Add a payment first.'); return; }
     if (Math.abs(pendingPaidCents - totalCents) > 0) {
       setError(`Payments ${formatMoneyCents(pendingPaidCents)} ≠ total ${formatMoneyCents(totalCents)}.`);

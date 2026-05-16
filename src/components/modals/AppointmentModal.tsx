@@ -202,6 +202,17 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     conflicts: ConflictInfo[];
   }
   const [pendingConflicts, setPendingConflicts] = useState<BookingPreview | null>(null);
+  // Auto-assign popup state: when the receptionist tries to book with no
+  // requested manicurist and no column draft, we try to auto-pick a skilled,
+  // free manicurist. If none are free, this state holds the info shown to
+  // the receptionist as an override prompt. `approved: true` is a sentinel
+  // that means "book as unassigned" — the re-submitted handler sees it and
+  // skips the auto-assign check.
+  const [pendingAutoAssign, setPendingAutoAssign] = useState<{
+    servicesLabel: string;
+    timeLabel: string;
+    approved: boolean;
+  } | null>(null);
   const [partyGroup, setPartyGroup] = useState(false);
   // Cancel-appointment confirmation gate. Set when the receptionist clicks
   // CANCEL APPT in edit mode; cleared once they confirm or back out.
@@ -349,6 +360,43 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     return map;
   }
 
+  // Try to auto-pick a manicurist for an unrequested appointment. Returns:
+  //  - { kind: 'found', manicuristId }: a skilled, free manicurist exists
+  //  - { kind: 'noneAvailable' }: no skilled manicurist is free (or no
+  //    manicurist has the required skills at all) — receptionist should be
+  //    prompted to override and book unassigned.
+  function findAutoAssignManicurist(): { kind: 'found'; manicuristId: string } | { kind: 'noneAvailable' } {
+    const [sh, sm] = time.split(':').map(Number);
+    const apptStartMin = sh * 60 + sm;
+
+    const allServiceNames = selectedServices.map((s) => s.serviceName as string);
+    const skilled = state.manicurists
+      .filter((m) => allServiceNames.every((sv) => m.skills.includes(sv as ServiceType)))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (skilled.length === 0) return { kind: 'noneAvailable' };
+
+    const occupancy = computeOtherAppointmentOccupancy();
+    for (const m of skilled) {
+      // Total duration depends on the candidate's per-service time tweaks.
+      let totalDur = 0;
+      if (sameTime) {
+        for (const s of selectedServices) {
+          const d = durOf(s.serviceName, m.id, s.durationAdjustment);
+          if (d > totalDur) totalDur = d;
+        }
+      } else {
+        for (const s of selectedServices) {
+          totalDur += durOf(s.serviceName, m.id, s.durationAdjustment);
+        }
+      }
+      const apptEndMin = apptStartMin + totalDur;
+      const arr = occupancy.get(m.id) ?? [];
+      const conflict = arr.some((iv) => iv.startMin < apptEndMin && iv.endMin > apptStartMin);
+      if (!conflict) return { kind: 'found', manicuristId: m.id };
+    }
+    return { kind: 'noneAvailable' };
+  }
+
   function findBookingPreview(): BookingPreview {
     const occupancy = computeOtherAppointmentOccupancy();
     const [sh, sm] = time.split(':').map(Number);
@@ -462,13 +510,47 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     }
 
     const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
+
+    // Auto-assignment: when this is a brand-new booking, no specific manicurist
+    // was requested on any service, and the receptionist didn't open the modal
+    // by clicking into a particular column, try to pick a skilled manicurist who
+    // is free at the requested time. If none is free, show a popup; the
+    // receptionist can override and book the appointment as unassigned.
+    let autoManicuristId: string | null = null;
+    const shouldAutoAssign =
+      mode === 'add' &&
+      firstRequestedId == null &&
+      !draft?.manicuristId &&
+      selectedServices.length > 0;
+    if (shouldAutoAssign) {
+      if (pendingAutoAssign === null) {
+        const result = findAutoAssignManicurist();
+        if (result.kind === 'found') {
+          autoManicuristId = result.manicuristId;
+        } else {
+          setPendingAutoAssign({
+            servicesLabel: selectedServices.map((s) => s.serviceName).join(', '),
+            timeLabel: formatTo12Hr(time),
+            approved: false,
+          });
+          return;
+        }
+      } else if (!pendingAutoAssign.approved) {
+        // Popup is open but receptionist hasn't decided yet — bail.
+        return;
+      }
+      // pendingAutoAssign.approved === true: book as unassigned.
+    }
+
     // If no specific manicurist was requested in a service, fall back to the column
     // the receptionist clicked on when opening the modal (draft?.manicuristId)
     // For edit mode: preserve existing manicuristId if no new client request was made.
-    // For add mode: fall back to the column the receptionist clicked on (draft?.manicuristId).
+    // For add mode: fall back to the column the receptionist clicked on (draft?.manicuristId)
+    // or the auto-assigned id from above.
     const appointmentManicuristId = firstRequestedId
       ?? (mode === 'edit' && editing ? editing.manicuristId : null)
       ?? draft?.manicuristId
+      ?? autoManicuristId
       ?? null;
     const name = clientName.trim() || 'Walk-in';
 
@@ -1041,6 +1123,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           </div>
         </div>
       )}
+    {pendingAutoAssign && !pendingAutoAssign.approved && (
+      <ConfirmDialog
+        message={`No skilled manicurist is free for ${pendingAutoAssign.servicesLabel} at ${pendingAutoAssign.timeLabel}. Book as unassigned? You can drag the appointment to a manicurist's column later.`}
+        confirmLabel="Book unassigned"
+        onConfirm={() => {
+          setPendingAutoAssign({ ...pendingAutoAssign, approved: true });
+          const form = document.querySelector<HTMLFormElement>('form[data-appointment-form]');
+          form?.requestSubmit();
+        }}
+        onCancel={() => setPendingAutoAssign(null)}
+      />
+    )}
     {recap && (
       <BookingRecapModal
         info={recap}

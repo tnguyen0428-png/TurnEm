@@ -1381,15 +1381,46 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
       }
 
       inFlightAutoCreates.add(visitId);
-      await createTicketAtCheckin({
-        queueEntryId: visitId,
-        appointmentId: entry.originalAppointment?.id ?? null,
-        clientName: entry.clientName,
-        primaryManicuristId: m?.id ?? null,
-        primaryManicuristName: m?.name ?? '',
-        primaryManicuristColor: m?.color ?? '#9ca3af',
-        items: itemsForEntry,
-      });
+      // Before opening a fresh ticket, check whether this client already has
+      // an OPEN ticket today (e.g. a sibling visit started by a different
+      // manicurist, or a SPLIT_AND_ASSIGN child whose parent id we lost
+      // track of). If so, append our lines to the existing ticket so
+      // Sarah's manicure with Sam and her two pedicures land on a single
+      // ticket — even when the pedicures are assigned later. Match by
+      // client name today (queue rows don't carry a phone), case-insensitive.
+      const businessDate = getTodayLA();
+      const sameClient = await findOpenTicketForClient(
+        entry.clientName,
+        '',
+        businessDate,
+      );
+      if (sameClient) {
+        await appendItemsToTicket(sameClient.id, itemsForEntry, { allowDuplicates: true });
+        // If the existing ticket has no primary staff yet (it was opened
+        // before anyone was assigned), give it one now.
+        if (!sameClient.primaryManicuristId && m) {
+          try {
+            await backfillTicketStaff(
+              sameClient.queueEntryId ?? visitId,
+              m.id,
+              m.name,
+              m.color,
+            );
+          } catch (err) {
+            console.warn('[syncQueue] backfill on consolidated append failed for', visitId, err);
+          }
+        }
+      } else {
+        await createTicketAtCheckin({
+          queueEntryId: visitId,
+          appointmentId: entry.originalAppointment?.id ?? null,
+          clientName: entry.clientName,
+          primaryManicuristId: m?.id ?? null,
+          primaryManicuristName: m?.name ?? '',
+          primaryManicuristColor: m?.color ?? '#9ca3af',
+          items: itemsForEntry,
+        });
+      }
     } catch (err) {
       console.error('[syncQueue] auto-create ticket failed for', entry.id, err);
     }
