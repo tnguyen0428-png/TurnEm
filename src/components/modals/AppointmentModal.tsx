@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../shared/Modal';
+import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
 import {
   upsertCustomerFromIntake, toTitleCase, formatPhoneDashed,
@@ -119,6 +120,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   }
   const [pendingConflicts, setPendingConflicts] = useState<BookingPreview | null>(null);
   const [partyGroup, setPartyGroup] = useState(false);
+  // Cancel-appointment confirmation gate. Set when the receptionist clicks
+  // CANCEL APPT in edit mode; cleared once they confirm or back out.
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const sortedServices = useMemo(
     () => [...state.salonServices].filter((s) => s.isActive).sort((a, b) => a.sortOrder - b.sortOrder),
@@ -497,6 +501,15 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: null });
   }
 
+  // Cancel (delete) the appointment from inside the edit modal. Removes
+  // the appointment entirely — same as the trash icon on the AppointmentsScreen.
+  function handleCancelAppointment() {
+    if (mode !== 'edit' || !editing) return;
+    dispatch({ type: 'DELETE_APPOINTMENT', id: editing.id });
+    setShowCancelConfirm(false);
+    handleClose();
+  }
+
   return (
     <Modal
       title={mode === 'edit' ? 'EDIT APPOINTMENT' : 'NEW APPOINTMENT'}
@@ -844,14 +857,43 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           />
         </div>
 
-        <button
-          type="submit"
-          disabled={selectedServices.length === 0}
-          className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
-        >
-          {mode === 'edit' ? 'SAVE CHANGES' : 'BOOK APPOINTMENT'}
-        </button>
+        {mode === 'edit' ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setShowCancelConfirm(true)}
+              className="px-4 py-3 rounded-xl bg-white border-2 border-red-200 text-red-600 font-mono text-sm font-semibold hover:bg-red-50 hover:border-red-300 active:scale-[0.98] transition-all"
+            >
+              CANCEL APPT
+            </button>
+            <button
+              type="submit"
+              disabled={selectedServices.length === 0}
+              className="flex-1 py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
+            >
+              SAVE CHANGES
+            </button>
+          </div>
+        ) : (
+          <button
+            type="submit"
+            disabled={selectedServices.length === 0}
+            className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
+          >
+            BOOK APPOINTMENT
+          </button>
+        )}
       </form>
+
+      {showCancelConfirm && editing && (
+        <ConfirmDialog
+          message="Do you want to cancel this appointment?"
+          confirmLabel="Yes, cancel"
+          danger
+          onConfirm={handleCancelAppointment}
+          onCancel={() => setShowCancelConfirm(false)}
+        />
+      )}
 
       {pendingConflicts !== null && pendingConflicts.conflicts.length > 0 && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setPendingConflicts(null)}>
