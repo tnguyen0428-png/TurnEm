@@ -176,41 +176,41 @@ export default function AppointmentsScreen() {
 
       {/* ── Compact top bar (expanded book mode) ─────────────────────────────── */}
       {expanded && bookMode === 'book' && (
-        <div className="flex-shrink-0 border-b border-gray-100 bg-white px-4 py-2 flex items-center gap-3">
+        <div className="flex-shrink-0 border-b border-gray-100 bg-white px-4 py-3 flex items-center gap-4">
           <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1">
-            <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-1.5 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={14} /></button>
-            <button onClick={() => setSelectedDate(today)} className={`px-2.5 py-1 rounded-lg font-mono text-[10px] font-semibold transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
-            <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-1.5 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronRight size={14} /></button>
-            <button onClick={openDatePicker} title="Pick a date" className="p-1.5 rounded-lg hover:bg-white text-pink-500 transition-all"><Calendar size={14} /></button>
+            <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={18} /></button>
+            <button onClick={() => setSelectedDate(today)} className={`px-3 py-1.5 rounded-lg font-mono text-sm font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
+            <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronRight size={18} /></button>
+            <button onClick={openDatePicker} title="Pick a date" className="p-2 rounded-lg hover:bg-white text-pink-500 transition-all"><Calendar size={18} /></button>
           </div>
-          <span className="font-bebas text-base tracking-[2px] text-gray-700 flex-1 truncate">{formatDateFull(selectedDate)}</span>
-          {dayTotal > 0 && <span className="font-mono text-[10px] text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
-          <button onClick={openNewAppointment} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-pink-500 text-white font-mono text-[10px] font-semibold hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={12} />NEW</button>
-          <button onClick={() => setExpanded((e) => !e)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-[10px] text-gray-600 font-semibold transition-all flex-shrink-0">
-            <Minimize2 size={12} />COMPACT
+          <span className="font-bebas text-xl tracking-[2px] text-gray-700 flex-1 truncate">{formatDateFull(selectedDate)}</span>
+          {dayTotal > 0 && <span className="font-mono text-xs text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
+          <button onClick={openNewAppointment} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-pink-500 text-white font-mono text-sm font-bold tracking-wider hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={16} />NEW</button>
+          <button onClick={() => setExpanded((e) => !e)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-sm text-gray-600 font-bold tracking-wider transition-all flex-shrink-0">
+            <Minimize2 size={16} />COMPACT
           </button>
         </div>
       )}
 
       {/* ── Full toolbar — hidden when book is expanded ──────────────────────── */}
       {!(expanded && bookMode === 'book') && (
-        <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 sm:px-6 py-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1">
-              <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronLeft size={16} /></button>
-              <button onClick={() => setSelectedDate(today)} className={`px-3 py-1 rounded-lg font-mono text-xs font-semibold transition-all ${isToday ? 'bg-pink-500 text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:shadow-sm'}`}>TODAY</button>
-              <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronRight size={16} /></button>
-              <button onClick={openDatePicker} title="Pick a date" className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm text-pink-500 transition-all"><Calendar size={16} /></button>
+        <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 sm:px-6 py-5">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-1 bg-gray-50 rounded-2xl p-1.5">
+              <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronLeft size={22} /></button>
+              <button onClick={() => setSelectedDate(today)} className={`px-4 py-2 rounded-xl font-mono text-base font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:shadow-sm'}`}>TODAY</button>
+              <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronRight size={22} /></button>
+              <button onClick={openDatePicker} title="Pick a date" className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-pink-500 transition-all"><Calendar size={22} /></button>
             </div>
             <div className="flex-1 min-w-0">
-              <h2 className="font-bebas text-xl tracking-[2px] text-gray-900 truncate">{formatDateFull(selectedDate)}</h2>
-              {dayTotal > 0 && <p className="font-mono text-[10px] text-gray-400">{dayScheduled} scheduled &middot; {dayTotal} total</p>}
+              <h2 className="font-bebas text-3xl tracking-[3px] text-gray-900 truncate">{formatDateFull(selectedDate)}</h2>
+              {dayTotal > 0 && <p className="font-mono text-sm text-gray-400">{dayScheduled} scheduled &middot; {dayTotal} total</p>}
             </div>
-            <div className="flex items-center bg-gray-100 rounded-xl p-1 gap-0.5">
-              <button onClick={() => setBookMode('book')} title="Book view" className={`p-1.5 rounded-lg transition-all ${bookMode === 'book' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><LayoutGrid size={15} /></button>
-              <button onClick={() => setBookMode('list')} title="List view" className={`p-1.5 rounded-lg transition-all ${bookMode === 'list' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><List size={15} /></button>
+            <div className="flex items-center bg-gray-100 rounded-2xl p-1.5 gap-1">
+              <button onClick={() => setBookMode('book')} title="Book view" className={`p-2.5 rounded-xl transition-all ${bookMode === 'book' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><LayoutGrid size={20} /></button>
+              <button onClick={() => setBookMode('list')} title="List view" className={`p-2.5 rounded-xl transition-all ${bookMode === 'list' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><List size={20} /></button>
             </div>
-            <button onClick={openNewAppointment} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-pink-500 text-white font-mono text-xs font-semibold hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm"><Plus size={14} />NEW</button>
+            <button onClick={openNewAppointment} className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-pink-500 text-white font-mono text-base font-bold tracking-wider hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm"><Plus size={18} />NEW</button>
           </div>
         </div>
       )}
