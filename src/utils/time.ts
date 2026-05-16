@@ -24,6 +24,16 @@ export function getLocalDateStr(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+// "Business day" = the operating day for the salon. Rolls over at 9 AM LA
+// instead of midnight so a service finished at, say, 11 PM still shows on
+// the staff portal until 9 AM the next morning (rather than vanishing at
+// midnight). Returns the LA-local date string ('YYYY-MM-DD') of (input - 9h).
+// Default input is `now`.
+export function getBusinessDayLA(date: Date = new Date()): string {
+  const shifted = new Date(date.getTime() - 9 * 60 * 60 * 1000);
+  return getLocalDateStr(shifted);
+}
+
 export function formatWaitTime(arrivedAt: number): string {
   const diff = Date.now() - arrivedAt;
   const mins = Math.floor(diff / 60000);

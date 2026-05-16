@@ -9,7 +9,7 @@ import {
   subscribeForPush,
   unsubscribeFromPush,
 } from '../../utils/pushNotifications';
-import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
+import { formatTime, getLocalDateStr, getBusinessDayLA } from '../../utils/time';
 import type { Manicurist, CompletedEntry } from '../../types';
 import DailySchedulePanel from './DailySchedulePanel';
 
@@ -20,7 +20,10 @@ interface StaffPortalScreenProps {
 
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
   const { state, dispatch } = useApp();
-  const [selectedDate, setSelectedDate] = useState<string>(getTodayLA());
+  // "Today" on the staff portal is the business day, which rolls over at
+  // 9 AM LA — so late-night services stay visible until the next morning
+  // instead of vanishing at midnight.
+  const [selectedDate, setSelectedDate] = useState<string>(getBusinessDayLA());
   const [historyEntries, setHistoryEntries] = useState<CompletedEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -34,7 +37,10 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     isDeviceSubscribed().then(setPushSubscribed);
   }, []);
 
-  const todayStr = getTodayLA();
+  // Business-day "today" — rolls over at 9 AM LA, not midnight. See
+  // getBusinessDayLA in utils/time.ts. Keeps the day's services on screen
+  // through the closing-time/early-morning window.
+  const todayStr = getBusinessDayLA();
   const isToday = selectedDate === todayStr;
 
   useEffect(() => {
@@ -332,12 +338,13 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     }
   }, [pushBusy, pushSubscribed, manicurist.id]);
 
-  // Services completed today by this manicurist. Filter by today's LA date
-  // explicitly so stale entries left in state.completed (e.g. before the
-  // 11:59pm archive runs, or right at the rollover) don't leak into the view.
+  // Services completed during the current business day by this manicurist.
+  // Filter by business-day (rolls over at 9 AM LA) so services finished at,
+  // say, 11 PM still stay on the list through closing and the early morning,
+  // and don't disappear at midnight.
   const completedToday = useMemo(() => {
     return state.completed
-      .filter((e) => e.manicuristId === manicurist.id && getLocalDateStr(new Date(e.completedAt)) === todayStr)
+      .filter((e) => e.manicuristId === manicurist.id && getBusinessDayLA(new Date(e.completedAt)) === todayStr)
       .sort((a, b) => b.completedAt - a.completedAt);
   }, [state.completed, manicurist.id, todayStr]);
   // The queue entry this manicurist is currently working on (if any).
