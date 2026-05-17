@@ -806,7 +806,18 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             <p className="font-bebas text-2xl text-sky-600 tracking-[3px] mt-1">ENJOY YOUR BREAK!</p>
             <button
               type="button"
-              onClick={() => dispatch({ type: 'END_BREAK', id: manicurist.id })}
+              onClick={async () => {
+                // Staff mode is read-only for the AppContext sync effect, so a
+                // local-only dispatch never reaches Supabase and other devices
+                // (front desk's "live" screen) never see the change. Mirror
+                // the SMS-opt-in pattern: write directly to the DB so realtime
+                // broadcasts it, then dispatch locally for an instant UI flip.
+                await supabase
+                  .from('manicurists')
+                  .update({ status: 'available', break_start_time: null })
+                  .eq('id', manicurist.id);
+                dispatch({ type: 'END_BREAK', id: manicurist.id });
+              }}
               className="mt-3 px-6 py-2.5 rounded-full bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white font-mono text-sm font-bold tracking-wider shadow-sm transition-all"
               aria-label="End break and return to queue"
             >
