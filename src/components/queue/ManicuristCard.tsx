@@ -47,7 +47,7 @@ function UpcomingApptWarning({ manicuristId }: { manicuristId: string }) {
     return () => clearInterval(id);
   }, []);
   const mins = getMinsToNextAppt(manicuristId, state.appointments);
-  if (mins === null || mins >= 20) return null;
+  if (mins === null || mins >= 30) return null;
   return (
     <span
       className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[9px] px-1.5 py-0.5 bg-red-500 text-white animate-pulse leading-none"
