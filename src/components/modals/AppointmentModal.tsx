@@ -3,6 +3,7 @@ import { X, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../shared/Modal';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
+import { supabase } from '../../lib/supabase';
 import {
   upsertCustomerFromIntake, toTitleCase, formatPhoneDashed,
   searchCustomers, displayCustomerName, normalizePhone, matchAppointments,
@@ -184,6 +185,23 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     }
   }
   const [notes, setNotes] = useState('');
+  // "Permanent note" — when checked, the note is saved to the customer
+  // record (customers.notes) so it pre-populates on every future booking
+  // for this person. Unchecked → note stays on the appointment only.
+  const [permanentNote, setPermanentNote] = useState(false);
+
+  // Prefill notes + check the "permanent" box when we land on a customer
+  // with a saved note. Only fires when notes is currently empty so we
+  // never clobber what the receptionist has been typing.
+  useEffect(() => {
+    if (mode !== 'add') return;
+    if (!matchedCustomer) return;
+    const stored = (matchedCustomer.notes ?? '').trim();
+    if (!stored) return;
+    if (notes.trim().length > 0) return;
+    setNotes(stored);
+    setPermanentNote(true);
+  }, [mode, matchedCustomer, notes]);
   const [sameTime, setSameTime] = useState(false);
   // Receptionist-confirmation when booking would overlap an existing
   // appointment in the same column. Holds the new-booking summary + the
@@ -248,6 +266,20 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       setDate(editing.date);
       setTime(editing.time);
       setNotes(editing.notes);
+      // Edit mode: look up the customer by phone so we can detect when
+      // this appointment's note matches the customer's permanent note,
+      // and pre-check the box accordingly.
+      const _phoneForLookup = (editing.clientPhone ?? '').trim();
+      if (_phoneForLookup) {
+        searchCustomers(_phoneForLookup, 5).then((rows) => {
+          const c = rows.find((r) => normalizePhone(r.phone) === normalizePhone(_phoneForLookup));
+          if (!c) return;
+          setMatchedCustomer(c);
+          if ((c.notes ?? '').trim() && (c.notes ?? '').trim() === (editing.notes ?? '').trim()) {
+            setPermanentNote(true);
+          }
+        }).catch(() => {});
+      }
       setSameTime(editing.sameTime || false);
       setPartyGroup(!!editing.partyId);
 
@@ -711,11 +743,19 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         bookedByReceptionistId: receptionistId,
       };
       dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
-      void upsertCustomerFromIntake({
-        firstName: clientFirstName,
-        lastName: clientLastName,
-        phone: clientPhone,
-      });
+      void (async () => {
+        const cid = await upsertCustomerFromIntake({
+          firstName: clientFirstName,
+          lastName: clientLastName,
+          phone: clientPhone,
+        });
+        if (cid && permanentNote) {
+          await supabase
+            .from('customers')
+            .update({ notes: notes.trim(), updated_at: new Date().toISOString() })
+            .eq('id', cid);
+        }
+      })();
       const receptionist = receptionistId
         ? state.manicurists.find((m) => m.id === receptionistId)
         : null;
@@ -745,11 +785,19 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
     // Edit path: dispatch already ran above. Sync the customer profile and
     // close the modal.
-    void upsertCustomerFromIntake({
-      firstName: clientFirstName,
-      lastName: clientLastName,
-      phone: clientPhone,
-    });
+    void (async () => {
+      const cid = await upsertCustomerFromIntake({
+        firstName: clientFirstName,
+        lastName: clientLastName,
+        phone: clientPhone,
+      });
+      if (cid && permanentNote) {
+        await supabase
+          .from('customers')
+          .update({ notes: notes.trim(), updated_at: new Date().toISOString() })
+          .eq('id', cid);
+      }
+    })();
 
     handleClose();
   }
@@ -1118,6 +1166,17 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             rows={2}
             className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all resize-none"
           />
+          <label className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-gray-200 bg-white cursor-pointer hover:bg-gray-50 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={permanentNote}
+              onChange={(e) => setPermanentNote(e.target.checked)}
+              className="w-4 h-4 accent-pink-500"
+            />
+            <span className="font-mono text-[11px] text-gray-700">
+              Save as permanent customer note (auto-loads on future bookings)
+            </span>
+          </label>
         </div>
 
         {mode === 'edit' ? (
