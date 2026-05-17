@@ -365,36 +365,69 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   //  - { kind: 'noneAvailable' }: no skilled manicurist is free (or no
   //    manicurist has the required skills at all) — receptionist should be
   //    prompted to override and book unassigned.
-  function findAutoAssignManicurist(): { kind: 'found'; manicuristId: string } | { kind: 'noneAvailable' } {
+  // Pick a distinct skilled+free manicurist for EACH service in the
+  // appointment so a 2-pedicure booking with no requested staff lands on
+  // two different columns (not stacked back-to-back under one manicurist).
+  // Greedy backtracking; prefers manicurists whose columns are close
+  // together (by sort_order proxy) so the resulting blocks appear "near
+  // each other" in the book.
+  function findAutoAssignManicurists(): { kind: 'found'; perService: (string | null)[] } | { kind: 'noneAvailable' } {
     const [sh, sm] = time.split(':').map(Number);
     const apptStartMin = sh * 60 + sm;
-
-    const allServiceNames = selectedServices.map((s) => s.serviceName as string);
-    const skilled = state.manicurists
-      .filter((m) => allServiceNames.every((sv) => m.skills.includes(sv as ServiceType)))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    if (skilled.length === 0) return { kind: 'noneAvailable' };
-
     const occupancy = computeOtherAppointmentOccupancy();
-    for (const m of skilled) {
-      // Total duration depends on the candidate's per-service time tweaks.
-      let totalDur = 0;
-      if (sameTime) {
-        for (const s of selectedServices) {
-          const d = durOf(s.serviceName, m.id, s.durationAdjustment);
-          if (d > totalDur) totalDur = d;
-        }
-      } else {
-        for (const s of selectedServices) {
-          totalDur += durOf(s.serviceName, m.id, s.durationAdjustment);
-        }
+
+    // state.manicurists is sorted by sort_order (column order in the book).
+    const orderIdxById = new Map<string, number>();
+    state.manicurists.forEach((m, idx) => orderIdxById.set(m.id, idx));
+
+    // For each service, the set of manicurists that are (a) skilled and
+    // (b) free for that service's parallel time window at apptStartMin.
+    const candidatesByService: string[][] = selectedServices.map((s) => {
+      const skilled = state.manicurists.filter((m) => m.skills.includes(s.serviceName as ServiceType));
+      return skilled
+        .filter((m) => {
+          const dur = durOf(s.serviceName, m.id, s.durationAdjustment);
+          const endMin = apptStartMin + dur;
+          const arr = occupancy.get(m.id) ?? [];
+          return !arr.some((iv) => iv.startMin < endMin && iv.endMin > apptStartMin);
+        })
+        .map((m) => m.id);
+    });
+    if (candidatesByService.some((c) => c.length === 0)) return { kind: 'noneAvailable' };
+
+    // Greedy backtracking ordered by most-constrained service first.
+    const serviceOrder = candidatesByService
+      .map((_, idx) => idx)
+      .sort((a, b) => candidatesByService[a].length - candidatesByService[b].length);
+    const used = new Set<string>();
+    const result: (string | null)[] = new Array(selectedServices.length).fill(null);
+
+    function pick(orderIdx: number): boolean {
+      if (orderIdx >= serviceOrder.length) return true;
+      const svcIdx = serviceOrder[orderIdx];
+      const cands = candidatesByService[svcIdx].filter((id) => !used.has(id));
+      if (cands.length === 0) return false;
+      // Sort by proximity to already-picked columns so adjacent service
+      // blocks land in adjacent (or close) columns.
+      cands.sort((a, b) => {
+        if (used.size === 0) return (orderIdxById.get(a) ?? 0) - (orderIdxById.get(b) ?? 0);
+        const dist = (id: string) => Math.min(
+          ...Array.from(used).map((u) => Math.abs((orderIdxById.get(id) ?? 0) - (orderIdxById.get(u) ?? 0))),
+        );
+        return dist(a) - dist(b);
+      });
+      for (const c of cands) {
+        used.add(c);
+        result[svcIdx] = c;
+        if (pick(orderIdx + 1)) return true;
+        used.delete(c);
+        result[svcIdx] = null;
       }
-      const apptEndMin = apptStartMin + totalDur;
-      const arr = occupancy.get(m.id) ?? [];
-      const conflict = arr.some((iv) => iv.startMin < apptEndMin && iv.endMin > apptStartMin);
-      if (!conflict) return { kind: 'found', manicuristId: m.id };
+      return false;
     }
-    return { kind: 'noneAvailable' };
+
+    if (!pick(0)) return { kind: 'noneAvailable' };
+    return { kind: 'found', perService: result };
   }
 
   function findBookingPreview(): BookingPreview {
@@ -511,12 +544,13 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
     const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
 
-    // Auto-assignment: when this is a brand-new booking, no specific manicurist
-    // was requested on any service, and the receptionist didn't open the modal
-    // by clicking into a particular column, try to pick a skilled manicurist who
-    // is free at the requested time. If none is free, show a popup; the
-    // receptionist can override and book the appointment as unassigned.
-    let autoManicuristId: string | null = null;
+    // Auto-assignment: brand-new booking, no specific manicurist requested,
+    // no draft column → pick a DISTINCT skilled+free manicurist for EACH
+    // service so they land in different columns at the same time slot
+    // ("near each other" instead of stacked under one person back-to-back).
+    // If we can't find enough distinct free staff, prompt the receptionist
+    // and let them book as unassigned.
+    let autoPerService: (string | null)[] | null = null;
     const shouldAutoAssign =
       mode === 'add' &&
       firstRequestedId == null &&
@@ -524,9 +558,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       selectedServices.length > 0;
     if (shouldAutoAssign) {
       if (pendingAutoAssign === null) {
-        const result = findAutoAssignManicurist();
+        const result = findAutoAssignManicurists();
         if (result.kind === 'found') {
-          autoManicuristId = result.manicuristId;
+          autoPerService = result.perService;
         } else {
           setPendingAutoAssign({
             servicesLabel: selectedServices.map((s) => s.serviceName).join(', '),
@@ -536,22 +570,46 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           return;
         }
       } else if (!pendingAutoAssign.approved) {
-        // Popup is open but receptionist hasn't decided yet — bail.
         return;
       }
-      // pendingAutoAssign.approved === true: book as unassigned.
+      // approved → autoPerService stays null → book as fully unassigned.
+    }
+
+    // Inject per-service auto picks into serviceRequests. Each gets its
+    // own column placement (manicuristIds = [picked]) but NOT clientRequest
+    // — the customer didn't pick this manicurist, the system did.
+    if (autoPerService) {
+      const seen: Record<string, number> = {};
+      for (let i = 0; i < selectedServices.length; i++) {
+        const s = selectedServices[i];
+        const pickedId = autoPerService[i];
+        if (!pickedId) continue;
+        const occ = seen[s.serviceName] ?? 0;
+        seen[s.serviceName] = occ + 1;
+        const matches = serviceRequests.filter((r) => r.service === s.serviceName);
+        const existing = matches[occ];
+        if (existing) {
+          existing.manicuristIds = [pickedId];
+        } else {
+          const apptAdj = s.durationAdjustment !== 0 ? { durationAdjustment: s.durationAdjustment } : {};
+          serviceRequests.push({
+            service: s.serviceName as ServiceType,
+            manicuristIds: [pickedId],
+            ...apptAdj,
+          });
+        }
+      }
     }
 
     // If no specific manicurist was requested in a service, fall back to the column
     // the receptionist clicked on when opening the modal (draft?.manicuristId)
     // For edit mode: preserve existing manicuristId if no new client request was made.
     // For add mode: fall back to the column the receptionist clicked on (draft?.manicuristId)
-    // or the auto-assigned id from above.
+    // or the first auto-assigned id from above.
     const appointmentManicuristId = firstRequestedId
       ?? (mode === 'edit' && editing ? editing.manicuristId : null)
       ?? draft?.manicuristId
-      ?? autoManicuristId
-      ?? null;
+      ?? autoPerService?.find((id) => id != null) ?? null;
     const name = clientName.trim() || 'Walk-in';
 
     // Auto-link party group: when "Party group" is checked, look for another appointment
@@ -589,7 +647,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           date,
           time,
           notes: notes.trim(),
-          sameTime,
+          sameTime: autoPerService && selectedServices.length > 1 ? true : sameTime,
           partyId,
           lastEditedByReceptionistId: editingReceptionistId,
         },
@@ -612,7 +670,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         notes: notes.trim(),
         status: 'scheduled',
         createdAt: Date.now(),
-        sameTime,
+        sameTime: autoPerService && selectedServices.length > 1 ? true : sameTime,
         partyId,
         bookedByReceptionistId: receptionistId,
       };
@@ -1125,7 +1183,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       )}
     {pendingAutoAssign && !pendingAutoAssign.approved && (
       <ConfirmDialog
-        message={`No skilled manicurist is free for ${pendingAutoAssign.servicesLabel} at ${pendingAutoAssign.timeLabel}. Book as unassigned? You can drag the appointment to a manicurist's column later.`}
+        message={`Can't find enough free skilled manicurists for ${pendingAutoAssign.servicesLabel} at ${pendingAutoAssign.timeLabel} (one per service, no overlaps). Book as unassigned? You can drag each service to a manicurist's column later.`}
         confirmLabel="Book unassigned"
         onConfirm={() => {
           setPendingAutoAssign({ ...pendingAutoAssign, approved: true });
