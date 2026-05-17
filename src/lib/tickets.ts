@@ -1630,6 +1630,41 @@ export async function voidTicket(
     console.error('[tickets] voidTicket:', error.message);
     return false;
   }
+
+  // Strip the corresponding completed_services rows. Without this, voided
+  // services keep showing up on staff portal lists (e.g. Kelly seeing
+  // Gina/Gggina/Silvia after their tickets were voided as duplicates).
+  // Match by ticket_items.queue_entry_id; some ids carry a `#svc<n>`
+  // suffix for multi-service entries — strip that before matching the
+  // base completed_services row.
+  try {
+    const { data: itemRows, error: iErr } = await supabase
+      .from('ticket_items')
+      .select('queue_entry_id')
+      .eq('ticket_id', ticketId);
+    if (iErr) {
+      console.warn('[tickets] voidTicket items fetch:', iErr.message);
+    } else {
+      const queueIds = new Set<string>();
+      for (const r of (itemRows ?? []) as Array<{ queue_entry_id: string | null }>) {
+        if (!r.queue_entry_id) continue;
+        const base = r.queue_entry_id.split('#')[0];
+        queueIds.add(base);
+      }
+      if (queueIds.size > 0) {
+        const { error: delErr } = await supabase
+          .from('completed_services')
+          .delete()
+          .in('id', Array.from(queueIds));
+        if (delErr) {
+          console.warn('[tickets] voidTicket completed_services delete:', delErr.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[tickets] voidTicket cleanup unexpected:', err);
+  }
+
   return true;
 }
 
