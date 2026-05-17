@@ -1236,6 +1236,7 @@ async function maybeBackfillTicketsForAssignedEntries(
   queue: QueueEntry[],
   prevById: Map<string, QueueEntry>,
   manicurists: AppState['manicurists'],
+  salonServices: AppState['salonServices'],
 ) {
   for (const c of queue) {
     const previous = prevById.get(c.id);
@@ -1250,6 +1251,30 @@ async function maybeBackfillTicketsForAssignedEntries(
       } catch (err) {
         console.warn('[syncQueue] backfillTicketStaff failed for', c.id, err);
       }
+    }
+  }
+
+  // Self-healing pass for SPLIT_AND_ASSIGN sibling visits: every assigned
+  // entry that belongs to a multi-sibling visit (parentQueueId points at a
+  // shared parent and another queue entry shares it) is reconciled via
+  // syncEntryToTicket. The helper is idempotent — it only writes when the
+  // ticket is missing a line for this sibling, which is exactly the case
+  // the old inFlightAutoCreates lock-leak left behind (Stacy / Marie).
+  // Now any sibling that ever gets missed — by an interrupted sync, a
+  // crashed tab, or a future race — gets reconciled on the next tick.
+  const siblingCountByVisit = new Map<string, number>();
+  for (const c of queue) {
+    if (!c.parentQueueId) continue;
+    siblingCountByVisit.set(c.parentQueueId, (siblingCountByVisit.get(c.parentQueueId) ?? 0) + 1);
+  }
+  for (const c of queue) {
+    if (!c.assignedManicuristId) continue;
+    if (!c.parentQueueId) continue;
+    if ((siblingCountByVisit.get(c.parentQueueId) ?? 0) < 2) continue;
+    try {
+      await syncEntryToTicket(c, manicurists, salonServices);
+    } catch (err) {
+      console.warn('[syncQueue] sibling reconcile failed for', c.id, err);
     }
   }
 }
@@ -1290,7 +1315,7 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   if (changed.length === 0) {
     // No queue rows to upsert, but assignment changes still need to backfill
     // tickets in case the ticket was created before staff was assigned.
-    await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists);
+    await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists, salonServices);
     return;
   }
   const { error: upsertErr } = await withRetry(() => supabase.from('queue_entries').upsert(changed, { onConflict: 'id' }));
@@ -1299,7 +1324,7 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // For existing entries whose assignedManicuristId just transitioned from
   // null to a real id, patch the corresponding ticket's staff so checkout
   // shows the right manicurist even before the service is completed.
-  await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists);
+  await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists, salonServices);
 
   // Auto-create a Register ticket the moment a manicurist gets assigned.
   // Triggered by:
