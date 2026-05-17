@@ -1,10 +1,11 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { CheckCircle, Coffee, LogIn, LogOut, ChevronUp, ChevronDown, XCircle, CreditCard as Edit, Bell, BellOff } from 'lucide-react';
 import type { Manicurist, QueueEntry } from '../../types';
 import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { SharedAutoFitText } from '../shared/SharedAutoFitText';
-import { useAppDispatch } from '../../state/AppContext';
+import { useAppDispatch, useApp } from '../../state/AppContext';
+import { getMinsToNextAppt } from '../modals/assignHelpers';
 import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
 import BreakElapsedBadge from './BreakElapsedBadge';
@@ -30,6 +31,31 @@ function getStatusConfig(status: Manicurist['status']) {
     case 'break':
       return { label: 'BREAK', color: 'bg-amber-500', badge: 'amber' as const };
   }
+}
+
+// Small self-contained pill that flashes when this manicurist has a
+// REQUESTED appointment starting within 20 minutes. Lives outside the
+// memoized ManicuristCard so its own re-renders (on a 30s tick and on
+// appointment state changes) don't force the parent card to re-render.
+function UpcomingApptWarning({ manicuristId }: { manicuristId: string }) {
+  const { state } = useApp();
+  // Tick once a minute so the count stays accurate without re-rendering
+  // every second.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const mins = getMinsToNextAppt(manicuristId, state.appointments);
+  if (mins === null || mins >= 20) return null;
+  return (
+    <span
+      className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[9px] px-1.5 py-0.5 bg-red-500 text-white animate-pulse leading-none"
+      title="Manicurist has a requested appointment coming up"
+    >
+      APPT IN {mins}M
+    </span>
+  );
 }
 
 function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, isLast, turnRank, totalRanked, clientDurationMs = 0, hasPushSub = false }: ManicuristCardProps) {
@@ -299,6 +325,7 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
                 ) && (
                   <span className="shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
                 )}
+                <UpcomingApptWarning manicuristId={manicurist.id} />
               </div>
               <div className="flex items-center gap-1">
                 <button
