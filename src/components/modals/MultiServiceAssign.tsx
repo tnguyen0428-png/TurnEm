@@ -20,6 +20,7 @@ import {
   getEligibleForService,
   getSuggestedForService,
   ServiceHistory,
+  getMinsToNextAppt,
 } from './assignHelpers';
 
 export function MultiServiceAssign({ client }: { client: QueueEntry }) {
@@ -572,6 +573,15 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                 {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && rowIs4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
                                 {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && !rowIs4thSpecial && !requestedId && <Badge label="RECOMMENDED" variant="green" />}
                                 {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
+                                {(() => {
+                                  const apptIn = getMinsToNextAppt(m.id, state.appointments);
+                                  if (apptIn === null || apptIn >= 20) return null;
+                                  return (
+                                    <span className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 bg-red-100 text-red-700 animate-pulse">
+                                      APPT IN {apptIn} MIN
+                                    </span>
+                                  );
+                                })()}
                                 {m._takenByOther && (
                                   <span className="font-mono text-[9px] text-amber-500">(assigned above)</span>
                                 )}

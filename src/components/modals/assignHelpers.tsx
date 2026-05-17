@@ -1,6 +1,7 @@
 import { CheckCircle } from 'lucide-react';
 import { isWaxService, waxRotationCompare, WAX } from '../../utils/salonRules';
-import type { QueueEntry, SalonService, ServiceType, Manicurist } from '../../types';
+import type { QueueEntry, SalonService, ServiceType, Manicurist, Appointment } from '../../types';
+import { getTodayLA } from '../../utils/time';
 
 export function ServiceHistory({ m }: { m: Manicurist }) {
   const checks = [m.hasFourthPositionSpecial, m.hasCheck2, m.hasCheck3].filter(Boolean).length;
@@ -170,4 +171,44 @@ export function getSuggestedForService(service: ServiceType, manicurists: Manicu
     return [...eligible].sort(waxRotationCompare)[0];
   }
   return eligible[0];
+}
+
+// Minutes until this manicurist's NEXT still-active appointment today, or
+// null when they have nothing scheduled in the foreseeable window. Used to
+// surface a "⚠ appt in N min" warning pill at assignment time so the
+// receptionist doesn't book a 45-minute walk-in onto someone whose
+// appointment is about to walk through the door. "On the appointment"
+// means either the appt's primary manicurist or any per-service request.
+export function getMinsToNextAppt(manicuristId: string, appointments: Appointment[]): number | null {
+  const todayLA = getTodayLA();
+  // Current time as minutes-since-midnight in LA.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date());
+  const nh = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+  const nm = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10);
+  const nowMins = nh * 60 + nm;
+
+  let minDelta: number | null = null;
+  for (const a of appointments) {
+    if (a.date !== todayLA) continue;
+    if (a.status !== 'scheduled' && a.status !== 'checked-in') continue;
+    // Only honor REQUESTED appointments: ones where the client explicitly
+    // asked for this manicurist. Column placements (a.manicuristId, or a
+    // serviceRequest without clientRequest=true) are bookings parked under
+    // a tech for layout — they're not a commitment to that person, so we
+    // skip them. Otherwise every appointment in someone's column would set
+    // off the warning even when the client doesn't care who does the work.
+    const isRequested = (a.serviceRequests || []).some(
+      (r) => r.clientRequest === true && (r.manicuristIds || []).includes(manicuristId),
+    );
+    if (!isRequested) continue;
+    const [h, m] = (a.time || '00:00').split(':').map(Number);
+    const apptMins = h * 60 + m;
+    const delta = apptMins - nowMins;
+    if (delta < 0) continue; // already started
+    if (minDelta === null || delta < minDelta) minDelta = delta;
+  }
+  return minDelta;
 }

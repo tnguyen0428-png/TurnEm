@@ -13,7 +13,7 @@ import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
 import type { QueueEntry, ServiceType } from '../../types';
 import { isWaxService, isAcrylicService, getSamPreferenceForServices, waxRotationCompare } from '../../utils/salonRules';
-import { getClientDurationMs, formatServiceList, ServiceHistory } from './assignHelpers';
+import { getClientDurationMs, formatServiceList, ServiceHistory, getMinsToNextAppt } from './assignHelpers';
 
 export function SingleServiceAssign({ client }: { client: QueueEntry }) {
   const { state, dispatch } = useApp();
@@ -293,6 +293,15 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                         {!isSamPreferred && !isAlmostDone && m.id === suggestedId && is4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
                         {!isSamPreferred && !isAlmostDone && m.id === suggestedId && !is4thSpecial && requestedIds.size === 0 && <Badge label="RECOMMENDED" variant="green" />}
                         {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
+                        {(() => {
+                          const apptIn = getMinsToNextAppt(m.id, state.appointments);
+                          if (apptIn === null || apptIn >= 20) return null;
+                          return (
+                            <span className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 bg-red-100 text-red-700 animate-pulse">
+                              APPT IN {apptIn} MIN
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="flex items-center gap-4">
                         {isBusy && (
