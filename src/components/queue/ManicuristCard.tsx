@@ -50,10 +50,10 @@ function UpcomingApptWarning({ manicuristId }: { manicuristId: string }) {
   if (mins === null || mins >= 30) return null;
   return (
     <span
-      className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[9px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 border border-yellow-400 animate-pulse leading-none"
+      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono text-[11px] font-bold bg-yellow-400 text-yellow-900 animate-pulse tabular-nums shadow-sm"
       title="Manicurist has a requested appointment coming up"
     >
-      APPT IN {mins}M
+      Appt in {mins}m
     </span>
   );
 }
@@ -317,7 +317,7 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
           <div className="bg-red-50 rounded-lg p-1.5 mb-1.5">
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-1 min-w-0">
-                <p className="font-mono text-[10px] font-semibold text-red-700 truncate">
+                <p className="font-mono text-[10px] font-semibold text-gray-900 truncate">
                   {currentClient.clientName}
                 </p>
                 {currentClient.serviceRequests?.some(
@@ -325,9 +325,15 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
                 ) && (
                   <span className="shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
                 )}
-                <UpcomingApptWarning manicuristId={manicurist.id} />
               </div>
               <div className="flex items-center gap-1">
+                <button
+                  onClick={() => dispatch({ type: 'UPDATE_CLIENT', id: currentClient.id, updates: { extraTimeMs: (currentClient.extraTimeMs || 0) + 5 * 60000 } })}
+                  className="flex items-center justify-center px-1.5 py-0.5 rounded font-mono text-[9px] font-bold bg-red-100 text-red-600 hover:bg-red-200 active:scale-95 transition-all"
+                  title="Add 5 minutes"
+                >
+                  +5m
+                </button>
                 <button
                   onClick={handleEditClient}
                   className="flex items-center justify-center p-0.5 rounded hover:bg-red-100 transition-colors"
@@ -337,26 +343,20 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
                 </button>
               </div>
             </div>
-            <div className="flex items-center gap-1.5 mb-1">
+            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
               <CountdownBadge
                 startedAt={currentClient.startedAt}
                 totalDurationMs={clientDurationMs}
                 status={manicurist.status}
               />
-              <button
-                onClick={() => dispatch({ type: 'UPDATE_CLIENT', id: currentClient.id, updates: { extraTimeMs: (currentClient.extraTimeMs || 0) + 5 * 60000 } })}
-                className="flex items-center justify-center px-1.5 py-0.5 rounded font-mono text-[9px] font-bold bg-red-100 text-red-600 hover:bg-red-200 active:scale-95 transition-all"
-                title="Add 5 minutes"
-              >
-                +5m
-              </button>
+              <UpcomingApptWarning manicuristId={manicurist.id} />
             </div>
             {currentClient.services.length > 0 && (
               <div className="flex flex-wrap gap-0.5 mt-1">
                 {currentClient.services.map((svc) => (
                   <span
                     key={svc}
-                    className="font-mono text-[9px] bg-red-100 text-red-600 rounded px-1 py-0.5 leading-none"
+                    className="font-mono text-[9px] bg-red-100 text-gray-900 rounded px-1 py-0.5 leading-none font-semibold"
                   >
                     {svc}
                   </span>
