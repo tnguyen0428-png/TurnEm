@@ -286,6 +286,34 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     return arr.some((iv) => iv.apptId !== excludeApptId && iv.startMin < endMin && iv.endMin > startMin);
   }
 
+  // True when this manicurist isn't working on the selected date for the
+  // given time window — either on a time-off range, no schedule for this
+  // weekday (= recurring day off), or the window falls outside their
+  // working hours / inside their lunch break. Used so the same-time
+  // fan-out below skips columns the tech doesn't actually work, which
+  // is why a 3-pedicure unassigned appointment used to render one block
+  // into Tommy's column on a Monday even though he's off.
+  const _bookWeekday = weekdayFromYmd(selectedDate);
+  function columnIsOffOnDate(manId: string, startMin: number, endMin: number): boolean {
+    const inTimeOff = state.staffTimeOff.some(
+      (t) => t.manicuristId === manId && selectedDate >= t.startDate && selectedDate <= t.endDate,
+    );
+    if (inTimeOff) return true;
+    const sched = state.staffSchedules.find(
+      (s) => s.manicuristId === manId && s.weekday === _bookWeekday,
+    );
+    if (!sched) return true;
+    const schedStart = timeToMins(sched.startTime);
+    const schedEnd = timeToMins(sched.endTime);
+    if (startMin < schedStart || endMin > schedEnd) return true;
+    if (sched.lunchStart && sched.lunchEnd) {
+      const lStart = timeToMins(sched.lunchStart);
+      const lEnd = timeToMins(sched.lunchEnd);
+      if (startMin < lEnd && endMin > lStart) return true;
+    }
+    return false;
+  }
+
   // ── Auto-fit columns + slots to viewport ────────────────────────────────
   useLayoutEffect(() => {
     if (!containerRef.current) return;
@@ -578,18 +606,21 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               (m) =>
                 (m.skills.length === 0 || m.skills.includes(svcName)) &&
                 !usedColumnIds.has(m.id) &&
+                !columnIsOffOnDate(m.id, tentativeStartMin, tentativeEndMin) &&
                 !columnBusyInRange(m.id, tentativeStartMin, tentativeEndMin, appt.id)
             );
             if (freeAndSkilled) {
               assignedMId = freeAndSkilled.id;
             } else {
               // No free column for the requested service — best-effort
-              // fallback so the block is still visible. The receptionist
-              // sees a stacked block and can resolve manually.
+              // fallback so the block is still visible. Still avoid
+              // off-schedule techs so we don't quietly land work on a
+              // day they're not in.
               const skilledColMani = manicurists.find(
                 (m) =>
                   (m.skills.length === 0 || m.skills.includes(svcName)) &&
-                  !usedColumnIds.has(m.id)
+                  !usedColumnIds.has(m.id) &&
+                  !columnIsOffOnDate(m.id, tentativeStartMin, tentativeEndMin)
               );
               assignedMId = skilledColMani?.id ?? fallbackMId ?? null;
             }

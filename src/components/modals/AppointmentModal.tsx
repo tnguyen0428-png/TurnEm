@@ -376,18 +376,54 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     const apptStartMin = sh * 60 + sm;
     const occupancy = computeOtherAppointmentOccupancy();
 
+    // Compute the appointment's weekday (0=Sun..6=Sat) from the date
+    // string so we can look up each manicurist's recurring schedule.
+    const [yy, mm, dd] = date.split('-').map(Number);
+    const apptWeekday = new Date(yy, mm - 1, dd).getDay();
+
+    // Inline helper: does this manicurist actually work the requested time
+    // window on the appointment date? Skips when they're on time-off for
+    // the date, have no schedule for the weekday (= recurring day off),
+    // their hours don't cover the window, or the window overlaps lunch.
+    function manicuristIsWorking(manicuristId: string, startMin: number, endMin: number): boolean {
+      const inTimeOff = state.staffTimeOff.some(
+        (t) => t.manicuristId === manicuristId && date >= t.startDate && date <= t.endDate,
+      );
+      if (inTimeOff) return false;
+      const sched = state.staffSchedules.find(
+        (s) => s.manicuristId === manicuristId && s.weekday === apptWeekday,
+      );
+      if (!sched) return false; // no schedule row for that weekday = off
+      const toMin = (hhmm: string): number => {
+        const [h, m] = hhmm.split(':').map(Number);
+        return h * 60 + m;
+      };
+      const schedStart = toMin(sched.startTime);
+      const schedEnd = toMin(sched.endTime);
+      if (startMin < schedStart || endMin > schedEnd) return false;
+      if (sched.lunchStart && sched.lunchEnd) {
+        const lStart = toMin(sched.lunchStart);
+        const lEnd = toMin(sched.lunchEnd);
+        if (startMin < lEnd && endMin > lStart) return false;
+      }
+      return true;
+    }
+
     // state.manicurists is sorted by sort_order (column order in the book).
     const orderIdxById = new Map<string, number>();
     state.manicurists.forEach((m, idx) => orderIdxById.set(m.id, idx));
 
-    // For each service, the set of manicurists that are (a) skilled and
-    // (b) free for that service's parallel time window at apptStartMin.
+    // For each service, the set of manicurists that are (a) skilled,
+    // (b) scheduled to work the requested time window on that weekday
+    // (not off, not on lunch, not on time-off), and (c) free of overlap
+    // with other booked appointments in that window.
     const candidatesByService: string[][] = selectedServices.map((s) => {
       const skilled = state.manicurists.filter((m) => m.skills.includes(s.serviceName as ServiceType));
       return skilled
         .filter((m) => {
           const dur = durOf(s.serviceName, m.id, s.durationAdjustment);
           const endMin = apptStartMin + dur;
+          if (!manicuristIsWorking(m.id, apptStartMin, endMin)) return false;
           const arr = occupancy.get(m.id) ?? [];
           return !arr.some((iv) => iv.startMin < endMin && iv.endMin > apptStartMin);
         })
