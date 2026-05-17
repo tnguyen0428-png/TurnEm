@@ -577,7 +577,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                   const apptIn = getMinsToNextAppt(m.id, state.appointments);
                                   if (apptIn === null || apptIn >= 30) return null;
                                   return (
-                                    <span className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 bg-red-100 text-red-700 animate-pulse">
+                                    <span className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 bg-yellow-100 text-yellow-700 border border-yellow-400 animate-pulse">
                                       APPT IN {apptIn} MIN
                                     </span>
                                   );

@@ -50,7 +50,7 @@ function UpcomingApptWarning({ manicuristId }: { manicuristId: string }) {
   if (mins === null || mins >= 30) return null;
   return (
     <span
-      className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[9px] px-1.5 py-0.5 bg-red-500 text-white animate-pulse leading-none"
+      className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[9px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 border border-yellow-400 animate-pulse leading-none"
       title="Manicurist has a requested appointment coming up"
     >
       APPT IN {mins}M
