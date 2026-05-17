@@ -1093,7 +1093,9 @@ export async function syncEntryToTicket(
 ): Promise<boolean> {
   if (!entry.assignedManicuristId) return false;
 
-  const visitId = entry.parentQueueId ?? entry.id;
+  // Normalize via getVisitId so deeper sibling entries (whose
+  // parentQueueId carries `-waiting` suffixes) still resolve to the root.
+  const visitId = getVisitId(entry.parentQueueId ?? entry.id);
 
   const { data: tRow, error: tErr } = await supabase
     .from('tickets')

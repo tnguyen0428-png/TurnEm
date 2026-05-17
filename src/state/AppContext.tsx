@@ -1350,7 +1350,10 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   });
 
   for (const entry of justAssigned) {
-    const visitId = entry.parentQueueId ?? entry.id;
+    // Normalize to the bare visit UUID so deeper SPLIT_AND_ASSIGN
+    // siblings (whose parentQueueId carries `-waiting` / `-mani-X` suffixes)
+    // all resolve to the same root ticket instead of opening duplicates.
+    const visitId = getVisitId(entry.parentQueueId ?? entry.id);
     try {
       // Race guard keyed on the VISIT id, so all siblings of a split share
       // the same lock — no two siblings can create parallel tickets. If a
@@ -1521,7 +1524,7 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
       !completedIds.has(p.id),
   );
   for (const removed of removedWithoutCompletion) {
-    const visitId = removed.parentQueueId ?? removed.id;
+    const visitId = getVisitId(removed.parentQueueId ?? removed.id);
     const staffId = removed.assignedManicuristId;
     if (!staffId) continue;
     try {
