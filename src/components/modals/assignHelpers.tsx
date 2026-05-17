@@ -179,7 +179,11 @@ export function getSuggestedForService(service: ServiceType, manicurists: Manicu
 // receptionist doesn't book a 45-minute walk-in onto someone whose
 // appointment is about to walk through the door. "On the appointment"
 // means either the appt's primary manicurist or any per-service request.
-export function getMinsToNextAppt(manicuristId: string, appointments: Appointment[]): number | null {
+export function getMinsToNextAppt(
+  manicuristId: string,
+  appointments: Appointment[],
+  includePast = false,
+): number | null {
   const todayLA = getTodayLA();
   // Current time as minutes-since-midnight in LA.
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -207,8 +211,8 @@ export function getMinsToNextAppt(manicuristId: string, appointments: Appointmen
     const [h, m] = (a.time || '00:00').split(':').map(Number);
     const apptMins = h * 60 + m;
     const delta = apptMins - nowMins;
-    if (delta < 0) continue; // already started
-    if (minDelta === null || delta < minDelta) minDelta = delta;
+    if (!includePast && delta < 0) continue; // skip overdue when not asked for
+    if (minDelta === null || Math.abs(delta) < Math.abs(minDelta)) minDelta = delta;
   }
   return minDelta;
 }

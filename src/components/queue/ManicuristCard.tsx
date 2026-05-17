@@ -46,14 +46,21 @@ function UpcomingApptWarning({ manicuristId }: { manicuristId: string }) {
     const id = setInterval(() => setTick((t) => t + 1), 60_000);
     return () => clearInterval(id);
   }, []);
-  const mins = getMinsToNextAppt(manicuristId, state.appointments);
-  if (mins === null || mins >= 30) return null;
+  // includePast=true → the helper returns negative minutes for an appt
+  // whose time has already passed. We keep flashing the pill in that
+  // case so the manicurist sees the customer waiting; the pill only
+  // disappears when the busy block itself does (i.e. current service
+  // is completed and the manicurist leaves status === 'busy').
+  const mins = getMinsToNextAppt(manicuristId, state.appointments, true);
+  if (mins === null) return null;
+  if (mins >= 30) return null;
+  const label = mins >= 0 ? `Appt in ${mins}m` : `Appt ${Math.abs(mins)}m late`;
   return (
     <span
       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono text-[11px] font-bold bg-yellow-400 text-yellow-900 animate-pulse tabular-nums shadow-sm"
-      title="Manicurist has a requested appointment coming up"
+      title="Manicurist has a requested appointment coming up or overdue"
     >
-      Appt in {mins}m
+      {label}
     </span>
   );
 }
