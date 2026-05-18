@@ -447,13 +447,19 @@ export async function reconcileMissingTicketsForDate(
     status: string;
   };
   const existingRows = (existing ?? []) as ExistingRow[];
-  // Set of "visit ids" already on a ticket. ticket.queue_entry_id IS the visit
-  // id (the parent UUID), so we collect it as-is. Membership is checked with
-  // getVisitId(c.id) so SPLIT_AND_ASSIGN children — whose ids look like
-  // `${parent}-mani-5` or `${parent}-waiting` — are recognised as already
-  // linked to their sibling-shared ticket.
+  // Set of "visit ids" already on a ticket. We NORMALIZE through getVisitId
+  // here so the set always contains the bare visit UUID, even if a given
+  // ticket happens to store a non-canonical suffixed form like
+  // `${parent}-waiting` in its queue_entry_id (older code paths and the DB
+  // trigger using parent_queue_id directly can both produce that).
+  // Without this normalization, an existing ticket with a suffixed
+  // queue_entry_id would be invisible to `existingByVisitId.has(visitId)`
+  // on the lookup side (which IS normalized via getVisitId), and we'd
+  // create a phantom duplicate ticket. Seen in ticket #66 (2026-05-17).
   const existingByVisitId = new Set(
-    existingRows.map((r) => r.queue_entry_id).filter((v): v is string => !!v),
+    existingRows
+      .map((r) => (r.queue_entry_id ? getVisitId(r.queue_entry_id) : null))
+      .filter((v): v is string => !!v),
   );
 
   // Lookup maps for the "is there already an open ticket for this client?"
@@ -1396,6 +1402,23 @@ export async function createTicketAtCheckin(input: CreateTicketAtCheckinInput): 
       .upsert(itemRows, { onConflict: 'ticket_id,queue_entry_id', ignoreDuplicates: true });
     if (iErr) {
       console.error('[tickets] createTicketAtCheckin items, rolling back:', iErr.message);
+      await supabase.from('tickets').delete().eq('id', ticketId);
+      return null;
+    }
+
+    // Verify items actually landed. With ignoreDuplicates:true, conflicts on
+    // (ticket_id, queue_entry_id) silently drop rows without setting iErr.
+    // If we asked for items and none landed, we'd otherwise persist a
+    // phantom: ticket header with subtotal/total set but no line items.
+    // Seen in ticket #66 (2026-05-17) — header total $50, 0 items.
+    const { count, error: vErr } = await supabase
+      .from('ticket_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('ticket_id', ticketId);
+    if (vErr) {
+      console.warn('[tickets] createTicketAtCheckin items verify:', vErr.message);
+    } else if ((count ?? 0) === 0) {
+      console.error('[tickets] createTicketAtCheckin: items were silently dropped (likely conflict), rolling back ticket', ticketId);
       await supabase.from('tickets').delete().eq('id', ticketId);
       return null;
     }
