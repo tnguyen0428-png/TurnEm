@@ -1,7 +1,7 @@
 // CloseShiftScreen — SalonBiz-mirrored Close Shift surface.
 // (Editable payments + Sales Validation popup + confirm-close step)
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronLeft, RefreshCw, X } from 'lucide-react';
 import {
   closeShift,
@@ -77,6 +77,15 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
   const [pin, setPin] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const hasOpenTickets = openTickets.length > 0;
+  const pinRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus the PIN field as soon as a receptionist is picked, so the
+  // cashier doesn't have to click into the input separately before typing.
+  useEffect(() => {
+    if (!receptionistId) return;
+    const t = setTimeout(() => pinRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [receptionistId]);
 
   // Three-step close:
   //   main       → editable shift summary (tabs incl. editable transactions)
@@ -338,6 +347,7 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
                   </select>
                 </label>
                 <input
+                  ref={pinRef}
                   type="password"
                   inputMode="numeric"
                   autoComplete="off"

@@ -4,7 +4,7 @@
 // The total cents, the breakdown, and the receptionist id all persist to
 // the shift row so reports can attribute the open to a real person.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { openShift } from '../../lib/shifts';
 import MoneyCountTable, {
@@ -27,12 +27,21 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened }: Pro
   const [pin, setPin] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pinRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Auto-focus the PIN input as soon as a receptionist is selected so the
+  // cashier can just type their code without having to click the box.
+  useEffect(() => {
+    if (!receptionistId) return;
+    const t = setTimeout(() => pinRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [receptionistId]);
 
   const selected = useMemo(
     () => receptionists.find((r) => r.id === receptionistId) ?? null,
@@ -107,6 +116,7 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened }: Pro
             <label className="flex flex-col gap-1">
               <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">PIN</span>
               <input
+                ref={pinRef}
                 type="password"
                 inputMode="numeric"
                 autoComplete="off"

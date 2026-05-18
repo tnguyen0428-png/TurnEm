@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { Manicurist } from '../../types';
 
@@ -12,6 +12,15 @@ export default function StaffLoginScreen({ manicurists, onLogin }: StaffLoginScr
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const pinRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus the PIN field as soon as a staff member is picked so the
+  // user doesn't have to tap into the box separately.
+  useEffect(() => {
+    if (!selectedId) return;
+    const t = setTimeout(() => pinRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [selectedId]);
 
   const clockedIn = manicurists.filter((m) => m.clockedIn);
 
@@ -110,6 +119,7 @@ export default function StaffLoginScreen({ manicurists, onLogin }: StaffLoginScr
               PIN
             </label>
             <input
+              ref={pinRef}
               type="password"
               inputMode="numeric"
               maxLength={6}
