@@ -1021,24 +1021,57 @@ export async function appendItemsToTicket(
 
   const { data: existingItemRows, error: iErr } = await supabase
     .from('ticket_items')
-    .select('service_id, name, sort_order, queue_entry_id')
+    .select('id, service_id, name, sort_order, queue_entry_id, staff1_id')
     .eq('ticket_id', ticketId);
   if (iErr) {
     console.warn('[tickets] appendItemsToTicket fetch items:', iErr.message);
     return null;
   }
   const existing = (existingItemRows ?? []) as Array<{
+    id: string;
     service_id: string | null;
     name: string;
     sort_order: number;
     queue_entry_id: string | null;
+    staff1_id: string | null;
   }>;
   const startSort = existing.reduce((m, r) => Math.max(m, r.sort_order ?? 0), 0) + 1;
 
+  // Build a lookup so we can patch an existing line's staff in place when
+  // an incoming item shares the same queue_entry_id but carries a different
+  // manicurist. Without this, a cancel-then-reassign flow leaves the OLD
+  // staff on the ticket: the dedupe below filters the incoming item out
+  // because the qid already exists, and if the syncEntryToTicket reconcile
+  // pass doesn't fire for that entry (e.g. a SPLIT_AND_ASSIGN re-fire whose
+  // siblings are joined via the justAssigned path only), the stale staff
+  // sticks on the line. Symptom: tickets that show BOTH the original and
+  // the new manicurist instead of just the new one.
+  const existingByQid = new Map<string, typeof existing[number]>();
+  for (const e of existing) {
+    if (e.queue_entry_id) existingByQid.set(e.queue_entry_id, e);
+  }
+  const staffPatchUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  for (const it of items) {
+    if (!it.queueEntryId) continue;
+    const match = existingByQid.get(it.queueEntryId);
+    if (!match) continue;
+    if (it.staff1Id && match.staff1_id !== it.staff1Id) {
+      staffPatchUpdates.push({
+        id: match.id,
+        patch: {
+          staff1_id: it.staff1Id,
+          staff1_name: it.staff1Name,
+          staff1_color: it.staff1Color,
+        },
+      });
+    }
+  }
+
   // Entry-id first dedupe: any item whose queue_entry_id is already on the
-  // ticket is a re-fire of a sync we already processed — skip. This rule
-  // applies regardless of options.allowDuplicates because it's about NOT
-  // double-inserting the same source row, not about distinct work.
+  // ticket is a re-fire of a sync we already processed — skip the INSERT.
+  // The staff-patch loop above handles the case where the re-fire wants to
+  // change the staff. This rule applies regardless of options.allowDuplicates
+  // because it's about NOT double-inserting the same source row.
   //
   // For items without a queue_entry_id (manual ticket-modal adds, legacy
   // backfilled flows), fall back to the older service-id / name dedupe so
@@ -1062,6 +1095,21 @@ export async function appendItemsToTicket(
       return !seenLowerNames.has((it.name ?? '').trim().toLowerCase());
     });
   }
+
+  // Apply staff patches BEFORE the early-return on empty insert. The dedupe
+  // filter above may leave nothing to insert (every incoming item already
+  // has a line on the ticket by qid), but we still need to patch those
+  // lines' staff when the queue side moved the work to a different
+  // manicurist.
+  if (staffPatchUpdates.length > 0) {
+    for (const u of staffPatchUpdates) {
+      const { error } = await supabase.from('ticket_items').update(u.patch).eq('id', u.id);
+      if (error) {
+        console.warn('[tickets] appendItemsToTicket staff patch:', error.message);
+      }
+    }
+  }
+
   if (toInsert.length === 0) return fetchTicket(ticketId);
 
   // Suffix in-batch duplicate queue_entry_ids with `#N` so they don't
