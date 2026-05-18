@@ -1379,46 +1379,59 @@ export async function createTicketAtCheckin(input: CreateTicketAtCheckinInput): 
 
   const ticketId = (tRow as DbTicket).id;
   if (input.items.length > 0) {
-    const itemRows = input.items.map((it, idx) => ({
-      ticket_id: ticketId,
-      kind: 'service' as const,
-      name: it.name,
-      service_id: it.serviceId,
-      staff1_id: it.staff1Id,
-      staff1_name: it.staff1Name,
-      staff1_color: it.staff1Color,
-      unit_price_cents: it.unitPriceCents,
-      quantity: it.quantity,
-      discount_cents: 0,
-      ext_price_cents: Math.max(0, it.unitPriceCents * it.quantity),
-      sort_order: idx,
-      // Default each line's source entry id to the ticket's queueEntryId.
-      // Callers that pass a specific child id per item (split visits)
-      // override this on a per-item basis.
-      queue_entry_id: it.queueEntryId ?? input.queueEntryId ?? null,
-    }));
-    const { error: iErr } = await supabase
-      .from('ticket_items')
-      .upsert(itemRows, { onConflict: 'ticket_id,queue_entry_id', ignoreDuplicates: true });
+    // Each item needs a DISTINCT queue_entry_id within the batch — otherwise
+    // the partial unique index `uniq_ticket_items_per_entry (ticket_id,
+    // queue_entry_id) WHERE queue_entry_id IS NOT NULL` will reject the
+    // 2nd+ rows. Strategy:
+    //   - If the caller supplied a per-item queueEntryId, use it as-is.
+    //   - Otherwise fall back to the ticket-level input.queueEntryId, but
+    //     suffix multi-item batches with `#<idx>` so each line has its own
+    //     unique key (same convention the DB trigger uses).
+    //   - If input.queueEntryId is also null (the rare unattached-walk-in
+    //     case), pass null and rely on the partial-index's WHERE predicate
+    //     to skip uniqueness entirely.
+    const baseQe = input.queueEntryId ?? null;
+    const multi = input.items.length > 1;
+    const itemRows = input.items.map((it, idx) => {
+      let qe: string | null;
+      if (it.queueEntryId != null) {
+        qe = it.queueEntryId;
+      } else if (baseQe != null) {
+        qe = multi ? `${baseQe}#${idx + 1}` : baseQe;
+      } else {
+        qe = null;
+      }
+      return {
+        ticket_id: ticketId,
+        kind: 'service' as const,
+        name: it.name,
+        service_id: it.serviceId,
+        staff1_id: it.staff1Id,
+        staff1_name: it.staff1Name,
+        staff1_color: it.staff1Color,
+        unit_price_cents: it.unitPriceCents,
+        quantity: it.quantity,
+        discount_cents: 0,
+        ext_price_cents: Math.max(0, it.unitPriceCents * it.quantity),
+        sort_order: idx,
+        queue_entry_id: qe,
+      };
+    });
+
+    // Plain INSERT — no ON CONFLICT clause. The unique index on
+    // (ticket_id, queue_entry_id) is PARTIAL (WHERE queue_entry_id IS NOT
+    // NULL) and Supabase JS's `onConflict` option does not pass the WHERE
+    // predicate, so Postgres rejects with "no unique or exclusion
+    // constraint matching the ON CONFLICT specification". Plain insert
+    // works because:
+    //   - The ticket is freshly created above, so there are no existing
+    //     ticket_items rows to conflict with.
+    //   - We just guaranteed each input row has a distinct queue_entry_id
+    //     within the batch (or queue_entry_id IS NULL, which the partial
+    //     index doesn't enforce).
+    const { error: iErr } = await supabase.from('ticket_items').insert(itemRows);
     if (iErr) {
       console.error('[tickets] createTicketAtCheckin items, rolling back:', iErr.message);
-      await supabase.from('tickets').delete().eq('id', ticketId);
-      return null;
-    }
-
-    // Verify items actually landed. With ignoreDuplicates:true, conflicts on
-    // (ticket_id, queue_entry_id) silently drop rows without setting iErr.
-    // If we asked for items and none landed, we'd otherwise persist a
-    // phantom: ticket header with subtotal/total set but no line items.
-    // Seen in ticket #66 (2026-05-17) — header total $50, 0 items.
-    const { count, error: vErr } = await supabase
-      .from('ticket_items')
-      .select('*', { count: 'exact', head: true })
-      .eq('ticket_id', ticketId);
-    if (vErr) {
-      console.warn('[tickets] createTicketAtCheckin items verify:', vErr.message);
-    } else if ((count ?? 0) === 0) {
-      console.error('[tickets] createTicketAtCheckin: items were silently dropped (likely conflict), rolling back ticket', ticketId);
       await supabase.from('tickets').delete().eq('id', ticketId);
       return null;
     }
