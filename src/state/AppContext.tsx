@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketStaff, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, syncEntryToTicket } from '../lib/tickets';
+import { appendItemsToTicket, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, syncEntryToTicket } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -1603,6 +1603,30 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
       }
     } catch (err) {
       console.warn('[syncQueue] orphan cleanup failed for', removed.id, err);
+    }
+  }
+
+  // ── final dedupe pass ──────────────────────────────────────────────────
+  //
+  // Brute-force last-line-of-defense: for every single-service assigned
+  // queue entry, ensure there's at most ONE ticket line tagged with its id.
+  // The earlier passes (sibling reconcile, justAssigned, syncEntryToTicket
+  // reconcile, orphan cleanup) cover the normal cases, but cancel-then-
+  // reassign flows that race across multiple syncQueue ticks have been
+  // observed to leave a duplicate line on the ticket (the original line
+  // with the old staff PLUS a fresh line with the new staff and a `#1`
+  // suffix from in-batch collision in appendItemsToTicket). This pass
+  // collapses those duplicates to a single canonical line that matches the
+  // entry's current assigned manicurist.
+  for (const entry of queue) {
+    if (!entry.assignedManicuristId) continue;
+    try {
+      const n = await cleanupDuplicateLinesForEntry(entry, manicurists);
+      if (n > 0) {
+        console.info(`[syncQueue] dedupe removed ${n} duplicate line(s) for entry ${entry.id}`);
+      }
+    } catch (err) {
+      console.warn('[syncQueue] dedupe failed for', entry.id, err);
     }
   }
 }

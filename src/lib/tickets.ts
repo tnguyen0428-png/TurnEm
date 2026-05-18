@@ -2053,3 +2053,123 @@ export async function updatePayment(
 
   return true;
 }
+
+/**
+ * Brute-force dedupe pass: ensure a single-service queue entry has AT MOST
+ * one ticket line, and that line's staff matches the entry's current
+ * assigned manicurist.
+ *
+ * Why this exists: a cancel-then-reassign flow that happens to fall between
+ * a sibling-reconcile pass and a justAssigned-auto-create pass can produce a
+ * ticket with both the OLD staff's line (still tagged with the original
+ * entry id) AND a NEW line for the reassigned staff (tagged with the same
+ * entry id but suffixed `#1` by appendItemsToTicket's in-batch collision
+ * logic). The regular syncEntryToTicket pass deletes whichever line wasn't
+ * matched, but races between writes can leave the deleted-then-resurrected
+ * variant on the ticket. This function is a last-line-of-defense that runs
+ * at the very end of syncQueue and converges every visible duplicate to a
+ * single canonical line per entry.
+ *
+ * Returns the number of duplicate lines deleted.
+ */
+export async function cleanupDuplicateLinesForEntry(
+  entry: {
+    id: string;
+    services: string[];
+    assignedManicuristId: string | null;
+    parentQueueId?: string | null;
+  },
+  manicurists: Array<{ id: string; name: string; color: string }>,
+): Promise<number> {
+  if (!entry.assignedManicuristId) return 0;
+  if (!entry.services || entry.services.length !== 1) return 0; // multi-svc has legit `#svcN` siblings — skip
+
+  const visitId = getVisitId(entry.parentQueueId ?? entry.id);
+  const { data: tRow, error: tErr } = await supabase
+    .from('tickets')
+    .select('id, discount_cents, tax_cents, tip_cents')
+    .eq('queue_entry_id', visitId)
+    .eq('status', 'open')
+    .maybeSingle();
+  if (tErr || !tRow) return 0;
+  const ticket = tRow as { id: string; discount_cents: number; tax_cents: number; tip_cents: number };
+
+  const { data: rows, error: iErr } = await supabase
+    .from('ticket_items')
+    .select('id, queue_entry_id, staff1_id, name, sort_order, unit_price_cents, quantity, discount_cents')
+    .eq('ticket_id', ticket.id)
+    .like('queue_entry_id', `${entry.id}%`);
+  if (iErr || !rows) return 0;
+  type Row = {
+    id: string;
+    queue_entry_id: string | null;
+    staff1_id: string | null;
+    name: string;
+    sort_order: number;
+    unit_price_cents: number;
+    quantity: number;
+    discount_cents: number;
+  };
+  const items = (rows ?? []) as Row[];
+  if (items.length <= 1) return 0;
+
+  const assignedM = manicurists.find((m) => m.id === entry.assignedManicuristId);
+  if (!assignedM) return 0;
+
+  // Choose the keeper:
+  //   1. Bare-qid line (entry.id with no suffix) — canonical form.
+  //   2. If none, the line whose staff matches the current assigned manicurist.
+  //   3. Else the lowest sort_order.
+  const byBareQid = items.find((it) => it.queue_entry_id === entry.id);
+  const byMatchingStaff = items.find((it) => it.staff1_id === assignedM.id);
+  const byFirstSort = [...items].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
+  const keeper = byBareQid ?? byMatchingStaff ?? byFirstSort;
+  if (!keeper) return 0;
+
+  const toDelete = items.filter((it) => it.id !== keeper.id);
+  if (toDelete.length === 0) return 0;
+
+  const { error: dErr } = await supabase
+    .from('ticket_items')
+    .delete()
+    .in('id', toDelete.map((it) => it.id));
+  if (dErr) {
+    console.warn('[tickets] cleanupDuplicateLinesForEntry delete:', dErr.message);
+    return 0;
+  }
+
+  // Normalize the keeper: bare qid + correct staff.
+  const patch: Record<string, unknown> = {};
+  if (keeper.queue_entry_id !== entry.id) patch.queue_entry_id = entry.id;
+  if (keeper.staff1_id !== assignedM.id) {
+    patch.staff1_id = assignedM.id;
+    patch.staff1_name = assignedM.name;
+    patch.staff1_color = assignedM.color;
+  }
+  if (Object.keys(patch).length > 0) {
+    const { error: uErr } = await supabase.from('ticket_items').update(patch).eq('id', keeper.id);
+    if (uErr) {
+      console.warn('[tickets] cleanupDuplicateLinesForEntry update keeper:', uErr.message);
+    }
+  }
+
+  // Recompute the ticket's subtotal/total from the surviving items.
+  const { data: freshItems } = await supabase
+    .from('ticket_items')
+    .select('unit_price_cents, quantity, discount_cents')
+    .eq('ticket_id', ticket.id);
+  const subtotal = ((freshItems ?? []) as Array<{ unit_price_cents: number; quantity: number; discount_cents: number }>)
+    .reduce((s, it) => s + Math.max(0, it.unit_price_cents * it.quantity - it.discount_cents), 0);
+  const total = Math.max(
+    0,
+    subtotal - (ticket.discount_cents ?? 0) + (ticket.tax_cents ?? 0) + (ticket.tip_cents ?? 0),
+  );
+  await supabase
+    .from('tickets')
+    .update({ subtotal_cents: subtotal, total_cents: total, updated_at: new Date().toISOString() })
+    .eq('id', ticket.id)
+    .eq('status', 'open');
+
+  return toDelete.length;
+}
+
