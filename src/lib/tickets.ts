@@ -282,6 +282,46 @@ async function fetchTicket(ticketId: string): Promise<Ticket | null> {
  * List tickets for an LA-local business date. Use status filter to get just
  * Open or just Closed for the Register tab.
  */
+// Paginated reads of children scoped by ticket_id. Supabase caps a single
+// .select() at 1000 rows by default. A single bootstrap ticket (the SalonBiz
+// gift-cert migration) carries ~1900 line items and starved the page —
+// fetchTicketsForDate's `.in('ticket_id', ids)` for items returned all 1000
+// rows of the migration ticket and zero rows for every other open ticket on
+// the same day, leaving the Register's SERVICES column blank.
+const PAGE_SIZE = 1000;
+async function fetchItemsForTicketIds(ids: string[]): Promise<DbTicketItem[]> {
+  if (ids.length === 0) return [];
+  const out: DbTicketItem[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('ticket_items')
+      .select('*')
+      .in('ticket_id', ids)
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) { console.error('[tickets] fetchItemsForTicketIds:', error.message); return out; }
+    const rows = (data ?? []) as DbTicketItem[];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return out;
+}
+async function fetchPaymentsForTicketIds(ids: string[]): Promise<DbPayment[]> {
+  if (ids.length === 0) return [];
+  const out: DbPayment[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*')
+      .in('ticket_id', ids)
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) { console.error('[tickets] fetchPaymentsForTicketIds:', error.message); return out; }
+    const rows = (data ?? []) as DbPayment[];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return out;
+}
+
 export async function fetchTicketsForDate(
   dateLA: string,
   status?: Ticket['status'] | 'all',
@@ -294,12 +334,10 @@ export async function fetchTicketsForDate(
   if (!tRows || tRows.length === 0) return [];
 
   const ids = tRows.map((r) => (r as DbTicket).id);
-  const [iRes, pRes] = await Promise.all([
-    supabase.from('ticket_items').select('*').in('ticket_id', ids),
-    supabase.from('payments').select('*').in('ticket_id', ids),
+  const [items, payments] = await Promise.all([
+    fetchItemsForTicketIds(ids),
+    fetchPaymentsForTicketIds(ids),
   ]);
-  const items = (iRes.data ?? []) as DbTicketItem[];
-  const payments = (pRes.data ?? []) as DbPayment[];
   return tRows.map((r) => fromDbTicket(r as DbTicket, items, payments));
 }
 
@@ -317,12 +355,10 @@ export async function fetchTicketsForShift(shiftId: string): Promise<Ticket[]> {
   if (!tRows || tRows.length === 0) return [];
 
   const ids = tRows.map((r) => (r as DbTicket).id);
-  const [iRes, pRes] = await Promise.all([
-    supabase.from('ticket_items').select('*').in('ticket_id', ids),
-    supabase.from('payments').select('*').in('ticket_id', ids),
+  const [items, payments] = await Promise.all([
+    fetchItemsForTicketIds(ids),
+    fetchPaymentsForTicketIds(ids),
   ]);
-  const items = (iRes.data ?? []) as DbTicketItem[];
-  const payments = (pRes.data ?? []) as DbPayment[];
   return tRows.map((r) => fromDbTicket(r as DbTicket, items, payments));
 }
 
@@ -345,12 +381,10 @@ export async function fetchTicketsForRange(
   if (!tRows || tRows.length === 0) return [];
 
   const ids = tRows.map((r) => (r as DbTicket).id);
-  const [iRes, pRes] = await Promise.all([
-    supabase.from('ticket_items').select('*').in('ticket_id', ids),
-    supabase.from('payments').select('*').in('ticket_id', ids),
+  const [items, payments] = await Promise.all([
+    fetchItemsForTicketIds(ids),
+    fetchPaymentsForTicketIds(ids),
   ]);
-  const items = (iRes.data ?? []) as DbTicketItem[];
-  const payments = (pRes.data ?? []) as DbPayment[];
   return tRows.map((r) => fromDbTicket(r as DbTicket, items, payments));
 }
 
@@ -1966,6 +2000,12 @@ export async function updatePayment(
     .eq('id', row.ticket_id);
   if (tErr) {
     console.error('[tickets] updatePayment ticket paid_cents:', tErr.message);
+    return false;
+  }
+
+  return true;
+}
+nsole.error('[tickets] updatePayment ticket paid_cents:', tErr.message);
     return false;
   }
 
