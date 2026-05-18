@@ -1372,14 +1372,18 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     if (previous && queueEntryUnchanged(previous, c)) continue;
     changed.push(queueEntryToRow(c));
   }
-  if (changed.length === 0) {
-    // No queue rows to upsert, but assignment changes still need to backfill
-    // tickets in case the ticket was created before staff was assigned.
-    await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists, salonServices);
-    return;
+  // Note: we deliberately do NOT early-return when changed.length === 0.
+  // The per-entry reconcile loop below is idempotent (it only writes when the
+  // queue and the ticket actually diverge) and is the safety net that keeps
+  // the open ticket in sync with reassignments + service edits. Skipping it
+  // here meant any cross-tab / cross-render race that didn't tick a tracked
+  // field on the local queue row left the ticket showing the old staff or
+  // old services until the next unrelated edit. Always running the reconcile
+  // costs one Supabase round-trip per assigned entry but avoids drift.
+  if (changed.length > 0) {
+    const { error: upsertErr } = await withRetry(() => supabase.from('queue_entries').upsert(changed, { onConflict: 'id' }));
+    if (upsertErr) { console.error('[syncQueue] upsert error:', upsertErr); onError('Sync failed - data may not be saved. Check connection.'); return; }
   }
-  const { error: upsertErr } = await withRetry(() => supabase.from('queue_entries').upsert(changed, { onConflict: 'id' }));
-  if (upsertErr) { console.error('[syncQueue] upsert error:', upsertErr); onError('Sync failed - data may not be saved. Check connection.'); return; }
 
   // For existing entries whose assignedManicuristId just transitioned from
   // null to a real id, patch the corresponding ticket's staff so checkout

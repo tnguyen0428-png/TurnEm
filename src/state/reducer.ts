@@ -123,26 +123,62 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const updatedQueue = state.queue.map((c) =>
         c.id === action.id ? { ...c, ...action.updates } : c
       );
-      // If the client is currently assigned to a manicurist AND turnValue
-      // changed (e.g. receptionist added an Eyebrow Wax mid-visit, or
-      // toggled a service to a request), apply the delta to the
-      // manicurist's totalTurns so the running counter on the staff
-      // portal stays in sync. ASSIGN_CLIENT credits the initial value;
-      // this case handles every subsequent edit.
+      // Turn-counter maintenance on an assigned-client edit. Two cases:
+      //
+      // 1) Reassignment (assignedManicuristId changed from A to B):
+      //    Move the FULL turn value off A and onto B. Use whichever turnValue
+      //    is supplied in updates (falling back to existing) so a combined
+      //    "change staff + tweak services" edit nets out correctly. Also
+      //    clear A's currentClient / status, and mark B busy with this client.
+      //
+      // 2) Turn-value-only edit (same staff, services or requests changed):
+      //    Apply the delta to the manicurist's totalTurns so the staff-
+      //    portal counter stays accurate without a CANCEL+ASSIGN round-trip.
       let updatedManicurists = state.manicurists;
-      if (
-        existing &&
-        existing.assignedManicuristId &&
-        action.updates.turnValue !== undefined &&
-        action.updates.turnValue !== existing.turnValue
-      ) {
-        const delta = action.updates.turnValue - existing.turnValue;
-        const targetStaffId = existing.assignedManicuristId;
-        updatedManicurists = state.manicurists.map((m) =>
-          m.id === targetStaffId
-            ? { ...m, totalTurns: Math.max(0, m.totalTurns + delta) }
-            : m,
-        );
+      if (existing) {
+        const beforeStaffId = existing.assignedManicuristId ?? null;
+        const afterStaffId = action.updates.assignedManicuristId !== undefined
+          ? (action.updates.assignedManicuristId ?? null)
+          : beforeStaffId;
+        const beforeTurns = Number(existing.turnValue) || 0;
+        const afterTurns =
+          action.updates.turnValue !== undefined && action.updates.turnValue !== null
+            ? Number(action.updates.turnValue)
+            : beforeTurns;
+        const staffChanged = beforeStaffId !== afterStaffId;
+
+        if (staffChanged) {
+          updatedManicurists = state.manicurists.map((m) => {
+            if (beforeStaffId && m.id === beforeStaffId) {
+              return {
+                ...m,
+                totalTurns: Math.max(0, m.totalTurns - beforeTurns),
+                status: m.currentClient === action.id ? ('available' as const) : m.status,
+                currentClient: m.currentClient === action.id ? null : m.currentClient,
+              };
+            }
+            if (afterStaffId && m.id === afterStaffId) {
+              return {
+                ...m,
+                totalTurns: Math.max(0, m.totalTurns + afterTurns),
+                status: 'busy' as const,
+                currentClient: action.id,
+              };
+            }
+            return m;
+          });
+        } else if (
+          beforeStaffId &&
+          action.updates.turnValue !== undefined &&
+          afterTurns !== beforeTurns
+        ) {
+          const delta = afterTurns - beforeTurns;
+          updatedManicurists = state.manicurists.map((m) =>
+            m.id === beforeStaffId
+              ? { ...m, totalTurns: Math.max(0, m.totalTurns + delta) }
+              : m,
+          );
+        }
       }
       return {
         ...state,
@@ -164,6 +200,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const turns = Number(client.turnValue) || 0;
       const isWax = clientHasAnyWaxService(client.services, state.salonServices);
       const is4thPosition = isFourthPositionSpecialService(client.services, state.salonServices);
+      // Reassignment case: if the client was ALREADY assigned to a different
+      // manicurist, deduct turns from the old manicurist and clear their
+      // currentClient / busy status. Without this the old manicurist keeps
+      // the turn credit and stays stuck with a stale currentClient pointer
+      // even though the work moved to someone else. Skip when reassigning
+      // to the same manicurist (idempotent re-fires from the assign modal).
+      const previousManicuristId =
+        client.assignedManicuristId && client.assignedManicuristId !== action.manicuristId
+          ? client.assignedManicuristId
+          : null;
       return {
         ...state,
         queue: state.queue.map((c) =>
@@ -172,6 +218,19 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             : c
         ),
         manicurists: state.manicurists.map((m) => {
+          if (m.id === previousManicuristId) {
+            // Old assignee: deduct turns and free them up. Conservative on
+            // the wax/check slots — only clear those that were set FOR this
+            // client (we can't reverse-map deterministically here, so leave
+            // them alone; CANCEL_SERVICE is the explicit "free this tech"
+            // path that wipes them).
+            return {
+              ...m,
+              status: m.currentClient === action.clientId ? ('available' as const) : m.status,
+              currentClient: m.currentClient === action.clientId ? null : m.currentClient,
+              totalTurns: Math.max(0, m.totalTurns - turns),
+            };
+          }
           if (m.id !== action.manicuristId) return m;
           const waxSlot   = isWax ? nextWaxSlot(m)   : null;
           const checkSlot = is4thPosition ? nextCheckSlot(m) : null;
@@ -224,12 +283,71 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
         return base;
       });
-      const assignMap = new Map<string, { clientId: string; turns: number; isWax: boolean; is4thPosition: boolean }>();
+      // ── Turn-credit reconciliation across re-fires ─────────────────────
+      // A re-run of MultiServiceAssign on a parent that's already been split
+      // can move a sibling's services from manicurist A → B. Without
+      // reversing A's credit, A keeps the original turns AND B gets credited
+      // too — the totals visibly drift on the staff portal. Compute the
+      // BEFORE state by id (any existing queue entry with the same child id
+      // OR the original parent) and the AFTER state from the new entries,
+      // then net out each manicurist's turn delta.
+      type Slot = { staffId: string; turns: number; clientId: string };
+      const beforeByChildId = new Map<string, Slot>();
+      const originalEntry = state.queue.find((c) => c.id === action.originalId);
+      if (originalEntry && originalEntry.assignedManicuristId) {
+        beforeByChildId.set(action.originalId, {
+          staffId: originalEntry.assignedManicuristId,
+          turns: Number(originalEntry.turnValue) || 0,
+          clientId: action.originalId,
+        });
+      }
+      for (const c of state.queue) {
+        if (c.id === action.originalId) continue;
+        if (c.parentQueueId === action.originalId && c.assignedManicuristId) {
+          beforeByChildId.set(c.id, {
+            staffId: c.assignedManicuristId,
+            turns: Number(c.turnValue) || 0,
+            clientId: c.id,
+          });
+        }
+      }
+      const afterByChildId = new Map<string, Slot>();
       for (const { client, manicuristId } of action.entries) {
         if (manicuristId) {
-          assignMap.set(manicuristId, {
+          afterByChildId.set(client.id, {
+            staffId: manicuristId,
+            turns: Number(client.turnValue) || 0,
             clientId: client.id,
-            turns: client.turnValue,
+          });
+        }
+      }
+      // Build per-manicurist net turn deltas + currentClient updates.
+      const turnDeltaByStaff = new Map<string, number>();
+      const newCurrentClientByStaff = new Map<string, string>();
+      const stalePointerStaff = new Set<string>(); // staff whose currentClient pointed at a now-removed child
+      for (const [childId, before] of beforeByChildId) {
+        const after = afterByChildId.get(childId);
+        if (after && after.staffId === before.staffId && after.turns === before.turns) continue;
+        // Reverse the before-credit fully.
+        turnDeltaByStaff.set(
+          before.staffId,
+          (turnDeltaByStaff.get(before.staffId) ?? 0) - before.turns,
+        );
+        if (!after) stalePointerStaff.add(before.staffId);
+      }
+      for (const [childId, after] of afterByChildId) {
+        const before = beforeByChildId.get(childId);
+        if (before && before.staffId === after.staffId && before.turns === after.turns) continue;
+        turnDeltaByStaff.set(
+          after.staffId,
+          (turnDeltaByStaff.get(after.staffId) ?? 0) + after.turns,
+        );
+        newCurrentClientByStaff.set(after.staffId, after.clientId);
+      }
+      const newAssignmentMeta = new Map<string, { isWax: boolean; is4thPosition: boolean }>();
+      for (const { client, manicuristId } of action.entries) {
+        if (manicuristId) {
+          newAssignmentMeta.set(manicuristId, {
             isWax: clientHasAnyWaxService(client.services, state.salonServices),
             is4thPosition: isFourthPositionSpecialService(client.services, state.salonServices),
           });
@@ -245,18 +363,38 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         queue: Array.from(queueById.values()),
         manicurists: state.manicurists.map((m) => {
-          const assignment = assignMap.get(m.id);
-          if (!assignment) return m;
-          const waxSlot   = assignment.isWax ? nextWaxSlot(m)   : null;
-          const checkSlot = assignment.is4thPosition ? nextCheckSlot(m) : null;
-          return {
-            ...m,
-            status: 'busy' as const,
-            currentClient: assignment.clientId,
-            totalTurns: m.totalTurns + assignment.turns,
-            ...(checkSlot ? { [checkSlot]: true } : {}),
-            ...(waxSlot   ? { [waxSlot]:   true } : {}),
-          };
+          const delta = turnDeltaByStaff.get(m.id) ?? 0;
+          const newCurrent = newCurrentClientByStaff.get(m.id);
+          const meta = newAssignmentMeta.get(m.id);
+          // Default: no change.
+          let next = m;
+          if (delta !== 0) {
+            next = { ...next, totalTurns: Math.max(0, next.totalTurns + delta) };
+          }
+          if (newCurrent) {
+            const waxSlot   = meta?.isWax ? nextWaxSlot(next)   : null;
+            const checkSlot = meta?.is4thPosition ? nextCheckSlot(next) : null;
+            next = {
+              ...next,
+              status: 'busy' as const,
+              currentClient: newCurrent,
+              ...(checkSlot ? { [checkSlot]: true } : {}),
+              ...(waxSlot   ? { [waxSlot]:   true } : {}),
+            };
+          } else if (stalePointerStaff.has(m.id) && !newCurrent) {
+            // Old assignee whose work moved away and they got NO new client.
+            // Clear their currentClient if it pointed at a now-removed child
+            // and free them up.
+            const oldChildIds = new Set(
+              Array.from(beforeByChildId.values())
+                .filter((s) => s.staffId === m.id)
+                .map((s) => s.clientId),
+            );
+            if (next.currentClient && oldChildIds.has(next.currentClient)) {
+              next = { ...next, status: 'available' as const, currentClient: null };
+            }
+          }
+          return next;
         }),
         selectedClient: null,
         modal: null,
