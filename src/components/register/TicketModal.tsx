@@ -611,6 +611,81 @@ export default function TicketModal({
       })();
     }
 
+    // Credit turns for service lines added during checkout for a staff who
+    // isn't already part of the visit's completed_services buckets. The
+    // bucket recompute above handles additions for staff who ARE part of
+    // the visit (their bucket gets the new service + recomputed turn
+    // value with delta applied). For a brand-new staff on this visit
+    // (Kayla added by the cashier even though she wasn't in the queue
+    // for this client), no bucket exists, so we credit the catalog turn
+    // value directly and persist a fresh completed_services row so
+    // History reflects the work.
+    const bucketStaffIds = new Set<string>();
+    for (const [, bucket] of bucketByEntry) {
+      if (bucket.entry.manicuristId) bucketStaffIds.add(bucket.entry.manicuristId);
+    }
+    const visitForAdds = ticketVisit ?? (candidateEntries[0]?.id ? visitIdOf(candidateEntries[0].id) : null);
+    for (const l of lines) {
+      if (l.kind !== 'service') continue;
+      // Existing lines were credited at the original assignment time.
+      if (l.existingId) continue;
+      if (!l.staff1Id || !l.name.trim()) continue;
+      // If this staff already has a bucket, the recompute above already
+      // adjusted their total_turns by the correct delta.
+      if (bucketStaffIds.has(l.staff1Id)) continue;
+      const svc = state.salonServices.find((s) => s.name === l.name.trim());
+      const baseTurns = Number(svc?.turnValue ?? 0);
+      if (baseTurns <= 0) continue;
+      // Mirror the request-half-credit rule used in MultiServiceAssign and
+      // the bucket recompute: a requested service for a specific staff
+      // earns Combo=1 / non-Combo=0.5; otherwise it earns the full
+      // catalog turnValue.
+      const turnValue = l.isRequested
+        ? (svc?.category === 'Combo' ? 1 : 0.5)
+        : baseTurns;
+      const newEntryId = visitForAdds
+        ? `${visitForAdds}-add-${l.staff1Id}-${Date.now().toString(36)}`
+        : `${ticket.id}-add-${l.staff1Id}-${Date.now().toString(36)}`;
+      const nowIso = new Date().toISOString();
+      void (async () => {
+        // Insert a completed_services row so reports/History reflect this
+        // manually-added work and re-saves don't re-credit (next save the
+        // line has an existingId so this branch won't fire again).
+        const { error: csErr } = await supabase.from('completed_services').insert({
+          id: newEntryId,
+          client_name: clientName || ticket.clientName || 'Walk-in',
+          manicurist_id: l.staff1Id,
+          manicurist_name: l.staff1Name,
+          manicurist_color: l.staff1Color,
+          service: l.name,
+          services: [l.name],
+          requested_services: l.isRequested ? [l.name] : [],
+          turn_value: turnValue,
+          is_appointment: false,
+          is_requested: !!l.isRequested,
+          edited: true,
+          voided: false,
+          started_at: nowIso,
+          completed_at: nowIso,
+        });
+        if (csErr) {
+          console.error('[ticket modal] completed_services insert for added line failed:', csErr.message);
+          // Even if the completed_services insert fails (e.g., id collision),
+          // still credit the turn so the cashier doesn't lose the count.
+        }
+        const { data: mRow } = await supabase
+          .from('manicurists')
+          .select('total_turns')
+          .eq('id', l.staff1Id)
+          .maybeSingle();
+        const current = Number((mRow as { total_turns?: number } | null)?.total_turns ?? 0);
+        await supabase
+          .from('manicurists')
+          .update({ total_turns: current + turnValue })
+          .eq('id', l.staff1Id);
+      })();
+    }
+
     onChanged?.(saved);
     return saved;
   }
