@@ -35,10 +35,10 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened }: Pro
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Auto-focus the PIN input as soon as a receptionist is selected so the
-  // cashier can just type their code without having to click the box.
+  // Auto-focus the PIN input on mount AND re-focus when the receptionist
+  // dropdown changes. Either workflow works — type PIN first then pick
+  // from dropdown, or pick from dropdown then PIN is already focused.
   useEffect(() => {
-    if (!receptionistId) return;
     const t = setTimeout(() => pinRef.current?.focus(), 50);
     return () => clearTimeout(t);
   }, [receptionistId]);

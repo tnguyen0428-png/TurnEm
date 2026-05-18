@@ -79,10 +79,14 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
   const hasOpenTickets = openTickets.length > 0;
   const pinRef = useRef<HTMLInputElement>(null);
 
-  // Auto-focus the PIN field as soon as a receptionist is picked, so the
-  // cashier doesn't have to click into the input separately before typing.
+  // Auto-focus the PIN field as soon as the close-shift surface opens AND
+  // re-focus it whenever the receptionist dropdown changes (e.g. cashier
+  // picks themselves after typing PIN). Either order works:
+  //   - Type PIN first, then pick from dropdown
+  //   - Pick from dropdown first, PIN gets focused
+  // The setError dependency is intentionally omitted — only the mount and
+  // receptionistId transitions should trigger focus.
   useEffect(() => {
-    if (!receptionistId) return;
     const t = setTimeout(() => pinRef.current?.focus(), 50);
     return () => clearTimeout(t);
   }, [receptionistId]);

@@ -74,19 +74,17 @@ export default function ReceptionistPinGate({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onCancel]);
 
-  // Auto-focus the PIN input so the user can just start typing without
-  // having to click into the box. In pinOnly mode focus immediately on
-  // open; in roster mode wait until they've picked a receptionist (so the
-  // first interaction is the dropdown, then PIN comes into focus as soon
-  // as it's actionable). 50ms delay matches the other gates' timing —
-  // beats React's commit + modal mount paint.
+  // Auto-focus the PIN input as soon as the gate opens, so the user can
+  // start typing immediately without clicking the box. Applies to both
+  // pinOnly and roster modes — in roster mode the receptionist dropdown
+  // still needs a selection before submit, but receptionists know their
+  // own PIN and typically prefer to type it first then pick themselves
+  // from the dropdown. 50ms delay beats React's commit + modal mount paint.
   useEffect(() => {
     if (!open) return;
-    if (pinOnly || receptionistId) {
-      const t = setTimeout(() => pinRef.current?.focus(), 50);
-      return () => clearTimeout(t);
-    }
-  }, [open, pinOnly, receptionistId]);
+    const t = setTimeout(() => pinRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [open]);
 
   if (!open) return null;
 
