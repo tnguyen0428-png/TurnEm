@@ -371,25 +371,62 @@ export default function HistoryScreen() {
       ? state.completed
       : (todayArchivedEntries ?? []);
 
-  // Per-manicurist turn totals — shown whenever manicurists are clocked in,
-  // even before any services complete. For today, ordered by clock-in time
-  // (which doubles as the priority order — drag to reorder swaps clockInTimes).
+  // Per-manicurist turn totals.
+  //
+  // For TODAY:
+  //   - Always include every manicurist currently clocked IN (with their
+  //     live totalTurns) AND every manicurist who already did at least one
+  //     service today (even if they've since clocked OUT — their work
+  //     today must stay visible so the list doesn't lose people mid-day).
+  //   - Clocked-in rows come first, ordered by clock-in time (so drag-
+  //     reorder priority still works); clocked-out-with-entries rows
+  //     follow in entry order. For clocked-out rows we sum from
+  //     displayedEntries since their live `totalTurns` may have reset on
+  //     clock-out.
+  //
+  // For PAST DAYS: build entirely from the day's saved entries.
   const turnsPerManicurist = useMemo<TurnsRowEntry[]>(() => {
     if (!viewingPastDay) {
+      const byId = new Map<string, TurnsRowEntry>();
+
+      // 1. Clocked-in manicurists first (ordered by clockInTime).
       const clockedIn = state.manicurists
         .filter((m) => m.clockedIn)
         .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity));
-      if (clockedIn.length > 0) {
-        return clockedIn.map((m) => ({
+      for (const m of clockedIn) {
+        byId.set(m.id, {
           id: m.id,
           name: m.name,
           turns: m.totalTurns,
           color: m.color,
           clockInTime: m.clockInTime ? formatTime(m.clockInTime) : '',
-        }));
+        });
       }
+
+      // 2. Any manicurist who has entries today but isn't already in the
+      //    map (i.e. they clocked out). Sum non-voided entries.
+      for (const e of displayedEntries) {
+        if (!byId.has(e.manicuristId)) {
+          byId.set(e.manicuristId, {
+            id: e.manicuristId,
+            name: e.manicuristName,
+            turns: 0,
+            color: e.manicuristColor,
+            clockInTime: '',
+          });
+        }
+        // For clocked-out rows we initialized turns=0 above. For clocked-in
+        // rows we keep their live totalTurns — don't double-count by
+        // re-summing entries on top.
+        const existing = byId.get(e.manicuristId)!;
+        if (existing.clockInTime === '' && !e.voided) {
+          existing.turns += e.turnValue;
+        }
+      }
+
+      if (byId.size > 0) return Array.from(byId.values());
     }
-    // Past day view or everyone clocked out: build from displayed entries
+    // Past day view (or today with no data at all): build from displayed entries.
     const map = new Map<string, TurnsRowEntry>();
     for (const e of displayedEntries) {
       if (!map.has(e.manicuristId)) {
@@ -424,16 +461,27 @@ export default function HistoryScreen() {
     if (!over || active.id === over.id) return;
     if (!turnsDraggable) return;
 
-    // Reorder turns rows — swap the clockInTimes so the manicurist priority
-    // order on today's queue follows the new visual order.
-    const ids = turnsPerManicurist.map((e) => e.id);
-    const oldIndex = ids.indexOf(String(active.id));
-    const newIndex = ids.indexOf(String(over.id));
+    // Both source and destination must be currently clocked-in rows.
+    // Clocked-out rows linger in the list to preserve today's history but
+    // have no clockInTime — swapping a real time with null would clobber
+    // the priority order (and effectively re-clock-out a working manicurist).
+    const activeMan = state.manicurists.find((m) => m.id === String(active.id));
+    const overMan = state.manicurists.find((m) => m.id === String(over.id));
+    if (!activeMan?.clockedIn || !overMan?.clockedIn) return;
+
+    // Reorder operates only on the clocked-in subset of the displayed
+    // list — swap the clockInTimes so the manicurist priority order on
+    // today's queue follows the new visual order.
+    const clockedInIds = turnsPerManicurist
+      .filter((e) => !!e.clockInTime)
+      .map((e) => e.id);
+    const oldIndex = clockedInIds.indexOf(String(active.id));
+    const newIndex = clockedInIds.indexOf(String(over.id));
     if (oldIndex < 0 || newIndex < 0) return;
 
-    const newOrder = arrayMove(ids, oldIndex, newIndex);
-    const originalTimes = turnsPerManicurist.map(
-      (e) => state.manicurists.find((m) => m.id === e.id)?.clockInTime ?? null
+    const newOrder = arrayMove(clockedInIds, oldIndex, newIndex);
+    const originalTimes = clockedInIds.map(
+      (id) => state.manicurists.find((m) => m.id === id)?.clockInTime ?? null
     );
     newOrder.forEach((id, i) => {
       dispatch({ type: 'UPDATE_MANICURIST', id, updates: { clockInTime: originalTimes[i] } });
@@ -635,7 +683,10 @@ export default function HistoryScreen() {
                     key={entry.id}
                     entry={entry}
                     maxTurns={maxTurns}
-                    draggable={turnsDraggable}
+                    // Only allow dragging rows whose manicurist is still
+                    // clocked in — clocked-out rows have no clockInTime to
+                    // swap, so reordering them is meaningless.
+                    draggable={turnsDraggable && !!entry.clockInTime}
                   />
                 ))}
               </div>
