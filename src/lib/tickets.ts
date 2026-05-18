@@ -2005,9 +2005,3 @@ export async function updatePayment(
 
   return true;
 }
-nsole.error('[tickets] updatePayment ticket paid_cents:', tErr.message);
-    return false;
-  }
-
-  return true;
-}
