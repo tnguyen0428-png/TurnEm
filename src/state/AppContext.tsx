@@ -624,18 +624,61 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (staleCompleted.length > 0 || staleQueue.length > 0) {
       console.log('[startup] stale data detected from previous day â archiving and resetting', { staleCompleted: staleCompleted.length, staleQueue: staleQueue.length });
 
-      // Archive stale completed entries grouped by date, update in-memory state too
-      const byDate = new Map<string, typeof completed>();
+      // SAFETY: read every stale completed_services row directly from the DB
+      // and merge with the JS-state entries by id. Without this, anything in
+      // the DB that hadn't yet been pulled into JS state (realtime sync lag,
+      // a concurrent write from another tab) would be deleted in the cleanup
+      // step below without being archived. Root cause of the 5/17 partial
+      // archive incident: the JS state held only 18 entries, but the DB had
+      // ~108. The 90 in the gap were wiped by the delete with no archive.
+      const dbCompletedById = new Map<string, CompletedEntry>();
       for (const c of staleCompleted) {
+        dbCompletedById.set(c.id, c);
+      }
+      try {
+        const todayMidnightLA = new Date(today + 'T00:00:00-07:00').toISOString();
+        const { data: dbRows, error: fetchErr } = await supabase
+          .from('completed_services')
+          .select('*')
+          .lt('completed_at', todayMidnightLA);
+        if (fetchErr) {
+          console.error('[startup] failed to fetch stale completed_services from DB:', fetchErr);
+        } else if (dbRows) {
+          for (const row of dbRows as Array<Record<string, unknown>>) {
+            const id = String(row.id ?? '');
+            if (id && !dbCompletedById.has(id)) {
+              dbCompletedById.set(id, mapDbCompleted(row));
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[startup] fetch stale completed_services threw:', err);
+      }
+
+      // Archive stale completed entries grouped by date, update in-memory state too
+      const byDate = new Map<string, CompletedEntry[]>();
+      for (const c of dbCompletedById.values()) {
         const d = getLocalDateStr(new Date(c.completedAt));
         if (!byDate.has(d)) byDate.set(d, []);
         byDate.get(d)!.push(c);
       }
+      // Track which date archives committed successfully so we only delete
+      // their rows from completed_services. If a date's upsert errors, leave
+      // its rows in place so a future startup retries the archive.
+      const archivedDates = new Set<string>();
       const updatedHistory = [...dailyHistory];
       for (const [date, entries] of byDate) {
         const existingIdx = updatedHistory.findIndex(h => h.date === date);
         const existing = existingIdx >= 0 ? updatedHistory[existingIdx] : null;
-        const mergedEntries = existing ? [...existing.entries, ...entries] : entries;
+        // De-dupe by entry id when merging so re-runs of this path can't
+        // double-count the same completed_service rows.
+        const seenIds = new Set<string>();
+        const mergedEntries: CompletedEntry[] = [];
+        for (const e of [...(existing?.entries ?? []), ...entries]) {
+          if (seenIds.has(e.id)) continue;
+          seenIds.add(e.id);
+          mergedEntries.push(e);
+        }
         const historyEntry: DailyHistory = {
           id: existing?.id ?? crypto.randomUUID(),
           date,
@@ -645,30 +688,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
           { id: historyEntry.id, date: historyEntry.date, entries: historyEntry.entries },
           { onConflict: 'date' }
         );
-        if (histErr) { console.error('[startup] daily_history upsert error:', histErr); setSyncError('Failed to archive history â data may not be saved. Check connection.'); }
+        if (histErr) {
+          console.error('[startup] daily_history upsert error for', date, ':', histErr);
+          setSyncError('Failed to archive history. Data preserved for retry on next startup.');
+          continue;
+        }
+        archivedDates.add(date);
         // Update in-memory history so the history screen can find it immediately
         dispatch({ type: 'SAVE_DAILY_HISTORY', entry: historyEntry });
       }
 
-      // Clear stale queue entries and completed services from DB
+      // Clear stale queue entries unconditionally - these were unfinished work
+      // that the day boundary aged out, not data that needs archiving.
       for (const c of staleQueue) {
         await supabase.from('queue_entries').delete().eq('id', c.id);
       }
-      if (staleCompleted.length > 0) {
-        // Delete only the specific stale IDs â never use neq() here as it would wipe the whole table
-        const staleIds = staleCompleted.map(c => c.id);
-        const { error: deleteErr } = await supabase.from('completed_services').delete().in('id', staleIds);
-        if (deleteErr) console.error('[startup] failed to delete stale completed_services:', deleteErr);
+      // Only delete completed_services rows for dates whose archive succeeded.
+      // Rows for failed-archive dates stay in DB so the next startup retries.
+      const idsToDelete: string[] = [];
+      for (const [d, entries] of byDate) {
+        if (!archivedDates.has(d)) continue;
+        for (const e of entries) idsToDelete.push(e.id);
+      }
+      if (idsToDelete.length > 0) {
+        const { error: deleteErr } = await supabase.from('completed_services').delete().in('id', idsToDelete);
+        if (deleteErr) console.error('[startup] failed to delete archived completed_services:', deleteErr);
       }
 
       dispatch({ type: 'DAILY_RESET' });
 
-      // Update system_state so future startups know the reset ran
-      const { error: ssErr } = await supabase
-        .from('system_state')
-        .upsert({ id: 'singleton', last_archive_date: today, updated_at: new Date().toISOString() }, { onConflict: 'id' });
-      if (ssErr) console.error('[startup] failed to update system_state:', ssErr);
-      else console.log('[startup] system_state updated to', today);
+      // Update system_state ONLY if every date archived successfully. If any
+      // failed, leave last_archive_date stale so the next startup retries.
+      const allArchived = byDate.size === 0 || Array.from(byDate.keys()).every(d => archivedDates.has(d));
+      if (allArchived) {
+        const { error: ssErr } = await supabase
+          .from('system_state')
+          .upsert({ id: 'singleton', last_archive_date: today, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+        if (ssErr) console.error('[startup] failed to update system_state:', ssErr);
+        else console.log('[startup] system_state updated to', today);
+      } else {
+        console.warn('[startup] some dates failed to archive - leaving system_state stale for retry');
+      }
     } else if (lastArchiveDate && lastArchiveDate < today) {
       // system_state is stale but no stale entries found in DB â the reset DID clear the DB
       // but system_state was never updated. Fix the date so future startups dont re-run.
@@ -1929,55 +1989,4 @@ async function syncStaffSchedules(current: StaffScheduleEntry[], prev: StaffSche
   const changed: ReturnType<typeof staffScheduleToRow>[] = [];
   for (const s of current) {
     const previous = prevById.get(s.id);
-    if (previous && staffScheduleUnchanged(previous, s)) continue;
-    changed.push(staffScheduleToRow(s));
-  }
-  if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from('staff_schedules').upsert(changed, { onConflict: 'id' }));
-  if (error) { console.error('[syncStaffSchedules] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-}
-
-function staffTimeOffToRow(t: StaffTimeOff) {
-  return {
-    id: t.id,
-    manicurist_id: t.manicuristId,
-    start_date: t.startDate,
-    end_date: t.endDate,
-    reason: t.reason,
-  };
-}
-
-function staffTimeOffUnchanged(a: StaffTimeOff, b: StaffTimeOff): boolean {
-  if (a === b) return true;
-  return (
-    a.manicuristId === b.manicuristId &&
-    a.startDate === b.startDate &&
-    a.endDate === b.endDate &&
-    a.reason === b.reason
-  );
-}
-
-async function syncStaffTimeOff(current: StaffTimeOff[], prev: StaffTimeOff[], onError: (msg: string) => void) {
-  const currentIds = new Set(current.map((t) => t.id));
-  const removed = prev.filter((t) => !currentIds.has(t.id));
-  if (removed.length > 0) {
-    const { error } = await withRetry(() => supabase.from('staff_time_off').delete().in('id', removed.map((t) => t.id)));
-    if (error) { console.error('[syncStaffTimeOff] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
-  const prevById = new Map(prev.map((t) => [t.id, t]));
-  const changed: ReturnType<typeof staffTimeOffToRow>[] = [];
-  for (const t of current) {
-    const previous = prevById.get(t.id);
-    if (previous && staffTimeOffUnchanged(previous, t)) continue;
-    changed.push(staffTimeOffToRow(t));
-  }
-  if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from('staff_time_off').upsert(changed, { onConflict: 'id' }));
-  if (error) { console.error('[syncStaffTimeOff] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-}
-
-export function useApp() {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used within AppProvider');
-  return ctx;
-}
+    if (previous && staffScheduleUnchanged(previ
