@@ -41,11 +41,18 @@ export default function RegisterScreen() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    const rows = await fetchTicketsForDate(dateLA, 'all');
-    setTickets(rows);
-    setLoading(false);
+  // `silent=true` skips the loading-flag flip so background refetches
+  // (realtime events, interval, focus, modal close) don't blank the list
+  // to "Loading…" between each event. Only the initial mount, date change,
+  // and explicit user actions show the loading state.
+  const refresh = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const rows = await fetchTicketsForDate(dateLA, 'all');
+      setTickets(rows);
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, [dateLA]);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -66,23 +73,23 @@ export default function RegisterScreen() {
     let healthy = false;
     const channel = supabase
       .channel('register-tickets-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' },      () => { if (!cancelled) void refresh(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket_items' }, () => { if (!cancelled) void refresh(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' },     () => { if (!cancelled) void refresh(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' },      () => { if (!cancelled) void refresh(true); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket_items' }, () => { if (!cancelled) void refresh(true); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' },     () => { if (!cancelled) void refresh(true); })
       .subscribe((status) => {
         healthy = status === 'SUBSCRIBED';
-        if (healthy && !cancelled) void refresh();
+        if (healthy && !cancelled) void refresh(true);
       });
 
     function onVisible() {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       if (cancelled) return;
-      void refresh();
+      void refresh(true);
       if (!healthy) {
         try {
           channel.subscribe((status) => {
             healthy = status === 'SUBSCRIBED';
-            if (healthy && !cancelled) void refresh();
+            if (healthy && !cancelled) void refresh(true);
           });
         } catch (e) {
           console.warn('[register] resubscribe failed:', e);
@@ -92,7 +99,7 @@ export default function RegisterScreen() {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
     const intervalId = window.setInterval(() => {
-      if (!cancelled) void refresh();
+      if (!cancelled) void refresh(true);
     }, 30000);
 
     return () => {
@@ -312,7 +319,7 @@ export default function RegisterScreen() {
       {openTicket && (
         <TicketModal
           ticket={openTicket}
-          onClose={() => { setOpenTicket(null); void refresh(); void refreshShift(); }}
+          onClose={() => { setOpenTicket(null); void refresh(true); void refreshShift(); }}
           onChanged={(saved) => setOpenTicket(saved)}
         />
       )}
