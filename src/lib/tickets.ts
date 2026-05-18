@@ -1499,26 +1499,52 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
     const { error: dErr } = await supabase.from('ticket_items').delete().eq('ticket_id', input.ticketId);
     if (dErr) { console.error('[tickets] updateOpenTicket delete items:', dErr.message); return null; }
     if (input.items.length > 0) {
-      const rows = input.items.map((it, idx) => ({
-        ticket_id: input.ticketId,
-        kind: it.kind,
-        name: it.name,
-        service_id: it.serviceId,
-        staff1_id: it.staff1Id,
-        staff1_name: it.staff1Name,
-        staff1_color: it.staff1Color,
-        staff2_id: it.staff2Id,
-        staff2_name: it.staff2Name,
-        staff2_color: it.staff2Color,
-        unit_price_cents: it.unitPriceCents,
-        quantity: it.quantity,
-        discount_cents: it.discountCents,
-        ext_price_cents: computeLineExt(it),
-        sort_order: idx,
-        // Carry the visit-id binding through delete+reinsert cycles so
-        // downstream sync (completed_services lookup) still works.
-        queue_entry_id: it.queueEntryId ?? null,
-      }));
+      // Two or more items in the batch can legitimately want the same
+      // queue_entry_id (TicketModal heals null qids to the ticket-level
+      // qid, so a freshly-added service line collides with the original).
+      // The partial unique index `uniq_ticket_items_per_entry` on
+      // (ticket_id, queue_entry_id) WHERE queue_entry_id IS NOT NULL
+      // rejects the second insert — DELETE has already committed, so
+      // the ticket ends up with zero items but the old header total.
+      // Disambiguate by suffixing collisions with `#N` (same pattern the
+      // DB trigger uses for multi-service rows). NULL qids skip this
+      // entirely since the partial index doesn't enforce uniqueness
+      // when the column is null.
+      const qeOccurrences = new Map<string, number>();
+      for (const it of input.items) {
+        if (it.queueEntryId != null) {
+          qeOccurrences.set(it.queueEntryId, (qeOccurrences.get(it.queueEntryId) ?? 0) + 1);
+        }
+      }
+      const qeUsed = new Map<string, number>();
+      const rows = input.items.map((it, idx) => {
+        let qe: string | null = it.queueEntryId ?? null;
+        if (qe != null && (qeOccurrences.get(qe) ?? 0) > 1) {
+          const used = (qeUsed.get(qe) ?? 0) + 1;
+          qeUsed.set(qe, used);
+          qe = `${qe}#${used}`;
+        }
+        return {
+          ticket_id: input.ticketId,
+          kind: it.kind,
+          name: it.name,
+          service_id: it.serviceId,
+          staff1_id: it.staff1Id,
+          staff1_name: it.staff1Name,
+          staff1_color: it.staff1Color,
+          staff2_id: it.staff2Id,
+          staff2_name: it.staff2Name,
+          staff2_color: it.staff2Color,
+          unit_price_cents: it.unitPriceCents,
+          quantity: it.quantity,
+          discount_cents: it.discountCents,
+          ext_price_cents: computeLineExt(it),
+          sort_order: idx,
+          // Carry the visit-id binding through delete+reinsert cycles so
+          // downstream sync (completed_services lookup) still works.
+          queue_entry_id: qe,
+        };
+      });
       const { error: iErr } = await supabase.from('ticket_items').insert(rows);
       if (iErr) { console.error('[tickets] updateOpenTicket insert items:', iErr.message); return null; }
     }
