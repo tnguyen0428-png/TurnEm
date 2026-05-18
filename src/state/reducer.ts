@@ -356,7 +356,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // Idempotent merge by id — combined with deterministic child ids in
       // MultiServiceAssign, re-dispatching the same SPLIT_AND_ASSIGN settles
       // to the same queue state instead of duplicating children.
-      const filteredQueue = state.queue.filter((c) => c.id !== action.originalId);
+      //
+      // ALSO drop any EXISTING child of this parent that isn't in the new
+      // entries. Without this, a re-run of MultiServiceAssign that moves a
+      // service from manicurist A → B leaves the old `${parent}-${A}` child
+      // in the queue (its id differs from `${parent}-${B}`, so it isn't
+      // overwritten by the merge below). The orphan's ticket line then sits
+      // on the open ticket alongside B's freshly-appended line, which is
+      // exactly the "shows BOTH manicurists" symptom seen on ticket #16.
+      // syncQueue's orphan-cleanup pass picks up these removed children and
+      // strips their lines off the ticket.
+      const newEntryIds = new Set(newEntries.map((e) => e.id));
+      const filteredQueue = state.queue.filter((c) => {
+        if (c.id === action.originalId) return false;
+        if (c.parentQueueId === action.originalId && !newEntryIds.has(c.id)) return false;
+        return true;
+      });
       const queueById = new Map(filteredQueue.map((c) => [c.id, c]));
       for (const e of newEntries) queueById.set(e.id, e);
       return {
