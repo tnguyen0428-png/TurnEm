@@ -1017,28 +1017,50 @@ export async function appendItemsToTicket(
   }
   if (toInsert.length === 0) return fetchTicket(ticketId);
 
-  const itemRows = toInsert.map((it, idx) => ({
-    ticket_id: ticketId,
-    kind: 'service' as const,
-    name: it.name,
-    service_id: it.serviceId,
-    staff1_id: it.staff1Id,
-    staff1_name: it.staff1Name,
-    staff1_color: it.staff1Color,
-    unit_price_cents: it.unitPriceCents,
-    quantity: it.quantity,
-    discount_cents: 0,
-    ext_price_cents: Math.max(0, it.unitPriceCents * it.quantity),
-    sort_order: startSort + idx,
-    queue_entry_id: it.queueEntryId ?? null,
-  }));
-  // Use upsert with ignoreDuplicates so the partial unique index on
-  // (ticket_id, queue_entry_id) silently no-ops concurrent inserts. This
-  // closes a check-then-act race where N sibling syncCompleted firings
-  // all see "entry not yet on ticket" in their JS dedupe and all insert.
+  // Suffix in-batch duplicate queue_entry_ids with `#N` so they don't
+  // violate the partial unique index `uniq_ticket_items_per_entry`. NULL
+  // qids are exempt because the index has WHERE queue_entry_id IS NOT NULL.
+  const qeCount = new Map<string, number>();
+  for (const it of toInsert) {
+    if (it.queueEntryId != null) {
+      qeCount.set(it.queueEntryId, (qeCount.get(it.queueEntryId) ?? 0) + 1);
+    }
+  }
+  const qeUsed = new Map<string, number>();
+  const itemRows = toInsert.map((it, idx) => {
+    let qe: string | null = it.queueEntryId ?? null;
+    if (qe != null && (qeCount.get(qe) ?? 0) > 1) {
+      const used = (qeUsed.get(qe) ?? 0) + 1;
+      qeUsed.set(qe, used);
+      qe = `${qe}#${used}`;
+    }
+    return {
+      ticket_id: ticketId,
+      kind: 'service' as const,
+      name: it.name,
+      service_id: it.serviceId,
+      staff1_id: it.staff1Id,
+      staff1_name: it.staff1Name,
+      staff1_color: it.staff1Color,
+      unit_price_cents: it.unitPriceCents,
+      quantity: it.quantity,
+      discount_cents: 0,
+      ext_price_cents: Math.max(0, it.unitPriceCents * it.quantity),
+      sort_order: startSort + idx,
+      queue_entry_id: qe,
+    };
+  });
+  // Plain INSERT — the previous upsert used `onConflict:
+  // 'ticket_id,queue_entry_id'`, but the underlying unique index is
+  // PARTIAL (WHERE queue_entry_id IS NOT NULL). Supabase JS doesn't pass
+  // the WHERE predicate, so Postgres rejected the upsert with
+  // "no unique or exclusion constraint matching". seenEntryIds above
+  // already filters out items whose qid is on the ticket, and the
+  // suffix logic above disambiguates in-batch collisions, so no
+  // conflict resolution is needed at the DB level.
   const { error: insErr } = await supabase
     .from('ticket_items')
-    .upsert(itemRows, { onConflict: 'ticket_id,queue_entry_id', ignoreDuplicates: true });
+    .insert(itemRows);
   if (insErr) {
     console.warn('[tickets] appendItemsToTicket items insert:', insErr.message);
     return null;
@@ -1250,9 +1272,17 @@ export async function syncEntryToTicket(
     changed = true;
   }
   if (inserts.length > 0) {
+    // Plain INSERT — the previous upsert used `onConflict: 'ticket_id,
+    // queue_entry_id'` but the underlying unique index is PARTIAL
+    // (WHERE queue_entry_id IS NOT NULL), and Supabase JS doesn't pass
+    // the WHERE predicate, so Postgres rejected with "no unique or
+    // exclusion constraint matching the ON CONFLICT specification".
+    // The desired-line builder above gives each insert a distinct
+    // queue_entry_id (`${entry.id}#svc{idx}` for multi-service, or
+    // entry.id for single-service), so in-batch collisions can't happen.
     const { error } = await supabase
       .from('ticket_items')
-      .upsert(inserts, { onConflict: 'ticket_id,queue_entry_id', ignoreDuplicates: true });
+      .insert(inserts);
     if (error) {
       console.error('[tickets] syncEntryToTicket insert:', error.message);
       return false;
