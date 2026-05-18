@@ -87,28 +87,52 @@ function serialFromLineName(name: string): { display: string; norm: string } {
  * history hurts; if that ever changes we can window by purchase date.
  */
 export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
-  const [salesRes, redemptionsRes] = await Promise.all([
-    supabase
-      .from('ticket_items')
-      .select('id, name, ext_price_cents, ticket_id, tickets(id, ticket_number, business_date, client_name, opened_at)')
-      .eq('kind', 'gift_card_sale'),
-    supabase
-      .from('payments')
-      .select('id, gift_card_code, amount_cents, captured_at, ticket_id, tickets(id, ticket_number, business_date, client_name)')
-      .eq('method', 'gift'),
-  ]);
-  if (salesRes.error) {
-    console.error('[giftCertificates] sales:', salesRes.error.message);
-    return [];
+  // Paginated reads: Supabase caps a single .select() at 1000 rows by
+  // default, which silently truncated this report once we crossed the
+  // threshold (SalonBiz import added 1900+ gift-cert sales).
+  const PAGE = 1000;
+  async function fetchAllSales(): Promise<DbSaleRow[]> {
+    const out: DbSaleRow[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await supabase
+        .from('ticket_items')
+        .select('id, name, ext_price_cents, ticket_id, tickets(id, ticket_number, business_date, client_name, opened_at)')
+        .eq('kind', 'gift_card_sale')
+        .range(offset, offset + PAGE - 1);
+      if (error) {
+        console.error('[giftCertificates] sales:', error.message);
+        return out;
+      }
+      const rows = (data ?? []) as unknown as DbSaleRow[];
+      out.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+    return out;
   }
-  if (redemptionsRes.error) {
-    console.error('[giftCertificates] redemptions:', redemptionsRes.error.message);
+  async function fetchAllRedemptions(): Promise<DbRedemptionRow[]> {
+    const out: DbRedemptionRow[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('id, gift_card_code, amount_cents, captured_at, ticket_id, tickets(id, ticket_number, business_date, client_name)')
+        .eq('method', 'gift')
+        .range(offset, offset + PAGE - 1);
+      if (error) {
+        console.error('[giftCertificates] redemptions:', error.message);
+        return out;
+      }
+      const rows = (data ?? []) as unknown as DbRedemptionRow[];
+      out.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+    return out;
   }
+  const [sales, redemptions] = await Promise.all([fetchAllSales(), fetchAllRedemptions()]);
 
   // Index redemptions by normalized serial. Keep the earliest redemption
   // when more than one row claims the same serial (rare data-entry typo).
   const redemptionByNorm = new Map<string, DbRedemptionRow>();
-  for (const r of (redemptionsRes.data ?? []) as unknown as DbRedemptionRow[]) {
+  for (const r of redemptions) {
     const norm = normalizeSerial(r.gift_card_code);
     if (!norm) continue;
     const existing = redemptionByNorm.get(norm);
@@ -118,7 +142,7 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
   }
 
   const out: GiftCertificate[] = [];
-  for (const s of (salesRes.data ?? []) as unknown as DbSaleRow[]) {
+  for (const s of sales) {
     const { display, norm } = serialFromLineName(s.name ?? '');
     const ticket = s.tickets;
     if (!ticket) continue; // orphaned sale line — skip

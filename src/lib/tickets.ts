@@ -214,27 +214,40 @@ export function parseDollarsToCents(input: string | number | null | undefined): 
 /**
  * Allocate the next gift-card serial number. Sequential, salon-wide. Reads
  * the current max serial off existing gift_card_sale ticket_items by name
- * pattern ("Gift Certificate #00042") and returns the next one as a
- * 5-digit padded string. Race-prone at huge scale but salon volume is far
+ * pattern ("Gift Certificate #1606834460") and returns the next one as a
+ * 5-digit-min padded string. Race-prone at huge scale but salon volume is far
  * below where that matters; if a collision ever happens the cashier just
  * picks a new number manually.
+ *
+ * Paginated: Supabase caps a single .select() at 1000 rows by default and
+ * we silently undercount the max once we cross that threshold (which we
+ * did after the SalonBiz history import). We page through in chunks and
+ * track the max as we go.
  */
 export async function nextGiftCardSerial(): Promise<string> {
-  const { data, error } = await supabase
-    .from('ticket_items')
-    .select('name')
-    .eq('kind', 'gift_card_sale');
-  if (error) {
-    console.warn('[tickets] nextGiftCardSerial:', error.message);
-    return '00001';
-  }
+  const pageSize = 1000;
   let max = 0;
-  for (const row of (data ?? []) as Array<{ name: string }>) {
-    const m = (row.name ?? '').match(/#(\d+)/);
-    if (m) {
-      const n = parseInt(m[1], 10);
-      if (Number.isFinite(n) && n > max) max = n;
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('ticket_items')
+      .select('name')
+      .eq('kind', 'gift_card_sale')
+      .range(offset, offset + pageSize - 1);
+    if (error) {
+      console.warn('[tickets] nextGiftCardSerial:', error.message);
+      return '00001';
     }
+    const rows = (data ?? []) as Array<{ name: string }>;
+    for (const row of rows) {
+      const m = (row.name ?? '').match(/#(\d+)/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+    }
+    if (rows.length < pageSize) break;
+    offset += pageSize;
   }
   return String(max + 1).padStart(5, '0');
 }
