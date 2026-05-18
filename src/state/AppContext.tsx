@@ -1525,9 +1525,9 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
 
   // ── queue-edit → ticket reconciliation ─────────────────────────────────
   //
-  // For every entry that's currently assigned to a manicurist AND was
-  // assigned in the previous tick (so a ticket exists or was about to),
-  // call syncEntryToTicket. The helper compares the queue's truth to the
+  // For every entry that's currently assigned to a manicurist AND existed
+  // in the previous tick (so a ticket exists or was about to), call
+  // syncEntryToTicket. The helper compares the queue's truth to the
   // ticket's truth itself and only writes when they actually diverge, so
   // it's idempotent — calling it broadly costs one Supabase round-trip
   // per assigned entry but never produces a spurious change.
@@ -1538,10 +1538,14 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // ticket out of sync with the queue. The helper's own DB-side diff is
   // the source of truth.
   //
-  // The justAssigned path above already covers the null→assigned
-  // transition. The orphan cleanup below covers removed-without-
-  // completion. This sits in the middle: same-id-and-still-assigned
-  // entries whose content might have changed mid-visit.
+  // We include the null→assigned transition here too — the justAssigned
+  // path above only APPENDS to the ticket, and its appendItemsToTicket
+  // de-dupes by queue_entry_id, so when a cancel-then-reassign leaves
+  // stale lines on the ticket tagged with this entry's id, appendItems
+  // sees them as already-present and skips, never updating staff. Without
+  // this reconcile pass, the register keeps showing the OLD manicurist
+  // (and totals/services) after a queue reassignment. The orphan cleanup
+  // below covers removed-without-completion.
   //
   // Conservative on the ticket side: only ticket_items rows tagged with
   // this entry's queue_entry_id (or `entry.id#svc<n>` siblings) are
@@ -1551,7 +1555,6 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     if (!entry.assignedManicuristId) continue;            // not assigned → no ticket yet
     const previous = prevById.get(entry.id);
     if (!previous) continue;                              // new entry → justAssigned handled it
-    if (!previous.assignedManicuristId) continue;         // null→assigned → justAssigned handled it
     try {
       const did = await syncEntryToTicket(entry, manicurists, salonServices);
       if (did) {
@@ -1988,6 +1991,7 @@ async function syncStaffSchedules(current: StaffScheduleEntry[], prev: StaffSche
   const prevById = new Map(prev.map((s) => [s.id, s]));
   const changed: ReturnType<typeof staffScheduleToRow>[] = [];
   for (const s of current) {
+    const previous = prevById.get(s.id);
     if (previous && staffScheduleUnchanged(previous, s)) continue;
     changed.push(staffScheduleToRow(s));
   }
@@ -2038,5 +2042,16 @@ async function syncStaffTimeOff(current: StaffTimeOff[], prev: StaffTimeOff[], o
 export function useApp() {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useApp must be used within AppProvider');
+  return ctx;
+}
+ be saved. Check connection.'); }
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used within AppProvider');
+  return ctx;
+}
+ed within AppProvider');
   return ctx;
 }
