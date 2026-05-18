@@ -374,38 +374,43 @@ export default function HistoryScreen() {
   // Per-manicurist turn totals.
   //
   // For TODAY:
-  //   - Always include every manicurist currently clocked IN (with their
-  //     live totalTurns) AND every manicurist who already did at least one
-  //     service today (even if they've since clocked OUT — their work
-  //     today must stay visible so the list doesn't lose people mid-day).
-  //   - Clocked-in rows come first, ordered by clock-in time (so drag-
-  //     reorder priority still works); clocked-out-with-entries rows
-  //     follow in entry order. For clocked-out rows we sum from
-  //     displayedEntries since their live `totalTurns` may have reset on
-  //     clock-out.
+  //   - Include every manicurist currently clocked IN (with their live
+  //     totalTurns) AND every manicurist who already did at least one
+  //     service today (so the list doesn't lose people mid-day when they
+  //     clock out).
+  //   - Sort EVERYONE by clock-in time so the chronological order is
+  //     preserved even after someone clocks out. Clocked-in rows use
+  //     their live `clockInTime`; clocked-out rows fall back to the
+  //     earliest `startedAt` from their displayedEntries today (the time
+  //     of their first completed service is the best proxy for when they
+  //     were working).
+  //   - For clocked-out rows we sum non-voided entries since their live
+  //     `totalTurns` may have reset on clock-out.
   //
   // For PAST DAYS: build entirely from the day's saved entries.
   const turnsPerManicurist = useMemo<TurnsRowEntry[]>(() => {
     if (!viewingPastDay) {
-      const byId = new Map<string, TurnsRowEntry>();
+      type Row = TurnsRowEntry & { sortTime: number };
+      const byId = new Map<string, Row>();
 
-      // 1. Clocked-in manicurists first (ordered by clockInTime).
-      const clockedIn = state.manicurists
-        .filter((m) => m.clockedIn)
-        .sort((a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity));
-      for (const m of clockedIn) {
+      // 1. Clocked-in manicurists — live totalTurns + clockInTime as sort key.
+      for (const m of state.manicurists.filter((mm) => mm.clockedIn)) {
         byId.set(m.id, {
           id: m.id,
           name: m.name,
           turns: m.totalTurns,
           color: m.color,
           clockInTime: m.clockInTime ? formatTime(m.clockInTime) : '',
+          sortTime: m.clockInTime ?? Number.POSITIVE_INFINITY,
         });
       }
 
-      // 2. Any manicurist who has entries today but isn't already in the
-      //    map (i.e. they clocked out). Sum non-voided entries.
+      // 2. Add / fold in entries — covers clocked-out manicurists who
+      //    worked today, and refines sortTime to the earliest startedAt
+      //    seen for each manicurist (clocked-in already has clockInTime,
+      //    which is normally earlier than any startedAt anyway).
       for (const e of displayedEntries) {
+        const startTime = e.startedAt ?? Number.POSITIVE_INFINITY;
         if (!byId.has(e.manicuristId)) {
           byId.set(e.manicuristId, {
             id: e.manicuristId,
@@ -413,18 +418,25 @@ export default function HistoryScreen() {
             turns: 0,
             color: e.manicuristColor,
             clockInTime: '',
+            sortTime: startTime,
           });
+        } else if (startTime < byId.get(e.manicuristId)!.sortTime) {
+          byId.get(e.manicuristId)!.sortTime = startTime;
         }
-        // For clocked-out rows we initialized turns=0 above. For clocked-in
-        // rows we keep their live totalTurns — don't double-count by
-        // re-summing entries on top.
+        // Only sum entries for clocked-out rows (clockInTime === '') —
+        // clocked-in rows already have live totalTurns and double-counting
+        // would inflate them.
         const existing = byId.get(e.manicuristId)!;
         if (existing.clockInTime === '' && !e.voided) {
           existing.turns += e.turnValue;
         }
       }
 
-      if (byId.size > 0) return Array.from(byId.values());
+      if (byId.size > 0) {
+        return Array.from(byId.values())
+          .sort((a, b) => a.sortTime - b.sortTime)
+          .map(({ sortTime: _t, ...rest }) => { void _t; return rest; });
+      }
     }
     // Past day view (or today with no data at all): build from displayed entries.
     const map = new Map<string, TurnsRowEntry>();
