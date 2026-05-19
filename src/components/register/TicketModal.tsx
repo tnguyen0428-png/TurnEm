@@ -534,6 +534,66 @@ export default function TicketModal({
       });
     }
 
+    // Removed-line sync: when a line that existed at mount is no longer in
+    // `lines`, mirror the removal onto the matching in-progress queue entry.
+    // Without this, the existing appendItemsToTicket / reconcile flow re-adds
+    // the ticket_item on the next queue tick because the queue entry still
+    // lists the service. If the queue entry's services array becomes empty
+    // after removal, drop the entry entirely (REMOVE_CLIENT) so the
+    // manicurist is no longer marked busy with phantom work. The
+    // UPDATE_CLIENT reducer applies the turn-value delta to total_turns;
+    // REMOVE_CLIENT alone doesn't, so we explicitly subtract the entry's
+    // current turn credit from the assigned manicurist before removing.
+    {
+      const remainingItemIds = new Set(lines.filter((l) => l.existingId).map((l) => l.existingId as string));
+      const visitId = ticket.queueEntryId;
+      if (visitId) {
+        for (const [itemId, orig] of originalStaffByItemId) {
+          if (remainingItemIds.has(itemId)) continue;
+          if (!orig.staff1Id || !orig.name) continue;
+          const entry = state.queue.find(
+            (q) =>
+              (q.id === visitId || q.parentQueueId === visitId) &&
+              q.assignedManicuristId === orig.staff1Id,
+          );
+          if (!entry) continue;
+          const oldName = orig.name.trim();
+          const idx = entry.services.indexOf(oldName as ServiceType);
+          if (idx === -1) continue;
+          const updatedServices = [...entry.services];
+          updatedServices.splice(idx, 1);
+          if (updatedServices.length === 0) {
+            const credit = Number(entry.turnValue) || 0;
+            if (credit > 0 && entry.assignedManicuristId) {
+              const m = state.manicurists.find((mm) => mm.id === entry.assignedManicuristId);
+              if (m) {
+                dispatch({
+                  type: 'UPDATE_MANICURIST',
+                  id: m.id,
+                  updates: {
+                    totalTurns: Math.max(0, (m.totalTurns || 0) - credit),
+                    status: m.currentClient === entry.id ? 'available' : m.status,
+                    currentClient: m.currentClient === entry.id ? null : m.currentClient,
+                  },
+                });
+              }
+            }
+            dispatch({ type: 'REMOVE_CLIENT', id: entry.id });
+          } else {
+            const newTurnValue = updatedServices.reduce((sum, sv) => {
+              const cat = state.salonServices.find((s) => s.name === sv);
+              return sum + Number(cat?.turnValue ?? 0);
+            }, 0);
+            dispatch({
+              type: 'UPDATE_CLIENT',
+              id: entry.id,
+              updates: { services: updatedServices, turnValue: newTurnValue },
+            });
+          }
+        }
+      }
+    }
+
     // Service-edit sync: reconcile each touched visit's completed_services row
     // against the FINAL line state in the ticket. This is intentionally a
     // reconciliation pass (rebuild from current lines) rather than a diff
@@ -1004,13 +1064,38 @@ export default function TicketModal({
                             disabled={!canEdit}
                             className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-center focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           />
-                          <input
-                            type="text" value={line.name}
-                            onChange={(e) => updateLine(idx, { name: e.target.value })}
-                            disabled={!canEdit}
-                            placeholder="Service name"
-                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
-                          />
+                          <div className="flex items-center gap-1 min-w-0">
+                            <input
+                              type="text" value={line.name}
+                              onChange={(e) => updateLine(idx, { name: e.target.value })}
+                              disabled={!canEdit}
+                              placeholder="Service name"
+                              className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
+                            />
+                            {line.kind === 'service' && (
+                              <select
+                                value=""
+                                onChange={(e) => {
+                                  const svc = sortedServices.find((s) => s.id === e.target.value);
+                                  if (!svc) return;
+                                  updateLine(idx, {
+                                    serviceId: svc.id,
+                                    name: svc.name,
+                                    priceInput: svc.price.toFixed(2),
+                                  });
+                                }}
+                                disabled={!canEdit}
+                                title="Change service"
+                                aria-label="Change service"
+                                className="w-6 px-0 py-1 rounded-md border border-transparent text-gray-400 hover:border-gray-300 hover:text-gray-700 font-mono text-xs focus:outline-none cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                              >
+                                <option value=""></option>
+                                {sortedServices.map((s) => (
+                                  <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
                           <select
                             value={line.staff1Id ?? ''}
                             onChange={(e) => {
