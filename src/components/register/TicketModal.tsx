@@ -260,8 +260,43 @@ export default function TicketModal({
     return id ? state.manicurists.find((m) => m.id === id) ?? null : null;
   }
 
+  // When a fresh service line on an existing (parent) ticket gets a staff
+  // assignment, flip that manicurist's card to BUSY pointing at the parent
+  // visit's queue entry. No new queue_entries row is created — we're just
+  // updating the manicurists table so their staff card shows BUSY and
+  // surfaces the parent visit's services. Cleared automatically when the
+  // ticket is closed or voided (see handleProcess / handleVoidConfirmed).
+  //
+  // Guard: only fire when the manicurist isn't already busy with a DIFFERENT
+  // client — otherwise we'd clobber their existing work pointer.
+  function ensureManicuristBusyForAddedLine(line: DraftLine) {
+    if (line.kind !== 'service') return;
+    if (line.existingId) return;
+    if (!line.staff1Id) return;
+    const visitId = ticket.queueEntryId;
+    if (!visitId) return;
+    const target = state.manicurists.find((m) => m.id === line.staff1Id);
+    if (!target) return;
+    if (target.status === 'busy' && target.currentClient && target.currentClient !== visitId) return;
+    dispatch({
+      type: 'UPDATE_MANICURIST',
+      id: line.staff1Id,
+      updates: { status: 'busy', currentClient: visitId },
+    });
+  }
+
   function updateLine(idx: number, patch: Partial<DraftLine>) {
+    const before = lines[idx];
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+    if (
+      before &&
+      !before.existingId &&
+      patch.staff1Id !== undefined &&
+      patch.staff1Id !== null &&
+      patch.staff1Id !== before.staff1Id
+    ) {
+      ensureManicuristBusyForAddedLine({ ...before, ...patch });
+    }
   }
   function removeLine(idx: number) {
     setLines((prev) => prev.filter((_, i) => i !== idx));
@@ -270,23 +305,22 @@ export default function TicketModal({
     const svc = sortedServices.find((s) => s.id === svcId);
     if (!svc) return;
     const m = manicuristById(primaryManicuristId);
-    setLines((prev) => [
-      ...prev,
-      {
-        serviceId: svc.id,
-        name: svc.name,
-        staff1Id: m?.id ?? null,
-        staff1Name: m?.name ?? '',
-        staff1Color: m?.color ?? '#9ca3af',
-        staff2Id: null,
-        staff2Name: '',
-        staff2Color: '#9ca3af',
-        priceInput: svc.price.toFixed(2),
-        discountInput: '0.00',
-        quantity: 1,
-        kind: 'service',
-      },
-    ]);
+    const newLine: DraftLine = {
+      serviceId: svc.id,
+      name: svc.name,
+      staff1Id: m?.id ?? null,
+      staff1Name: m?.name ?? '',
+      staff1Color: m?.color ?? '#9ca3af',
+      staff2Id: null,
+      staff2Name: '',
+      staff2Color: '#9ca3af',
+      priceInput: svc.price.toFixed(2),
+      discountInput: '0.00',
+      quantity: 1,
+      kind: 'service',
+    };
+    setLines((prev) => [...prev, newLine]);
+    ensureManicuristBusyForAddedLine(newLine);
   }
 
   function addBlankCustomLine() {
@@ -454,6 +488,50 @@ export default function TicketModal({
     }
     if (changes.length > 0) {
       void reallocateTurnsForStaffChanges(changes);
+    }
+
+    // In-progress queue sync: when a line's service NAME is changed on an
+    // existing in-progress ticket (e.g. customer asks to upgrade Pedicure ->
+    // Gel Pedicure), mirror the change onto the matching queue_entries row
+    // so the manicurist's BUSY card shows the new service and their
+    // total_turns get the delta. Skip lines whose staff also changed —
+    // those go through reallocateTurnsForStaffChanges above. Skip if the
+    // queue entry no longer exists (already completed) — completed_services
+    // path handles that case.
+    for (const l of lines) {
+      if (l.kind !== 'service' || !l.existingId) continue;
+      const orig = originalStaffByItemId.get(l.existingId);
+      if (!orig) continue;
+      if (orig.staff1Id !== l.staff1Id) continue;
+      // Find the queue entry for THIS staff on THIS visit. The ticket_item
+      // may carry the bare visit id as queue_entry_id, but the actual
+      // queue entry is often a split child whose id is `${visitId}-${staffId}`
+      // (or arbitrary uuid with parentQueueId === visitId). Match by
+      // (visit, manicurist) so both shapes resolve.
+      const visitId = ticket.queueEntryId;
+      if (!visitId || !l.staff1Id) continue;
+      const entry = state.queue.find(
+        (q) =>
+          (q.id === visitId || q.parentQueueId === visitId) &&
+          q.assignedManicuristId === l.staff1Id,
+      );
+      if (!entry) continue;
+      const oldName = orig.name?.trim();
+      const newName = l.name?.trim();
+      if (!oldName || !newName || oldName === newName) continue;
+      const idx = entry.services.indexOf(oldName as ServiceType);
+      if (idx === -1) continue;
+      const updatedServices = [...entry.services];
+      updatedServices[idx] = newName as ServiceType;
+      const newTurnValue = updatedServices.reduce((sum, sv) => {
+        const cat = state.salonServices.find((s) => s.name === sv);
+        return sum + Number(cat?.turnValue ?? 0);
+      }, 0);
+      dispatch({
+        type: 'UPDATE_CLIENT',
+        id: entry.id,
+        updates: { services: updatedServices, turnValue: newTurnValue },
+      });
     }
 
     // Service-edit sync: reconcile each touched visit's completed_services row
@@ -739,6 +817,20 @@ export default function TicketModal({
       setError('Could not process ticket — try again.');
       return;
     }
+    // Auto-clear: any manicurist still pointing at this visit drops back
+    // to available. Mirrors the lifecycle of the "flip busy on added line"
+    // feature so adding-then-closing a ticket leaves no busy staff stuck.
+    if (ticket.queueEntryId) {
+      for (const m of state.manicurists) {
+        if (m.currentClient === ticket.queueEntryId) {
+          dispatch({
+            type: 'UPDATE_MANICURIST',
+            id: m.id,
+            updates: { status: 'available', currentClient: null },
+          });
+        }
+      }
+    }
     onChanged?.(closed);
     onClose();
   }
@@ -755,7 +847,20 @@ export default function TicketModal({
     setBusy('voiding');
     const ok = await voidTicket(ticket.id, reason, receptionistId);
     setBusy('idle');
-    if (ok) onClose();
+    if (ok) {
+      if (ticket.queueEntryId) {
+        for (const m of state.manicurists) {
+          if (m.currentClient === ticket.queueEntryId) {
+            dispatch({
+              type: 'UPDATE_MANICURIST',
+              id: m.id,
+              updates: { status: 'available', currentClient: null },
+            });
+          }
+        }
+      }
+      onClose();
+    }
   }
 
   // Esc to close
