@@ -1006,10 +1006,15 @@ export async function appendItemsToTicket(
   if (items.length === 0) return fetchTicket(ticketId);
 
   // Pull the existing ticket + its current items so we can de-dupe and
-  // know the next sort_order to assign.
+  // know the next sort_order to assign. auto_attributed_sources carries
+  // the per-(source_row, service) tombstones the DB trigger writes —
+  // see migration 20260520134828_ticket_trigger_per_service_tombstone
+  // for the contract. We honor the same tombstones here so client-side
+  // safety-net paths (AppContext syncCompleted, justAssigned, etc.)
+  // can't resurrect a line the cashier just deleted via TicketModal.
   const { data: tRow, error: tErr } = await supabase
     .from('tickets')
-    .select('id, status, subtotal_cents, discount_cents, tax_cents, tip_cents')
+    .select('id, status, subtotal_cents, discount_cents, tax_cents, tip_cents, auto_attributed_sources')
     .eq('id', ticketId)
     .eq('status', 'open')
     .maybeSingle();
@@ -1080,8 +1085,29 @@ export async function appendItemsToTicket(
   const seenEntryIds = new Set(
     existing.filter((e) => e.queue_entry_id).map((e) => e.queue_entry_id as string),
   );
+
+  // Tombstone respect (mirrors the DB trigger fix in migration
+  // 20260520134828): if `${source_row}::${service_name}` has already
+  // been attributed once, never resurrect it. The trigger writes these
+  // tuples on every fire whose service either landed on the ticket or
+  // was guarded out. Without this client-side check, syncCompleted's
+  // safety-net `appendItemsToTicket(..., { allowDuplicates: true })`
+  // call ignores the tombstone and re-adds a line the cashier just
+  // deleted via TicketModal.
+  const attributed = ((tRow as { auto_attributed_sources?: string[] | null }).auto_attributed_sources ?? []) as string[];
+  const tombstones = new Set(attributed.filter((a) => typeof a === 'string' && a.includes('::')));
+  // For items WITHOUT a queueEntryId, also collapse by (sourceFromAnyExistingEntry::name)?
+  // No — items without a queueEntryId are manual cashier adds; the cashier
+  // is the source of truth there. Tombstone matching is qid-keyed.
+  const tombstoneKey = (qid: string | null | undefined, name: string): string | null => {
+    if (!qid) return null;
+    const root = qid.includes('#') ? qid.split('#')[0] : qid;
+    return `${root}::${name}`;
+  };
   let toInsert = items.filter((it) => {
     if (it.queueEntryId && seenEntryIds.has(it.queueEntryId)) return false;
+    const tk = tombstoneKey(it.queueEntryId, it.name);
+    if (tk && tombstones.has(tk)) return false;
     return true;
   });
   if (!options.allowDuplicates) {
@@ -1159,6 +1185,31 @@ export async function appendItemsToTicket(
   if (insErr) {
     console.warn('[tickets] appendItemsToTicket items insert:', insErr.message);
     return null;
+  }
+
+  // Record tombstone tuples for every line we just inserted that had a
+  // queue_entry_id. Future trigger fires (and future client-side calls)
+  // will skip these tuples, so if the cashier later deletes the line
+  // it stays deleted. Items without a queueEntryId are manual cashier
+  // adds and don't get tombstones — their lifecycle is fully under the
+  // cashier's control via TicketModal.
+  const newTombstones = Array.from(
+    new Set(
+      toInsert
+        .map((it) => tombstoneKey(it.queueEntryId ?? null, it.name))
+        .filter((k): k is string => !!k),
+    ),
+  );
+  if (newTombstones.length > 0) {
+    const merged = Array.from(new Set([...attributed, ...newTombstones]));
+    const { error: tsErr } = await supabase
+      .from('tickets')
+      .update({ auto_attributed_sources: merged })
+      .eq('id', ticketId)
+      .eq('status', 'open');
+    if (tsErr) {
+      console.warn('[tickets] appendItemsToTicket tombstone update:', tsErr.message);
+    }
   }
 
   // Recompute subtotal/total. Tip/tax/ticket-discount stay as-is — those
@@ -2172,4 +2223,3 @@ export async function cleanupDuplicateLinesForEntry(
 
   return toDelete.length;
 }
-
