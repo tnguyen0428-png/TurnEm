@@ -1639,6 +1639,13 @@ canEdit && (
         <GiftCardSaleModal
           onClose={() => setShowGiftModal(false)}
           onAdd={(serial, valueCents, staff) => addGiftLine(serial, valueCents, staff)}
+          pendingSerials={lines
+            .filter((l) => l.kind === 'gift_card_sale')
+            .map((l) => {
+              const m = (l.name ?? '').match(/#(\d+)/);
+              return m ? m[1] : '';
+            })
+            .filter((s) => s.length > 0)}
         />
       )}
       <ReceptionistPinGate
