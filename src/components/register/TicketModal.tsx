@@ -347,6 +347,41 @@ export default function TicketModal({
       id: line.staff1Id,
       updates: { status: 'busy', currentClient: addChildId },
     });
+
+    // Belt-and-suspenders: also write the add-child to queue_entries
+    // DIRECTLY. The AppContext sync effect normally handles this when
+    // state.queue changes, but it skips entirely when a realtime echo
+    // shares the same render batch (wasRemote=true short-circuits the
+    // whole effect). When that race happens the local dispatches still
+    // update React state, but the queue_entries row never lands in the
+    // DB — and after a page refresh state.queue rehydrates from the DB
+    // without the add-child, leaving the manicurist's currentClient
+    // pointing at a phantom id and the card showing BUSY with no
+    // service. ON CONFLICT id DO UPDATE makes this safe to fire even
+    // when the sync effect ALSO writes it: idempotent.
+    if (svcName) {
+      const nowIso = new Date(now).toISOString();
+      void supabase.from('queue_entries').upsert({
+        id: addChildId,
+        parent_queue_id: visitId,
+        client_name: clientName || ticket.clientName || 'Walk-in',
+        service: svcName,
+        services: [svcName],
+        turn_value: 0,
+        service_requests: [],
+        requested_manicurist_id: null,
+        is_requested: false,
+        is_appointment: false,
+        assigned_manicurist_id: line.staff1Id,
+        status: 'inProgress',
+        arrived_at: nowIso,
+        started_at: nowIso,
+        completed_at: null,
+        extra_time_ms: 0,
+      }, { onConflict: 'id' }).then(({ error }) => {
+        if (error) console.warn('[ticket modal] add-child direct upsert:', error.message);
+      });
+    }
   }
 
   function updateLine(idx: number, patch: Partial<DraftLine>) {
