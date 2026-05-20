@@ -842,8 +842,25 @@ export default function TicketModal({
         return sum + base;
       }, 0);
 
+      const turnDelta = newTurnValue - entry.turnValue;
+      // Mirror the per-manicurist totalTurns delta into LOCAL state so
+      // syncManicurists doesn't race the DB-side update below. Without
+      // this dispatch, any unrelated UPDATE_MANICURIST that fires between
+      // now and the realtime echo can upload stale total_turns and
+      // overwrite the credit we just wrote to DB.
+      if (turnDelta !== 0 && entry.manicuristId) {
+        const eMid = entry.manicuristId;
+        const localCur = Number(
+          state.manicurists.find((mm) => mm.id === eMid)?.totalTurns ?? 0,
+        );
+        dispatch({
+          type: 'UPDATE_MANICURIST',
+          id: eMid,
+          updates: { totalTurns: Math.max(0, localCur + turnDelta) },
+        });
+      }
+
       void (async () => {
-        const turnDelta = newTurnValue - entry.turnValue;
         const { error } = await supabase.from('completed_services').update({
           services: newServices,
           service: newServices[0] ?? '',
@@ -909,6 +926,25 @@ export default function TicketModal({
         ? `${visitForAdds}-add-${l.staff1Id}-${Date.now().toString(36)}`
         : `${ticket.id}-add-${l.staff1Id}-${Date.now().toString(36)}`;
       const nowIso = new Date().toISOString();
+
+      // Dispatch the turn credit LOCALLY first so state.manicurists reflects
+      // the new total before the async DB writes happen. Without this, the
+      // direct supabase update below races with syncManicurists (which
+      // uploads the local manicurist row whenever it changes for an
+      // unrelated reason). The local-then-DB ordering keeps both sides
+      // converged on the correct total even if the realtime echo arrives
+      // late, and the card shows the credited turn immediately instead of
+      // waiting for a round-trip.
+      const lStaffId = l.staff1Id;
+      const localCurrentTurns = Number(
+        state.manicurists.find((mm) => mm.id === lStaffId)?.totalTurns ?? 0,
+      );
+      dispatch({
+        type: 'UPDATE_MANICURIST',
+        id: lStaffId,
+        updates: { totalTurns: localCurrentTurns + turnValue },
+      });
+
       void (async () => {
         // Insert a completed_services row so reports/History reflect this
         // manually-added work and re-saves don't re-credit (next save the
