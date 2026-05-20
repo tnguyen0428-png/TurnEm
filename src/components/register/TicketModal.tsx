@@ -293,95 +293,120 @@ export default function TicketModal({
     if (!visitId) return;
     const target = state.manicurists.find((m) => m.id === line.staff1Id);
     if (!target) return;
-    const addChildId = `${visitId}-add-${line.staff1Id}`;
+    const svcName = (line.name ?? '').trim();
+    if (!svcName) {
+      // Without a service name there's nothing to append to a queue entry.
+      // Just flip the card to busy pointing at the visit so the cashier
+      // still sees a status change.
+      dispatch({
+        type: 'UPDATE_MANICURIST',
+        id: line.staff1Id,
+        updates: { status: 'busy', currentClient: visitId },
+      });
+      return;
+    }
+
+    // CRITICAL: when this staff already has a queue entry for THIS visit
+    // (a SPLIT_AND_ASSIGN child, an earlier add-child, or any descendant
+    // whose root visit id matches), APPEND the new service to that
+    // entry's services array rather than creating a separate "add-child"
+    // sibling. Creating a second entry causes the queue->ticket trigger
+    // to fire twice for the same (visit, staff, service) tuple — once
+    // for the original entry and once for the new add-child — which
+    // produces duplicate ticket_items. Symptom: ticket #5 ended up with
+    // Z-TEST 1 having TWO Gel Pedicure lines (one on the split child's
+    // qe, one on the add-child's qe) plus a phantom Gel Pedicure on
+    // Z-TEST 4 from a stray add-child.
+    //
+    // We resolve "root visit" via getVisitId on parentQueueId so split
+    // children (`${visit}-${staff}`), nested splits, AND prior
+    // add-children (`${visit}-add-${staff}`) all share the same root.
+    const reusable = state.queue.find((q) =>
+      q.assignedManicuristId === line.staff1Id &&
+      getVisitId(q.parentQueueId ?? q.id) === visitId
+    );
+
     const isAlreadyOnThisVisit =
       !target.currentClient ||
       target.currentClient === visitId ||
-      target.currentClient === addChildId ||
+      (reusable && target.currentClient === reusable.id) ||
       target.currentClient.startsWith(`${visitId}-`);
     if (target.status === 'busy' && !isAlreadyOnThisVisit) return;
 
-    // Upsert the add-child queue entry. ADD_CLIENT doesn't dedupe by id, so
-    // do a find/UPDATE_CLIENT when the child already exists (e.g. cashier
-    // tacked a SECOND service onto the same staff at checkout — services
-    // append instead of clobbering, and the card grows its service list).
-    const existingChild = state.queue.find((q) => q.id === addChildId);
-    const svcName = (line.name ?? '').trim();
     const now = Date.now();
-    if (existingChild) {
-      const services = svcName && !existingChild.services.includes(svcName as ServiceType)
-        ? [...existingChild.services, svcName as ServiceType]
-        : existingChild.services;
-      if (services !== existingChild.services) {
+
+    if (reusable) {
+      // Update the existing entry's services array — no new queue row,
+      // no second trigger fire for the same (visit, staff) pair. The
+      // service-edit sync block in doSave will see this on save and
+      // reconcile the rest. If the service is already in the list, no-op.
+      if (!reusable.services.includes(svcName as ServiceType)) {
+        const services = [...reusable.services, svcName as ServiceType];
         dispatch({
           type: 'UPDATE_CLIENT',
-          id: addChildId,
+          id: reusable.id,
           updates: { services, assignedManicuristId: line.staff1Id },
         });
       }
-    } else if (svcName) {
       dispatch({
-        type: 'ADD_CLIENT',
-        client: {
-          id: addChildId,
-          parentQueueId: visitId,
-          clientName: clientName || ticket.clientName || 'Walk-in',
-          services: [svcName as ServiceType],
-          turnValue: 0,
-          serviceRequests: [],
-          requestedManicuristId: null,
-          isRequested: false,
-          isAppointment: false,
-          assignedManicuristId: line.staff1Id,
-          status: 'inProgress',
-          arrivedAt: now,
-          startedAt: now,
-          completedAt: null,
-          extraTimeMs: 0,
-        },
+        type: 'UPDATE_MANICURIST',
+        id: line.staff1Id,
+        updates: { status: 'busy', currentClient: reusable.id },
       });
+      return;
     }
 
+    // No existing entry for this (visit, staff) — create a brand-new
+    // add-child. Use a deterministic id so re-runs don't pile up duplicates.
+    const addChildId = `${visitId}-add-${line.staff1Id}`;
+    dispatch({
+      type: 'ADD_CLIENT',
+      client: {
+        id: addChildId,
+        parentQueueId: visitId,
+        clientName: clientName || ticket.clientName || 'Walk-in',
+        services: [svcName as ServiceType],
+        turnValue: 0,
+        serviceRequests: [],
+        requestedManicuristId: null,
+        isRequested: false,
+        isAppointment: false,
+        assignedManicuristId: line.staff1Id,
+        status: 'inProgress',
+        arrivedAt: now,
+        startedAt: now,
+        completedAt: null,
+        extraTimeMs: 0,
+      },
+    });
     dispatch({
       type: 'UPDATE_MANICURIST',
       id: line.staff1Id,
       updates: { status: 'busy', currentClient: addChildId },
     });
 
-    // Belt-and-suspenders: also write the add-child to queue_entries
-    // DIRECTLY. The AppContext sync effect normally handles this when
-    // state.queue changes, but it skips entirely when a realtime echo
-    // shares the same render batch (wasRemote=true short-circuits the
-    // whole effect). When that race happens the local dispatches still
-    // update React state, but the queue_entries row never lands in the
-    // DB — and after a page refresh state.queue rehydrates from the DB
-    // without the add-child, leaving the manicurist's currentClient
-    // pointing at a phantom id and the card showing BUSY with no
-    // service. ON CONFLICT id DO UPDATE makes this safe to fire even
-    // when the sync effect ALSO writes it: idempotent.
-    if (svcName) {
-      const nowIso = new Date(now).toISOString();
-      void supabase.from('queue_entries').upsert({
-        id: addChildId,
-        parent_queue_id: visitId,
-        client_name: clientName || ticket.clientName || 'Walk-in',
-        service: svcName,
-        services: [svcName],
-        turn_value: 0,
-        service_requests: [],
-        requested_manicurist_id: null,
-        is_requested: false,
-        is_appointment: false,
-        assigned_manicurist_id: line.staff1Id,
-        status: 'inProgress',
-        arrived_at: nowIso,
-        started_at: nowIso,
-        completed_at: null,
-        extra_time_ms: 0,
-      }, { onConflict: 'id' }).then(({ error }) => {
-        if (error) console.warn('[ticket modal] add-child direct upsert:', error.message);
-      });
-    }
+    // Belt-and-suspenders direct DB write (see commit 5ffadda for why).
+    const nowIso = new Date(now).toISOString();
+    void supabase.from('queue_entries').upsert({
+      id: addChildId,
+      parent_queue_id: visitId,
+      client_name: clientName || ticket.clientName || 'Walk-in',
+      service: svcName,
+      services: [svcName],
+      turn_value: 0,
+      service_requests: [],
+      requested_manicurist_id: null,
+      is_requested: false,
+      is_appointment: false,
+      assigned_manicurist_id: line.staff1Id,
+      status: 'inProgress',
+      arrived_at: nowIso,
+      started_at: nowIso,
+      completed_at: null,
+      extra_time_ms: 0,
+    }, { onConflict: 'id' }).then(({ error }) => {
+      if (error) console.warn('[ticket modal] add-child direct upsert:', error.message);
+    });
   }
 
   function updateLine(idx: number, patch: Partial<DraftLine>) {
