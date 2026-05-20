@@ -1367,9 +1367,19 @@ export async function syncEntryToTicket(
       if (match.name !== d.name) {
         patch.name = d.name;
         patch.service_id = d.serviceId;
-        // Preserve the cashier's `unit_price_cents` override. If they
-        // discounted the line at checkout we don't want a queue rename
-        // resetting them to catalog price.
+        // When the queue side renames a service (Pedicure -> Gel Pedicure),
+        // the cashier's last-saved price is by definition the OLD service's
+        // price. Refresh unit_price_cents + ext_price_cents to the NEW
+        // service's catalog price so the ticket header total reflects the
+        // upgraded service. Any explicit per-line discount on `match` is
+        // preserved by leaving discount_cents untouched. If the cashier
+        // really intended to charge the upgraded service at the old price
+        // they can re-key the line in TicketModal after the queue change.
+        patch.unit_price_cents = d.catalogUnitPriceCents;
+        patch.ext_price_cents = Math.max(
+          0,
+          d.catalogUnitPriceCents * (match.quantity ?? 1) - (match.discount_cents ?? 0),
+        );
       }
       if (match.staff1_id !== d.staff1Id) {
         patch.staff1_id = d.staff1Id;
