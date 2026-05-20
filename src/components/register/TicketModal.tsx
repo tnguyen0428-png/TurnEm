@@ -362,7 +362,55 @@ export default function TicketModal({
     }
   }
   function removeLine(idx: number) {
+    const removed = lines[idx];
     setLines((prev) => prev.filter((_, i) => i !== idx));
+
+    // Tear down the synthetic add-child if this was a just-added (unsaved)
+    // line. Saved lines (have `existingId`) go through the modal save's
+    // removed-line sync path, which already handles queue-entry cleanup.
+    // For unsaved adds the queue child was created eagerly by
+    // ensureManicuristBusyForAddedLine and would otherwise sit around
+    // forever (the card stays BUSY and Cancel may find no client to act
+    // on) if the user just removes the line and doesn't save.
+    if (!removed || removed.existingId || removed.kind !== 'service' || !removed.staff1Id) return;
+    const visitId = ticket.queueEntryId;
+    if (!visitId) return;
+
+    const remainingForStaff = lines
+      .filter((l, i) => i !== idx && l.kind === 'service' && l.staff1Id === removed.staff1Id)
+      .map((l) => (l.name ?? '').trim())
+      .filter((n) => n.length > 0);
+
+    const addChildId = `${visitId}-add-${removed.staff1Id}`;
+    const addChild = state.queue.find((q) => q.id === addChildId);
+
+    if (remainingForStaff.length === 0) {
+      // Last line for this staff is gone — drop the add-child and free
+      // the manicurist if they were pointing at it.
+      if (addChild) {
+        dispatch({ type: 'REMOVE_CLIENT', id: addChildId });
+      }
+      const m = state.manicurists.find((mm) => mm.id === removed.staff1Id);
+      if (m && m.currentClient === addChildId) {
+        dispatch({
+          type: 'UPDATE_MANICURIST',
+          id: m.id,
+          updates: { status: 'available', currentClient: null },
+        });
+      }
+      return;
+    }
+
+    // Staff still has other lines for this visit — narrow the add-child's
+    // services to what's left so the card stops advertising the removed
+    // one.
+    if (addChild) {
+      dispatch({
+        type: 'UPDATE_CLIENT',
+        id: addChildId,
+        updates: { services: remainingForStaff as ServiceType[] },
+      });
+    }
   }
   function addCatalogService(svcId: string) {
     const svc = sortedServices.find((s) => s.id === svcId);
