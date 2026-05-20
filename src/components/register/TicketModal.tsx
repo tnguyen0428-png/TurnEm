@@ -261,14 +261,29 @@ export default function TicketModal({
   }
 
   // When a fresh service line on an existing (parent) ticket gets a staff
-  // assignment, flip that manicurist's card to BUSY pointing at the parent
-  // visit's queue entry. No new queue_entries row is created — we're just
-  // updating the manicurists table so their staff card shows BUSY and
-  // surfaces the parent visit's services. Cleared automatically when the
-  // ticket is closed or voided (see handleProcess / handleVoidConfirmed).
+  // assignment, flip that manicurist's card to BUSY and surface the service
+  // they're rendering. We do this by:
+  //   1. Creating (or updating) a synthetic "add-child" queue entry whose
+  //      id is `${visitId}-add-${staffId}`. It carries the added service in
+  //      its `services` array so ManicuristCard's `currentClient.services`
+  //      render can display it. parentQueueId points at the visit so the
+  //      ticket-creation trigger still pegs work onto the same ticket.
+  //   2. Pointing the manicurist's `currentClient` at the synthetic child
+  //      so the queue panel finds it via getClientForManicurist.
+  //
+  // turnValue stays 0 on the child — turn credit for the new staff is
+  // already handled by reallocateTurnsForStaffChanges during ticket save,
+  // and we don't want a second crediting via COMPLETE_SERVICE.
+  //
+  // Cleared automatically when the ticket is closed or voided (see
+  // handleProcess / handleVoidConfirmed below — both sweep up any
+  // manicurist still pointing at a `${visitId}-add-` child and remove
+  // those queue entries).
   //
   // Guard: only fire when the manicurist isn't already busy with a DIFFERENT
-  // client — otherwise we'd clobber their existing work pointer.
+  // client — otherwise we'd clobber their existing work pointer. We treat
+  // "already busy with the same visit's primary OR add-child" as fine to
+  // overwrite/extend.
   function ensureManicuristBusyForAddedLine(line: DraftLine) {
     if (line.kind !== 'service') return;
     if (line.existingId) return;
@@ -277,11 +292,59 @@ export default function TicketModal({
     if (!visitId) return;
     const target = state.manicurists.find((m) => m.id === line.staff1Id);
     if (!target) return;
-    if (target.status === 'busy' && target.currentClient && target.currentClient !== visitId) return;
+    const addChildId = `${visitId}-add-${line.staff1Id}`;
+    const isAlreadyOnThisVisit =
+      !target.currentClient ||
+      target.currentClient === visitId ||
+      target.currentClient === addChildId ||
+      target.currentClient.startsWith(`${visitId}-`);
+    if (target.status === 'busy' && !isAlreadyOnThisVisit) return;
+
+    // Upsert the add-child queue entry. ADD_CLIENT doesn't dedupe by id, so
+    // do a find/UPDATE_CLIENT when the child already exists (e.g. cashier
+    // tacked a SECOND service onto the same staff at checkout — services
+    // append instead of clobbering, and the card grows its service list).
+    const existingChild = state.queue.find((q) => q.id === addChildId);
+    const svcName = (line.name ?? '').trim();
+    const now = Date.now();
+    if (existingChild) {
+      const services = svcName && !existingChild.services.includes(svcName as ServiceType)
+        ? [...existingChild.services, svcName as ServiceType]
+        : existingChild.services;
+      if (services !== existingChild.services) {
+        dispatch({
+          type: 'UPDATE_CLIENT',
+          id: addChildId,
+          updates: { services, assignedManicuristId: line.staff1Id },
+        });
+      }
+    } else if (svcName) {
+      dispatch({
+        type: 'ADD_CLIENT',
+        client: {
+          id: addChildId,
+          parentQueueId: visitId,
+          clientName: clientName || ticket.clientName || 'Walk-in',
+          services: [svcName as ServiceType],
+          turnValue: 0,
+          serviceRequests: [],
+          requestedManicuristId: null,
+          isRequested: false,
+          isAppointment: false,
+          assignedManicuristId: line.staff1Id,
+          status: 'inProgress',
+          arrivedAt: now,
+          startedAt: now,
+          completedAt: null,
+          extraTimeMs: 0,
+        },
+      });
+    }
+
     dispatch({
       type: 'UPDATE_MANICURIST',
       id: line.staff1Id,
-      updates: { status: 'busy', currentClient: visitId },
+      updates: { status: 'busy', currentClient: addChildId },
     });
   }
 
@@ -878,16 +941,29 @@ export default function TicketModal({
       return;
     }
     // Auto-clear: any manicurist still pointing at this visit drops back
-    // to available. Mirrors the lifecycle of the "flip busy on added line"
-    // feature so adding-then-closing a ticket leaves no busy staff stuck.
+    // to available, and any synthetic `${visitId}-add-${staffId}` queue
+    // entry created by ensureManicuristBusyForAddedLine is swept out.
+    // Without the latter, the add-child sits in state.queue indefinitely
+    // and the manicurist panel keeps drawing a phantom BUSY card after
+    // the ticket has been settled.
     if (ticket.queueEntryId) {
+      const visitId = ticket.queueEntryId;
+      const addChildPrefix = `${visitId}-add-`;
       for (const m of state.manicurists) {
-        if (m.currentClient === ticket.queueEntryId) {
+        if (
+          m.currentClient === visitId ||
+          (m.currentClient && m.currentClient.startsWith(addChildPrefix))
+        ) {
           dispatch({
             type: 'UPDATE_MANICURIST',
             id: m.id,
             updates: { status: 'available', currentClient: null },
           });
+        }
+      }
+      for (const q of state.queue) {
+        if (q.id.startsWith(addChildPrefix)) {
+          dispatch({ type: 'REMOVE_CLIENT', id: q.id });
         }
       }
     }
@@ -909,13 +985,25 @@ export default function TicketModal({
     setBusy('idle');
     if (ok) {
       if (ticket.queueEntryId) {
+        const visitId = ticket.queueEntryId;
+        const addChildPrefix = `${visitId}-add-`;
         for (const m of state.manicurists) {
-          if (m.currentClient === ticket.queueEntryId) {
+          if (
+            m.currentClient === visitId ||
+            (m.currentClient && m.currentClient.startsWith(addChildPrefix))
+          ) {
             dispatch({
               type: 'UPDATE_MANICURIST',
               id: m.id,
               updates: { status: 'available', currentClient: null },
             });
+          }
+        }
+        // Same add-child sweep as handleProcess — voiding a ticket also
+        // has to wipe the synthetic queue entries it spawned.
+        for (const q of state.queue) {
+          if (q.id.startsWith(addChildPrefix)) {
+            dispatch({ type: 'REMOVE_CLIENT', id: q.id });
           }
         }
       }
