@@ -23,6 +23,7 @@ import { useApp } from '../../state/AppContext';
 import {
   computeLineExt,
   formatMoneyCents,
+  getVisitId,
   parseDollarsToCents,
   updateOpenTicket,
   replaceTicketPayments,
@@ -616,14 +617,17 @@ export default function TicketModal({
       if (orig.staff1Id !== l.staff1Id) continue;
       // Find the queue entry for THIS staff on THIS visit. The ticket_item
       // may carry the bare visit id as queue_entry_id, but the actual
-      // queue entry is often a split child whose id is `${visitId}-${staffId}`
-      // (or arbitrary uuid with parentQueueId === visitId). Match by
-      // (visit, manicurist) so both shapes resolve.
+      // queue entry is often a split child (`${visitId}-${staffId}`) or a
+      // NESTED split child (`${visitId}-${parentSplit}-${staffId}`) whose
+      // parentQueueId points at an intermediate ancestor — NOT the root
+      // visit. A naive `q.parentQueueId === visitId` misses those.
+      // getVisitId strips down to the leading UUID so both single- and
+      // multi-level splits resolve to the same root.
       const visitId = ticket.queueEntryId;
       if (!visitId || !l.staff1Id) continue;
       const entry = state.queue.find(
         (q) =>
-          (q.id === visitId || q.parentQueueId === visitId) &&
+          getVisitId(q.parentQueueId ?? q.id) === visitId &&
           q.assignedManicuristId === l.staff1Id,
       );
       if (!entry) continue;
@@ -662,9 +666,18 @@ export default function TicketModal({
         for (const [itemId, orig] of originalStaffByItemId) {
           if (remainingItemIds.has(itemId)) continue;
           if (!orig.staff1Id || !orig.name) continue;
+          // Match via getVisitId so NESTED split children (e.g.
+          // `${visit}-${innerParent}-${staffId}`, whose parentQueueId
+          // points at the inner split rather than the root visit) still
+          // resolve. The previous `q.parentQueueId === visitId` check
+          // only caught one level of nesting — split-of-a-split entries
+          // sailed past the removed-line sync and kept the service on
+          // the queue card forever. Symptom: ticket #2 deleted Z-TEST 2's
+          // line but Z-TEST 2's card kept "Pedicure" because their entry
+          // was a grandchild of the visit.
           const entry = state.queue.find(
             (q) =>
-              (q.id === visitId || q.parentQueueId === visitId) &&
+              getVisitId(q.parentQueueId ?? q.id) === visitId &&
               q.assignedManicuristId === orig.staff1Id,
           );
           if (!entry) continue;
