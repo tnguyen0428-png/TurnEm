@@ -2,7 +2,7 @@
 // (Closed-shift viewing wired in.)
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Receipt, ChevronLeft, ChevronRight, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown } from 'lucide-react';
+import { Receipt, ChevronLeft, ChevronRight, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import {
@@ -19,6 +19,7 @@ import TicketModal from './TicketModal';
 import OpenShiftModal from './OpenShiftModal';
 import CloseShiftScreen from './CloseShiftScreen';
 import ReceptionistClockModal from './ReceptionistClockModal';
+import { printReceipt } from './printReceipt';
 
 // Sort dimensions applied across all three ticket lists.
 type SortKey = 'time' | 'total' | 'number' | 'client' | 'staff';
@@ -429,10 +430,22 @@ function TicketList({
         <SortHdr label="Total"  keyId="total"  sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} align="right" />
       </div>
       {sorted.map((t) => (
-        <button
+        // Row is a div+role rather than a button element so the per-row
+        // Print icon can be a real nested button (nested buttons are
+        // invalid HTML and React will warn). Keyboard activation
+        // (Enter/Space) is restored explicitly.
+        <div
           key={t.id}
+          role="button"
+          tabIndex={0}
           onClick={() => onClick(t)}
-          className="w-full grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_110px] gap-3 px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/50 transition-colors text-left items-center"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onClick(t);
+            }
+          }}
+          className="w-full grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_110px] gap-3 px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/50 transition-colors text-left items-center cursor-pointer focus:outline-none focus:bg-gray-50/50"
         >
           <span className="font-mono text-base font-bold text-gray-900">#{t.ticketNumber}</span>
           <span className="font-mono text-base text-gray-700">{formatTimeShort(t.openedAt)}</span>
@@ -474,9 +487,21 @@ function TicketList({
           </span>
           <span className="font-mono text-base font-bold text-gray-900 text-right flex items-center justify-end gap-1.5">
             {formatMoneyCents(t.totalCents)}
-            <Receipt size={12} className="text-gray-300" />
+            {t.status === 'closed' ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); printReceipt(t); }}
+                title="Print receipt"
+                aria-label={'Print receipt for ticket #' + t.ticketNumber}
+                className="p-1 -m-1 rounded text-gray-400 hover:text-pink-600 hover:bg-pink-50 transition-colors"
+              >
+                <Printer size={14} />
+              </button>
+            ) : (
+              <Receipt size={12} className="text-gray-300" />
+            )}
           </span>
-        </button>
+        </div>
       ))}
     </div>
   );

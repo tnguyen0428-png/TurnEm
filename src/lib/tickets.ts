@@ -1006,15 +1006,10 @@ export async function appendItemsToTicket(
   if (items.length === 0) return fetchTicket(ticketId);
 
   // Pull the existing ticket + its current items so we can de-dupe and
-  // know the next sort_order to assign. auto_attributed_sources carries
-  // the per-(source_row, service) tombstones the DB trigger writes —
-  // see migration 20260520134828_ticket_trigger_per_service_tombstone
-  // for the contract. We honor the same tombstones here so client-side
-  // safety-net paths (AppContext syncCompleted, justAssigned, etc.)
-  // can't resurrect a line the cashier just deleted via TicketModal.
+  // know the next sort_order to assign.
   const { data: tRow, error: tErr } = await supabase
     .from('tickets')
-    .select('id, status, subtotal_cents, discount_cents, tax_cents, tip_cents, auto_attributed_sources')
+    .select('id, status, subtotal_cents, discount_cents, tax_cents, tip_cents')
     .eq('id', ticketId)
     .eq('status', 'open')
     .maybeSingle();
@@ -1085,29 +1080,8 @@ export async function appendItemsToTicket(
   const seenEntryIds = new Set(
     existing.filter((e) => e.queue_entry_id).map((e) => e.queue_entry_id as string),
   );
-
-  // Tombstone respect (mirrors the DB trigger fix in migration
-  // 20260520134828): if `${source_row}::${service_name}` has already
-  // been attributed once, never resurrect it. The trigger writes these
-  // tuples on every fire whose service either landed on the ticket or
-  // was guarded out. Without this client-side check, syncCompleted's
-  // safety-net `appendItemsToTicket(..., { allowDuplicates: true })`
-  // call ignores the tombstone and re-adds a line the cashier just
-  // deleted via TicketModal.
-  const attributed = ((tRow as { auto_attributed_sources?: string[] | null }).auto_attributed_sources ?? []) as string[];
-  const tombstones = new Set(attributed.filter((a) => typeof a === 'string' && a.includes('::')));
-  // For items WITHOUT a queueEntryId, also collapse by (sourceFromAnyExistingEntry::name)?
-  // No — items without a queueEntryId are manual cashier adds; the cashier
-  // is the source of truth there. Tombstone matching is qid-keyed.
-  const tombstoneKey = (qid: string | null | undefined, name: string): string | null => {
-    if (!qid) return null;
-    const root = qid.includes('#') ? qid.split('#')[0] : qid;
-    return `${root}::${name}`;
-  };
   let toInsert = items.filter((it) => {
     if (it.queueEntryId && seenEntryIds.has(it.queueEntryId)) return false;
-    const tk = tombstoneKey(it.queueEntryId, it.name);
-    if (tk && tombstones.has(tk)) return false;
     return true;
   });
   if (!options.allowDuplicates) {
@@ -1185,31 +1159,6 @@ export async function appendItemsToTicket(
   if (insErr) {
     console.warn('[tickets] appendItemsToTicket items insert:', insErr.message);
     return null;
-  }
-
-  // Record tombstone tuples for every line we just inserted that had a
-  // queue_entry_id. Future trigger fires (and future client-side calls)
-  // will skip these tuples, so if the cashier later deletes the line
-  // it stays deleted. Items without a queueEntryId are manual cashier
-  // adds and don't get tombstones — their lifecycle is fully under the
-  // cashier's control via TicketModal.
-  const newTombstones = Array.from(
-    new Set(
-      toInsert
-        .map((it) => tombstoneKey(it.queueEntryId ?? null, it.name))
-        .filter((k): k is string => !!k),
-    ),
-  );
-  if (newTombstones.length > 0) {
-    const merged = Array.from(new Set([...attributed, ...newTombstones]));
-    const { error: tsErr } = await supabase
-      .from('tickets')
-      .update({ auto_attributed_sources: merged })
-      .eq('id', ticketId)
-      .eq('status', 'open');
-    if (tsErr) {
-      console.warn('[tickets] appendItemsToTicket tombstone update:', tsErr.message);
-    }
   }
 
   // Recompute subtotal/total. Tip/tax/ticket-discount stay as-is — those
@@ -1367,19 +1316,9 @@ export async function syncEntryToTicket(
       if (match.name !== d.name) {
         patch.name = d.name;
         patch.service_id = d.serviceId;
-        // When the queue side renames a service (Pedicure -> Gel Pedicure),
-        // the cashier's last-saved price is by definition the OLD service's
-        // price. Refresh unit_price_cents + ext_price_cents to the NEW
-        // service's catalog price so the ticket header total reflects the
-        // upgraded service. Any explicit per-line discount on `match` is
-        // preserved by leaving discount_cents untouched. If the cashier
-        // really intended to charge the upgraded service at the old price
-        // they can re-key the line in TicketModal after the queue change.
-        patch.unit_price_cents = d.catalogUnitPriceCents;
-        patch.ext_price_cents = Math.max(
-          0,
-          d.catalogUnitPriceCents * (match.quantity ?? 1) - (match.discount_cents ?? 0),
-        );
+        // Preserve the cashier's `unit_price_cents` override. If they
+        // discounted the line at checkout we don't want a queue rename
+        // resetting them to catalog price.
       }
       if (match.staff1_id !== d.staff1Id) {
         patch.staff1_id = d.staff1Id;
@@ -1865,125 +1804,54 @@ export async function voidTicket(
   reason: string,
   receptionistId?: string | null,
 ): Promise<boolean> {
-  // Fetch the ticket's visit id BEFORE we mark it voided — we need it to
-  // sweep up the completed_services rows that the ticket was built from,
-  // and the row's queue_entry_id is the canonical link between the ticket
-  // and every completed_services entry for the visit (split children,
-  // mid-visit "add" rows, etc. all carry the visit id as a prefix).
-  const { data: tRow, error: tErr } = await supabase
+  const { error } = await supabase
     .from('tickets')
-    .select('queue_entry_id, status')
+    .update({
+      status: 'voided',
+      void_reason: reason,
+      closed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      voided_by_receptionist_id: receptionistId ?? null,
+    })
     .eq('id', ticketId)
-    .maybeSingle();
-  if (tErr) {
-    console.error('[tickets] voidTicket fetch ticket:', tErr.message);
+    .eq('status', 'open');
+  if (error) {
+    console.error('[tickets] voidTicket:', error.message);
     return false;
   }
-  if (!tRow) return false;
-  const visitId = (tRow as { queue_entry_id: string | null }).queue_entry_id;
-  const alreadyVoided = (tRow as { status: string }).status !== 'open';
 
-  // Mark voided first so concurrent flows (queue sync, trigger fires)
-  // see status='voided' and bail before adding any new lines.
-  if (!alreadyVoided) {
-    const { error } = await supabase
-      .from('tickets')
-      .update({
-        status: 'voided',
-        void_reason: reason,
-        closed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        voided_by_receptionist_id: receptionistId ?? null,
-      })
-      .eq('id', ticketId)
-      .eq('status', 'open');
-    if (error) {
-      console.error('[tickets] voidTicket:', error.message);
-      return false;
-    }
-  }
-
-  // Roll back the turn credit + remove the completed_services rows that
-  // belonged to this visit. We do BOTH steps based on the visit id (NOT
-  // ticket_items.queue_entry_id) so a void still cleans up correctly when
-  // the cashier removed every line at checkout before voiding — that path
-  // leaves ticket_items empty but the completed_services rows are still
-  // out there crediting turns. The visit-prefix match also catches
-  // SPLIT_AND_ASSIGN child rows and mid-visit "add" rows whose ids carry
-  // suffixes off the parent visit id.
-  if (visitId) {
-    try {
-      // 1. Pull every completed_services row tied to this visit so we know
-      //    which manicurists' total_turns to decrement and by how much.
-      //    Already-voided rows had their turns subtracted earlier via
-      //    TOGGLE_VOID_COMPLETED, so they don't contribute to the rollback.
-      const { data: completedRows, error: csFetchErr } = await supabase
-        .from('completed_services')
-        .select('id, manicurist_id, turn_value, voided')
-        .or(`id.eq.${visitId},id.like.${visitId}-%`);
-      if (csFetchErr) {
-        console.warn('[tickets] voidTicket completed fetch:', csFetchErr.message);
-      } else {
-        const perStaff = new Map<string, number>();
-        for (const r of (completedRows ?? []) as Array<{
-          id: string;
-          manicurist_id: string | null;
-          turn_value: number | string | null;
-          voided: boolean | null;
-        }>) {
-          if (r.voided) continue;
-          if (!r.manicurist_id) continue;
-          const tv = Number(r.turn_value) || 0;
-          if (tv === 0) continue;
-          perStaff.set(r.manicurist_id, (perStaff.get(r.manicurist_id) ?? 0) + tv);
-        }
-
-        // 2. Read-modify-write each affected manicurist's total_turns.
-        //    Clamped at 0 so a previously-applied partial rollback can't
-        //    drift the count negative. The realtime publication will echo
-        //    the UPDATE to all clients (REMOTE_MANICURIST_UPSERT in the
-        //    reducer does a full-row replace), so every device's local
-        //    state converges to the corrected total without each one
-        //    doing its own subtraction.
-        for (const [mid, delta] of perStaff) {
-          const { data: mRow, error: mFetchErr } = await supabase
-            .from('manicurists')
-            .select('total_turns')
-            .eq('id', mid)
-            .maybeSingle();
-          if (mFetchErr) {
-            console.warn('[tickets] voidTicket manicurist fetch:', mFetchErr.message);
-            continue;
-          }
-          if (!mRow) continue;
-          const cur = Number((mRow as { total_turns: number | string }).total_turns) || 0;
-          const next = Math.max(0, cur - delta);
-          const { error: mUpErr } = await supabase
-            .from('manicurists')
-            .update({ total_turns: next })
-            .eq('id', mid);
-          if (mUpErr) {
-            console.warn('[tickets] voidTicket manicurist turn rollback:', mUpErr.message);
-          }
+  // Strip the corresponding completed_services rows. Without this, voided
+  // services keep showing up on staff portal lists (e.g. Kelly seeing
+  // Gina/Gggina/Silvia after their tickets were voided as duplicates).
+  // Match by ticket_items.queue_entry_id; some ids carry a `#svc<n>`
+  // suffix for multi-service entries — strip that before matching the
+  // base completed_services row.
+  try {
+    const { data: itemRows, error: iErr } = await supabase
+      .from('ticket_items')
+      .select('queue_entry_id')
+      .eq('ticket_id', ticketId);
+    if (iErr) {
+      console.warn('[tickets] voidTicket items fetch:', iErr.message);
+    } else {
+      const queueIds = new Set<string>();
+      for (const r of (itemRows ?? []) as Array<{ queue_entry_id: string | null }>) {
+        if (!r.queue_entry_id) continue;
+        const base = r.queue_entry_id.split('#')[0];
+        queueIds.add(base);
+      }
+      if (queueIds.size > 0) {
+        const { error: delErr } = await supabase
+          .from('completed_services')
+          .delete()
+          .in('id', Array.from(queueIds));
+        if (delErr) {
+          console.warn('[tickets] voidTicket completed_services delete:', delErr.message);
         }
       }
-
-      // 3. Delete the completed_services rows for this visit. Doing this
-      //    AFTER the rollback above ensures we still have the turn_value /
-      //    manicurist_id information we need to compute the deltas. The
-      //    deletion is what keeps voided services off the staff portal's
-      //    "today's services" list (otherwise Kelly et al. keep showing
-      //    voided work).
-      const { error: delErr } = await supabase
-        .from('completed_services')
-        .delete()
-        .or(`id.eq.${visitId},id.like.${visitId}-%`);
-      if (delErr) {
-        console.warn('[tickets] voidTicket completed_services delete:', delErr.message);
-      }
-    } catch (err) {
-      console.warn('[tickets] voidTicket cleanup unexpected:', err);
     }
+  } catch (err) {
+    console.warn('[tickets] voidTicket cleanup unexpected:', err);
   }
 
   return true;
@@ -2214,7 +2082,7 @@ export async function cleanupDuplicateLinesForEntry(
   manicurists: Array<{ id: string; name: string; color: string }>,
 ): Promise<number> {
   if (!entry.assignedManicuristId) return 0;
-  if (!entry.services || entry.services.length !== 1) return 0; // multi-svc has legit `#svcN` siblings -- skip
+  if (!entry.services || entry.services.length !== 1) return 0; // multi-svc has legit `#svcN` siblings — skip
 
   const visitId = getVisitId(entry.parentQueueId ?? entry.id);
   const { data: tRow, error: tErr } = await supabase
@@ -2248,6 +2116,10 @@ export async function cleanupDuplicateLinesForEntry(
   const assignedM = manicurists.find((m) => m.id === entry.assignedManicuristId);
   if (!assignedM) return 0;
 
+  // Choose the keeper:
+  //   1. Bare-qid line (entry.id with no suffix) — canonical form.
+  //   2. If none, the line whose staff matches the current assigned manicurist.
+  //   3. Else the lowest sort_order.
   const byBareQid = items.find((it) => it.queue_entry_id === entry.id);
   const byMatchingStaff = items.find((it) => it.staff1_id === assignedM.id);
   const byFirstSort = [...items].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
@@ -2266,6 +2138,7 @@ export async function cleanupDuplicateLinesForEntry(
     return 0;
   }
 
+  // Normalize the keeper: bare qid + correct staff.
   const patch: Record<string, unknown> = {};
   if (keeper.queue_entry_id !== entry.id) patch.queue_entry_id = entry.id;
   if (keeper.staff1_id !== assignedM.id) {
@@ -2280,6 +2153,7 @@ export async function cleanupDuplicateLinesForEntry(
     }
   }
 
+  // Recompute the ticket's subtotal/total from the surviving items.
   const { data: freshItems } = await supabase
     .from('ticket_items')
     .select('unit_price_cents, quantity, discount_cents')
@@ -2298,3 +2172,4 @@ export async function cleanupDuplicateLinesForEntry(
 
   return toDelete.length;
 }
+

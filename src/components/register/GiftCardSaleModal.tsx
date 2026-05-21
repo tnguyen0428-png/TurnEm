@@ -20,16 +20,9 @@ export interface GiftSaleStaff {
 interface Props {
   onClose: () => void;
   onAdd: (serial: string, valueCents: number, staff: GiftSaleStaff) => void;
-  /** Serials already assigned to unsaved gift_card_sale lines on the parent
-   *  ticket. nextGiftCardSerial only sees the DB, so without this list the
-   *  second gift cert added to the same ticket would reuse the first one's
-   *  serial (both are still pending insert). The modal bumps above the
-   *  larger of DB-max and pendingSerials-max so each line gets a unique
-   *  sequence number. */
-  pendingSerials?: string[];
 }
 
-export default function GiftCardSaleModal({ onClose, onAdd, pendingSerials }: Props) {
+export default function GiftCardSaleModal({ onClose, onAdd }: Props) {
   const { state } = useApp();
 
   const [serial, setSerial] = useState<string>('…');
@@ -52,30 +45,17 @@ export default function GiftCardSaleModal({ onClose, onAdd, pendingSerials }: Pr
     receptionists.length === 1 ? receptionists[0].id : '',
   );
 
-  // Pull the next sequential serial when the modal mounts. Also bump past
-  // any serials already assigned to UNSAVED gift cert lines on the parent
-  // ticket — those don't exist in ticket_items yet, so nextGiftCardSerial
-  // doesn't see them and would hand back the same number twice.
+  // Pull the next sequential serial when the modal mounts.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const dbNext = await nextGiftCardSerial();
-      let candidate = parseInt(dbNext, 10);
-      if (!Number.isFinite(candidate)) candidate = 1;
-      for (const s of pendingSerials ?? []) {
-        const n = parseInt(s, 10);
-        if (Number.isFinite(n) && n >= candidate) candidate = n + 1;
-      }
+      const next = await nextGiftCardSerial();
       if (!cancelled) {
-        setSerial(String(candidate).padStart(5, '0'));
+        setSerial(next);
         setBusy(false);
       }
     })();
     return () => { cancelled = true; };
-    // pendingSerials is intentionally NOT a dep: we compute the serial
-    // once at mount, freezing it for this modal session. If the parent
-    // changes pendingSerials mid-modal we'd just be racing ourselves.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Esc closes

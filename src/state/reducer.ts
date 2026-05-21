@@ -419,47 +419,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'CANCEL_SERVICE': {
       const manicurist = state.manicurists.find((m) => m.id === action.manicuristId);
       if (!manicurist || !manicurist.currentClient) return state;
-      const currentClientId = manicurist.currentClient;
-      const client = state.queue.find((c) => c.id === currentClientId);
-
-      // Add-child detection: synthetic queue entries created by the ticket
-      // modal carry an id of `${visitId}-add-${staffId}`. They aren't real
-      // walk-in queue rows — they exist only to surface the service on the
-      // staff card. Cancelling one should REMOVE the entry outright (not
-      // mark it waiting), and NOT deduct turn credit (those entries always
-      // carry turnValue=0; turn rollback for added lines is handled by
-      // reallocateTurnsForStaffChanges on ticket save).
-      const isAddChild = /-add-/.test(currentClientId);
-
-      // Phantom-pointer recovery: if the manicurist's currentClient points
-      // at an id that doesn't exist in the local queue (e.g. the queue
-      // entry was deleted server-side, or the realtime DELETE arrived
-      // before this dispatch), just free the manicurist. Without this
-      // branch the reducer early-returns and the manicurist stays stuck
-      // BUSY on a dead pointer with no way to reset short of an app
-      // refresh — exactly the symptom Z-TEST 4 hit on ticket #2.
-      if (!client) {
-        return {
-          ...state,
-          manicurists: state.manicurists.map((m) =>
-            m.id === action.manicuristId
-              ? { ...m, status: 'available' as const, currentClient: null, hasFourthPositionSpecial: false, hasCheck2: false, hasCheck3: false }
-              : m
-          ),
-        };
-      }
-
-      const turnDeduction = isAddChild ? 0 : client.turnValue;
-      const updatedQueue = isAddChild
-        ? state.queue.filter((c) => c.id !== client.id)
-        : state.queue.map((c) =>
-            c.id === client.id
-              ? { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null }
-              : c
-          );
+      const client = state.queue.find((c) => c.id === manicurist.currentClient);
+      if (!client) return state;
+      const turnDeduction = client.turnValue;
       return {
         ...state,
-        queue: updatedQueue,
+        queue: state.queue.map((c) =>
+          c.id === client.id
+            ? { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null }
+            : c
+        ),
         manicurists: state.manicurists.map((m) =>
           m.id === action.manicuristId
             ? { ...m, status: 'available' as const, currentClient: null, totalTurns: Math.max(0, m.totalTurns - turnDeduction), hasFourthPositionSpecial: false, hasCheck2: false, hasCheck3: false }
