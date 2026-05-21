@@ -206,6 +206,14 @@ export default function TicketModal({
   // ─── Payments scratchpad (for processing on close) ────────────────────────
   const [pending, setPending] = useState<PendingPayment[]>([]);
 
+  // ─── Explicitly-removed item ids ──────────────────────────────────────────
+  // Tracks which existing ticket_items the cashier removed via the trash icon
+  // during this modal session. Sent through to updateOpenTicket on save so it
+  // knows to DELETE only these rows — anything else in the DB but missing
+  // from `lines` (e.g. a sibling staff's line the trigger inserted after
+  // mount) is preserved. See the diff-based save in lib/tickets.ts.
+  const [removedItemIds, setRemovedItemIds] = useState<string[]>([]);
+
   // ─── Derived totals ───────────────────────────────────────────────────────
   const subtotalCents = useMemo(
     () =>
@@ -425,6 +433,12 @@ export default function TicketModal({
   function removeLine(idx: number) {
     const removed = lines[idx];
     setLines((prev) => prev.filter((_, i) => i !== idx));
+    // Record the explicit removal so the diff-based updateOpenTicket DELETEs
+    // this row in the DB. Lines without `existingId` were never persisted,
+    // so they don't need a tombstone — the trash icon click is enough.
+    if (removed?.existingId) {
+      setRemovedItemIds((prev) => (prev.includes(removed.existingId!) ? prev : [...prev, removed.existingId!]));
+    }
 
     // Tear down the synthetic add-child if this was a just-added (unsaved)
     // line. Saved lines (have `existingId`) go through the modal save's
@@ -628,12 +642,18 @@ export default function TicketModal({
       taxCents,
       tipCents,
       items: buildItemsForSave(),
+      removedItemIds,
     });
     setBusy('idle');
     if (!saved) {
       setError('Could not save — check connection and try again.');
       return null;
     }
+    // Save succeeded — clear the explicit-removal log so a follow-up edit
+    // in the same modal session doesn't re-send DELETEs for ids that no
+    // longer exist (the second DELETE would be a no-op but the noise is
+    // confusing in the logs).
+    if (removedItemIds.length > 0) setRemovedItemIds([]);
     // Turn reallocation: any line whose staff1 changed reassigns the turn
     // credit from the old assignee to the new one. Only service-kind lines
     // with a queue_entry_id (i.e. ones tied to a completed entry) qualify;
