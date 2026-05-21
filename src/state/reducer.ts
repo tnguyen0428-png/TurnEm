@@ -210,13 +210,40 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         client.assignedManicuristId && client.assignedManicuristId !== action.manicuristId
           ? client.assignedManicuristId
           : null;
+      // Orphan-prevention case: when the NEW assignee was ALREADY busy
+      // with a DIFFERENT in-progress queue entry, that entry would
+      // otherwise stay pinned to them (assigned_manicurist_id unchanged,
+      // status 'inProgress', turn credit kept) even though the manicurist's
+      // currentClient pointer moves to the new client and the prior card
+      // disappears from the UI. We unwind the prior assignment: drop the
+      // entry back to 'waiting' so a receptionist can re-assign it, and
+      // deduct the prior turn credit from the manicurist's totalTurns.
+      // Skip split/add-children (parentQueueId set) — those have their own
+      // dedicated cleanup paths in TicketModal (handleProcess /
+      // handleVoidConfirmed) and aren't real top-level queue entries.
+      // Symptom of the old behavior: Joe shows total_turns=4 but History
+      // only lists 1 service; 2 in-progress orphan queue entries
+      // (Cynthia, Reese) sit assigned to him forever — 2026-05-21.
+      const newAssignee = state.manicurists.find((m) => m.id === action.manicuristId);
+      const orphanCandidateId =
+        newAssignee && newAssignee.currentClient && newAssignee.currentClient !== action.clientId
+          ? newAssignee.currentClient
+          : null;
+      const orphanedEntry = orphanCandidateId
+        ? state.queue.find((c) => c.id === orphanCandidateId && !c.parentQueueId)
+        : null;
+      const orphanedTurns = orphanedEntry ? Number(orphanedEntry.turnValue) || 0 : 0;
       return {
         ...state,
-        queue: state.queue.map((c) =>
-          c.id === action.clientId
-            ? { ...c, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: turns }
-            : c
-        ),
+        queue: state.queue.map((c) => {
+          if (c.id === action.clientId) {
+            return { ...c, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: turns };
+          }
+          if (orphanedEntry && c.id === orphanedEntry.id) {
+            return { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null };
+          }
+          return c;
+        }),
         manicurists: state.manicurists.map((m) => {
           if (m.id === previousManicuristId) {
             // Old assignee: deduct turns and free them up. Conservative on
@@ -234,11 +261,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           if (m.id !== action.manicuristId) return m;
           const waxSlot   = isWax ? nextWaxSlot(m)   : null;
           const checkSlot = is4thPosition ? nextCheckSlot(m) : null;
+          // Net turn delta: credit the new client's turns, refund the
+          // orphan-unwound prior client's turns (zero when there wasn't one).
           return {
             ...m,
             status: 'busy' as const,
             currentClient: action.clientId,
-            totalTurns: m.totalTurns + turns,
+            totalTurns: Math.max(0, m.totalTurns - orphanedTurns + turns),
             ...(checkSlot ? { [checkSlot]: true } : {}),
             ...(waxSlot   ? { [waxSlot]:   true } : {}),
           };
@@ -253,9 +282,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const requestTurns = Number(action.client.turnValue) || 0;
       const isWax = clientHasAnyWaxService(action.client.services, state.salonServices);
       const is4thPosition = isFourthPositionSpecialService(action.client.services, state.salonServices);
+      // Same orphan-prevention as ASSIGN_CLIENT — if the requested
+      // manicurist was already busy with a different top-level queue
+      // entry, drop that entry back to waiting and refund its turn credit.
+      const requestAssignee = state.manicurists.find((m) => m.id === action.manicuristId);
+      const requestOrphanCandidateId =
+        requestAssignee && requestAssignee.currentClient && requestAssignee.currentClient !== action.client.id
+          ? requestAssignee.currentClient
+          : null;
+      const requestOrphanedEntry = requestOrphanCandidateId
+        ? state.queue.find((c) => c.id === requestOrphanCandidateId && !c.parentQueueId)
+        : null;
+      const requestOrphanedTurns = requestOrphanedEntry ? Number(requestOrphanedEntry.turnValue) || 0 : 0;
       return {
         ...state,
-        queue: [...state.queue, { ...action.client, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: requestTurns }],
+        queue: [
+          ...state.queue.map((c) =>
+            requestOrphanedEntry && c.id === requestOrphanedEntry.id
+              ? { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null }
+              : c
+          ),
+          { ...action.client, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: requestTurns },
+        ],
         manicurists: state.manicurists.map((m) => {
           if (m.id !== action.manicuristId) return m;
           const waxSlot   = isWax ? nextWaxSlot(m)   : null;
@@ -264,7 +312,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             ...m,
             status: 'busy' as const,
             currentClient: action.client.id,
-            totalTurns: m.totalTurns + requestTurns,
+            totalTurns: Math.max(0, m.totalTurns - requestOrphanedTurns + requestTurns),
             ...(checkSlot ? { [checkSlot]: true } : {}),
             ...(waxSlot   ? { [waxSlot]:   true } : {}),
           };
@@ -419,16 +467,47 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'CANCEL_SERVICE': {
       const manicurist = state.manicurists.find((m) => m.id === action.manicuristId);
       if (!manicurist || !manicurist.currentClient) return state;
-      const client = state.queue.find((c) => c.id === manicurist.currentClient);
-      if (!client) return state;
-      const turnDeduction = client.turnValue;
+      const currentClientId = manicurist.currentClient;
+      const client = state.queue.find((c) => c.id === currentClientId);
+
+      // Add-child detection: synthetic queue entries created by the ticket
+      // modal carry an id of `${visitId}-add-${staffId}`. They aren't real
+      // walk-in queue rows — they exist only to surface the service on the
+      // staff card. Cancelling one should REMOVE the entry outright (not
+      // mark it waiting), and NOT deduct turn credit (those entries always
+      // carry turnValue=0; turn rollback for added lines is handled by
+      // reallocateTurnsForStaffChanges on ticket save).
+      const isAddChild = /-add-/.test(currentClientId);
+
+      // Phantom-pointer recovery: if the manicurist's currentClient points
+      // at an id that doesn't exist in the local queue (e.g. the queue
+      // entry was deleted server-side, or the realtime DELETE arrived
+      // before this dispatch), just free the manicurist. Without this
+      // branch the reducer early-returns and the manicurist stays stuck
+      // BUSY on a dead pointer with no way to reset short of an app
+      // refresh — exactly the symptom Z-TEST 4 hit on ticket #2.
+      if (!client) {
+        return {
+          ...state,
+          manicurists: state.manicurists.map((m) =>
+            m.id === action.manicuristId
+              ? { ...m, status: 'available' as const, currentClient: null, hasFourthPositionSpecial: false, hasCheck2: false, hasCheck3: false }
+              : m
+          ),
+        };
+      }
+
+      const turnDeduction = isAddChild ? 0 : client.turnValue;
+      const updatedQueue = isAddChild
+        ? state.queue.filter((c) => c.id !== client.id)
+        : state.queue.map((c) =>
+            c.id === client.id
+              ? { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null }
+              : c
+          );
       return {
         ...state,
-        queue: state.queue.map((c) =>
-          c.id === client.id
-            ? { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null }
-            : c
-        ),
+        queue: updatedQueue,
         manicurists: state.manicurists.map((m) =>
           m.id === action.manicuristId
             ? { ...m, status: 'available' as const, currentClient: null, totalTurns: Math.max(0, m.totalTurns - turnDeduction), hasFourthPositionSpecial: false, hasCheck2: false, hasCheck3: false }
@@ -506,11 +585,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const nextCompleted = completedAlreadyExists
         ? state.completed.map((c) => (c.id === completedEntry.id ? completedEntry : c))
         : [...state.completed, completedEntry];
+      // If this queue entry was promoted from an appointment, mark the linked
+      // appointment as 'completed' so the appointment book turns the block
+      // black (the "checked out" visual state). We match by the snapshot id;
+      // if the appointment no longer exists (legacy data), this map is a no-op.
+      const linkedApptId = client.originalAppointment?.id;
+      const nextAppointments = linkedApptId
+        ? state.appointments.map((a) =>
+            a.id === linkedApptId ? { ...a, status: 'completed' as const } : a
+          )
+        : state.appointments;
       return {
         ...state,
         queue: updatedQueue,
         manicurists: updatedManicurists,
         completed: nextCompleted,
+        appointments: nextAppointments,
       };
     }
 
