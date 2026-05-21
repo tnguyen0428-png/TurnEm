@@ -23,6 +23,7 @@ import { useApp } from '../../state/AppContext';
 import {
   computeLineExt,
   formatMoneyCents,
+  getVisitId,
   parseDollarsToCents,
   updateOpenTicket,
   replaceTicketPayments,
@@ -261,14 +262,29 @@ export default function TicketModal({
   }
 
   // When a fresh service line on an existing (parent) ticket gets a staff
-  // assignment, flip that manicurist's card to BUSY pointing at the parent
-  // visit's queue entry. No new queue_entries row is created — we're just
-  // updating the manicurists table so their staff card shows BUSY and
-  // surfaces the parent visit's services. Cleared automatically when the
-  // ticket is closed or voided (see handleProcess / handleVoidConfirmed).
+  // assignment, flip that manicurist's card to BUSY and surface the service
+  // they're rendering. We do this by:
+  //   1. Creating (or updating) a synthetic "add-child" queue entry whose
+  //      id is `${visitId}-add-${staffId}`. It carries the added service in
+  //      its `services` array so ManicuristCard's `currentClient.services`
+  //      render can display it. parentQueueId points at the visit so the
+  //      ticket-creation trigger still pegs work onto the same ticket.
+  //   2. Pointing the manicurist's `currentClient` at the synthetic child
+  //      so the queue panel finds it via getClientForManicurist.
+  //
+  // turnValue stays 0 on the child — turn credit for the new staff is
+  // already handled by reallocateTurnsForStaffChanges during ticket save,
+  // and we don't want a second crediting via COMPLETE_SERVICE.
+  //
+  // Cleared automatically when the ticket is closed or voided (see
+  // handleProcess / handleVoidConfirmed below — both sweep up any
+  // manicurist still pointing at a `${visitId}-add-` child and remove
+  // those queue entries).
   //
   // Guard: only fire when the manicurist isn't already busy with a DIFFERENT
-  // client — otherwise we'd clobber their existing work pointer.
+  // client — otherwise we'd clobber their existing work pointer. We treat
+  // "already busy with the same visit's primary OR add-child" as fine to
+  // overwrite/extend.
   function ensureManicuristBusyForAddedLine(line: DraftLine) {
     if (line.kind !== 'service') return;
     if (line.existingId) return;
@@ -277,11 +293,119 @@ export default function TicketModal({
     if (!visitId) return;
     const target = state.manicurists.find((m) => m.id === line.staff1Id);
     if (!target) return;
-    if (target.status === 'busy' && target.currentClient && target.currentClient !== visitId) return;
+    const svcName = (line.name ?? '').trim();
+    if (!svcName) {
+      // Without a service name there's nothing to append to a queue entry.
+      // Just flip the card to busy pointing at the visit so the cashier
+      // still sees a status change.
+      dispatch({
+        type: 'UPDATE_MANICURIST',
+        id: line.staff1Id,
+        updates: { status: 'busy', currentClient: visitId },
+      });
+      return;
+    }
+
+    // CRITICAL: when this staff already has a queue entry for THIS visit
+    // (a SPLIT_AND_ASSIGN child, an earlier add-child, or any descendant
+    // whose root visit id matches), APPEND the new service to that
+    // entry's services array rather than creating a separate "add-child"
+    // sibling. Creating a second entry causes the queue->ticket trigger
+    // to fire twice for the same (visit, staff, service) tuple — once
+    // for the original entry and once for the new add-child — which
+    // produces duplicate ticket_items. Symptom: ticket #5 ended up with
+    // Z-TEST 1 having TWO Gel Pedicure lines (one on the split child's
+    // qe, one on the add-child's qe) plus a phantom Gel Pedicure on
+    // Z-TEST 4 from a stray add-child.
+    //
+    // We resolve "root visit" via getVisitId on parentQueueId so split
+    // children (`${visit}-${staff}`), nested splits, AND prior
+    // add-children (`${visit}-add-${staff}`) all share the same root.
+    const reusable = state.queue.find((q) =>
+      q.assignedManicuristId === line.staff1Id &&
+      getVisitId(q.parentQueueId ?? q.id) === visitId
+    );
+
+    const isAlreadyOnThisVisit =
+      !target.currentClient ||
+      target.currentClient === visitId ||
+      (reusable && target.currentClient === reusable.id) ||
+      target.currentClient.startsWith(`${visitId}-`);
+    if (target.status === 'busy' && !isAlreadyOnThisVisit) return;
+
+    const now = Date.now();
+
+    if (reusable) {
+      // Update the existing entry's services array — no new queue row,
+      // no second trigger fire for the same (visit, staff) pair. The
+      // service-edit sync block in doSave will see this on save and
+      // reconcile the rest. If the service is already in the list, no-op.
+      if (!reusable.services.includes(svcName as ServiceType)) {
+        const services = [...reusable.services, svcName as ServiceType];
+        dispatch({
+          type: 'UPDATE_CLIENT',
+          id: reusable.id,
+          updates: { services, assignedManicuristId: line.staff1Id },
+        });
+      }
+      dispatch({
+        type: 'UPDATE_MANICURIST',
+        id: line.staff1Id,
+        updates: { status: 'busy', currentClient: reusable.id },
+      });
+      return;
+    }
+
+    // No existing entry for this (visit, staff) — create a brand-new
+    // add-child. Use a deterministic id so re-runs don't pile up duplicates.
+    const addChildId = `${visitId}-add-${line.staff1Id}`;
+    dispatch({
+      type: 'ADD_CLIENT',
+      client: {
+        id: addChildId,
+        parentQueueId: visitId,
+        clientName: clientName || ticket.clientName || 'Walk-in',
+        services: [svcName as ServiceType],
+        turnValue: 0,
+        serviceRequests: [],
+        requestedManicuristId: null,
+        isRequested: false,
+        isAppointment: false,
+        assignedManicuristId: line.staff1Id,
+        status: 'inProgress',
+        arrivedAt: now,
+        startedAt: now,
+        completedAt: null,
+        extraTimeMs: 0,
+      },
+    });
     dispatch({
       type: 'UPDATE_MANICURIST',
       id: line.staff1Id,
-      updates: { status: 'busy', currentClient: visitId },
+      updates: { status: 'busy', currentClient: addChildId },
+    });
+
+    // Belt-and-suspenders direct DB write (see commit 5ffadda for why).
+    const nowIso = new Date(now).toISOString();
+    void supabase.from('queue_entries').upsert({
+      id: addChildId,
+      parent_queue_id: visitId,
+      client_name: clientName || ticket.clientName || 'Walk-in',
+      service: svcName,
+      services: [svcName],
+      turn_value: 0,
+      service_requests: [],
+      requested_manicurist_id: null,
+      is_requested: false,
+      is_appointment: false,
+      assigned_manicurist_id: line.staff1Id,
+      status: 'inProgress',
+      arrived_at: nowIso,
+      started_at: nowIso,
+      completed_at: null,
+      extra_time_ms: 0,
+    }, { onConflict: 'id' }).then(({ error }) => {
+      if (error) console.warn('[ticket modal] add-child direct upsert:', error.message);
     });
   }
 
@@ -299,7 +423,55 @@ export default function TicketModal({
     }
   }
   function removeLine(idx: number) {
+    const removed = lines[idx];
     setLines((prev) => prev.filter((_, i) => i !== idx));
+
+    // Tear down the synthetic add-child if this was a just-added (unsaved)
+    // line. Saved lines (have `existingId`) go through the modal save's
+    // removed-line sync path, which already handles queue-entry cleanup.
+    // For unsaved adds the queue child was created eagerly by
+    // ensureManicuristBusyForAddedLine and would otherwise sit around
+    // forever (the card stays BUSY and Cancel may find no client to act
+    // on) if the user just removes the line and doesn't save.
+    if (!removed || removed.existingId || removed.kind !== 'service' || !removed.staff1Id) return;
+    const visitId = ticket.queueEntryId;
+    if (!visitId) return;
+
+    const remainingForStaff = lines
+      .filter((l, i) => i !== idx && l.kind === 'service' && l.staff1Id === removed.staff1Id)
+      .map((l) => (l.name ?? '').trim())
+      .filter((n) => n.length > 0);
+
+    const addChildId = `${visitId}-add-${removed.staff1Id}`;
+    const addChild = state.queue.find((q) => q.id === addChildId);
+
+    if (remainingForStaff.length === 0) {
+      // Last line for this staff is gone — drop the add-child and free
+      // the manicurist if they were pointing at it.
+      if (addChild) {
+        dispatch({ type: 'REMOVE_CLIENT', id: addChildId });
+      }
+      const m = state.manicurists.find((mm) => mm.id === removed.staff1Id);
+      if (m && m.currentClient === addChildId) {
+        dispatch({
+          type: 'UPDATE_MANICURIST',
+          id: m.id,
+          updates: { status: 'available', currentClient: null },
+        });
+      }
+      return;
+    }
+
+    // Staff still has other lines for this visit — narrow the add-child's
+    // services to what's left so the card stops advertising the removed
+    // one.
+    if (addChild) {
+      dispatch({
+        type: 'UPDATE_CLIENT',
+        id: addChildId,
+        updates: { services: remainingForStaff as ServiceType[] },
+      });
+    }
   }
   function addCatalogService(svcId: string) {
     const svc = sortedServices.find((s) => s.id === svcId);
@@ -505,14 +677,17 @@ export default function TicketModal({
       if (orig.staff1Id !== l.staff1Id) continue;
       // Find the queue entry for THIS staff on THIS visit. The ticket_item
       // may carry the bare visit id as queue_entry_id, but the actual
-      // queue entry is often a split child whose id is `${visitId}-${staffId}`
-      // (or arbitrary uuid with parentQueueId === visitId). Match by
-      // (visit, manicurist) so both shapes resolve.
+      // queue entry is often a split child (`${visitId}-${staffId}`) or a
+      // NESTED split child (`${visitId}-${parentSplit}-${staffId}`) whose
+      // parentQueueId points at an intermediate ancestor — NOT the root
+      // visit. A naive `q.parentQueueId === visitId` misses those.
+      // getVisitId strips down to the leading UUID so both single- and
+      // multi-level splits resolve to the same root.
       const visitId = ticket.queueEntryId;
       if (!visitId || !l.staff1Id) continue;
       const entry = state.queue.find(
         (q) =>
-          (q.id === visitId || q.parentQueueId === visitId) &&
+          getVisitId(q.parentQueueId ?? q.id) === visitId &&
           q.assignedManicuristId === l.staff1Id,
       );
       if (!entry) continue;
@@ -551,9 +726,18 @@ export default function TicketModal({
         for (const [itemId, orig] of originalStaffByItemId) {
           if (remainingItemIds.has(itemId)) continue;
           if (!orig.staff1Id || !orig.name) continue;
+          // Match via getVisitId so NESTED split children (e.g.
+          // `${visit}-${innerParent}-${staffId}`, whose parentQueueId
+          // points at the inner split rather than the root visit) still
+          // resolve. The previous `q.parentQueueId === visitId` check
+          // only caught one level of nesting — split-of-a-split entries
+          // sailed past the removed-line sync and kept the service on
+          // the queue card forever. Symptom: ticket #2 deleted Z-TEST 2's
+          // line but Z-TEST 2's card kept "Pedicure" because their entry
+          // was a grandchild of the visit.
           const entry = state.queue.find(
             (q) =>
-              (q.id === visitId || q.parentQueueId === visitId) &&
+              getVisitId(q.parentQueueId ?? q.id) === visitId &&
               q.assignedManicuristId === orig.staff1Id,
           );
           if (!entry) continue;
@@ -718,8 +902,25 @@ export default function TicketModal({
         return sum + base;
       }, 0);
 
+      const turnDelta = newTurnValue - entry.turnValue;
+      // Mirror the per-manicurist totalTurns delta into LOCAL state so
+      // syncManicurists doesn't race the DB-side update below. Without
+      // this dispatch, any unrelated UPDATE_MANICURIST that fires between
+      // now and the realtime echo can upload stale total_turns and
+      // overwrite the credit we just wrote to DB.
+      if (turnDelta !== 0 && entry.manicuristId) {
+        const eMid = entry.manicuristId;
+        const localCur = Number(
+          state.manicurists.find((mm) => mm.id === eMid)?.totalTurns ?? 0,
+        );
+        dispatch({
+          type: 'UPDATE_MANICURIST',
+          id: eMid,
+          updates: { totalTurns: Math.max(0, localCur + turnDelta) },
+        });
+      }
+
       void (async () => {
-        const turnDelta = newTurnValue - entry.turnValue;
         const { error } = await supabase.from('completed_services').update({
           services: newServices,
           service: newServices[0] ?? '',
@@ -781,15 +982,52 @@ export default function TicketModal({
       const turnValue = l.isRequested
         ? (svc?.category === 'Combo' ? 1 : 0.5)
         : baseTurns;
+      // Use the SAME deterministic id as the synthetic add-child queue
+      // entry created by ensureManicuristBusyForAddedLine
+      // (`${visit}-add-${staff}`). When the manicurist later hits DONE,
+      // the reducer's COMPLETE_SERVICE writes a completed_services row
+      // keyed on the queue entry's id; if we use a timestamp-suffixed id
+      // here, that later write inserts a SECOND row for the same
+      // (visit, staff, service) and History double-counts the turn.
+      // Symptom: Lauren × Tommy × Manicure showed twice in History on
+      // ticket #32, 2026-05-21.
       const newEntryId = visitForAdds
-        ? `${visitForAdds}-add-${l.staff1Id}-${Date.now().toString(36)}`
-        : `${ticket.id}-add-${l.staff1Id}-${Date.now().toString(36)}`;
+        ? `${visitForAdds}-add-${l.staff1Id}`
+        : `${ticket.id}-add-${l.staff1Id}`;
+      // If a row with this id already exists in local state, the turn has
+      // already been credited (either by a prior Save whose realtime echo
+      // has landed, or by a COMPLETE_SERVICE that beat this save). Skip
+      // to avoid double-incrementing the manicurist's total_turns.
+      if (state.completed.some((c) => c.id === newEntryId)) continue;
       const nowIso = new Date().toISOString();
+
+      // Dispatch the turn credit LOCALLY first so state.manicurists reflects
+      // the new total before the async DB writes happen. Without this, the
+      // direct supabase update below races with syncManicurists (which
+      // uploads the local manicurist row whenever it changes for an
+      // unrelated reason). The local-then-DB ordering keeps both sides
+      // converged on the correct total even if the realtime echo arrives
+      // late, and the card shows the credited turn immediately instead of
+      // waiting for a round-trip.
+      const lStaffId = l.staff1Id;
+      const localCurrentTurns = Number(
+        state.manicurists.find((mm) => mm.id === lStaffId)?.totalTurns ?? 0,
+      );
+      dispatch({
+        type: 'UPDATE_MANICURIST',
+        id: lStaffId,
+        updates: { totalTurns: localCurrentTurns + turnValue },
+      });
+
       void (async () => {
-        // Insert a completed_services row so reports/History reflect this
-        // manually-added work and re-saves don't re-credit (next save the
-        // line has an existingId so this branch won't fire again).
-        const { error: csErr } = await supabase.from('completed_services').insert({
+        // Upsert (ignoring duplicates) a completed_services row so reports
+        // and History reflect this manually-added work. We use upsert with
+        // ignoreDuplicates rather than insert so a duplicate PK from a
+        // rapid double-Save (before the realtime echo has updated
+        // state.completed) is a harmless no-op instead of an error log.
+        // Subsequent saves take the existingId / state.completed early-exit
+        // branches and don't reach this code.
+        const { error: csErr } = await supabase.from('completed_services').upsert({
           id: newEntryId,
           client_name: clientName || ticket.clientName || 'Walk-in',
           manicurist_id: l.staff1Id,
@@ -805,11 +1043,12 @@ export default function TicketModal({
           voided: false,
           started_at: nowIso,
           completed_at: nowIso,
-        });
+        }, { onConflict: 'id', ignoreDuplicates: true });
         if (csErr) {
-          console.error('[ticket modal] completed_services insert for added line failed:', csErr.message);
-          // Even if the completed_services insert fails (e.g., id collision),
-          // still credit the turn so the cashier doesn't lose the count.
+          console.error('[ticket modal] completed_services upsert for added line failed:', csErr.message);
+          // Even if the completed_services upsert fails (e.g., schema
+          // mismatch), still credit the turn so the cashier doesn't lose
+          // the count.
         }
         const { data: mRow } = await supabase
           .from('manicurists')
@@ -878,16 +1117,29 @@ export default function TicketModal({
       return;
     }
     // Auto-clear: any manicurist still pointing at this visit drops back
-    // to available. Mirrors the lifecycle of the "flip busy on added line"
-    // feature so adding-then-closing a ticket leaves no busy staff stuck.
+    // to available, and any synthetic `${visitId}-add-${staffId}` queue
+    // entry created by ensureManicuristBusyForAddedLine is swept out.
+    // Without the latter, the add-child sits in state.queue indefinitely
+    // and the manicurist panel keeps drawing a phantom BUSY card after
+    // the ticket has been settled.
     if (ticket.queueEntryId) {
+      const visitId = ticket.queueEntryId;
+      const addChildPrefix = `${visitId}-add-`;
       for (const m of state.manicurists) {
-        if (m.currentClient === ticket.queueEntryId) {
+        if (
+          m.currentClient === visitId ||
+          (m.currentClient && m.currentClient.startsWith(addChildPrefix))
+        ) {
           dispatch({
             type: 'UPDATE_MANICURIST',
             id: m.id,
             updates: { status: 'available', currentClient: null },
           });
+        }
+      }
+      for (const q of state.queue) {
+        if (q.id.startsWith(addChildPrefix)) {
+          dispatch({ type: 'REMOVE_CLIENT', id: q.id });
         }
       }
     }
@@ -909,13 +1161,25 @@ export default function TicketModal({
     setBusy('idle');
     if (ok) {
       if (ticket.queueEntryId) {
+        const visitId = ticket.queueEntryId;
+        const addChildPrefix = `${visitId}-add-`;
         for (const m of state.manicurists) {
-          if (m.currentClient === ticket.queueEntryId) {
+          if (
+            m.currentClient === visitId ||
+            (m.currentClient && m.currentClient.startsWith(addChildPrefix))
+          ) {
             dispatch({
               type: 'UPDATE_MANICURIST',
               id: m.id,
               updates: { status: 'available', currentClient: null },
             });
+          }
+        }
+        // Same add-child sweep as handleProcess — voiding a ticket also
+        // has to wipe the synthetic queue entries it spawned.
+        for (const q of state.queue) {
+          if (q.id.startsWith(addChildPrefix)) {
+            dispatch({ type: 'REMOVE_CLIENT', id: q.id });
           }
         }
       }
@@ -1454,6 +1718,13 @@ canEdit && (
         <GiftCardSaleModal
           onClose={() => setShowGiftModal(false)}
           onAdd={(serial, valueCents, staff) => addGiftLine(serial, valueCents, staff)}
+          pendingSerials={lines
+            .filter((l) => l.kind === 'gift_card_sale')
+            .map((l) => {
+              const m = (l.name ?? '').match(/#(\d+)/);
+              return m ? m[1] : '';
+            })
+            .filter((s) => s.length > 0)}
         />
       )}
       <ReceptionistPinGate
