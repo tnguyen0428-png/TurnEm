@@ -847,6 +847,36 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     if (isFirstService) updates.time = newTime;
 
     dispatch({ type: 'UPDATE_APPOINTMENT', id: apptId, updates });
+
+    // Turn credit follow-through. If this appt is in the "awaiting payment"
+    // state (service done, ticket still open), the turn was already credited
+    // to the previous tech via completed_services. Repoint that row to the new
+    // tech using UPDATE_COMPLETED, which the reducer special-cases to subtract
+    // from the old manicurist's totalTurns and add to the new one's. Without
+    // this, dragging Joney from JOE's column to TAMMY's column visually moves
+    // the block but JOE keeps the turn credit. Per user request 2026-05-22.
+    if (!mId) return;
+    if (mId === (currentReq?.manicuristIds?.[0] ?? appt.manicuristId)) return;
+    const newMani = state.manicurists.find((m) => m.id === mId);
+    if (!newMani) return;
+    const norm = (v: string | undefined) =>
+      (v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const apptName = norm(appt.clientName);
+    const matchingCompleted = state.completed.filter(
+      (c) => !c.voided && norm(c.clientName) === apptName && c.services?.includes(serviceName as ServiceType),
+    );
+    // Prefer the row currently owned by a tech that's NOT the destination.
+    const completedToMove = matchingCompleted.find((c) => c.manicuristId !== mId) ?? matchingCompleted[0];
+    if (!completedToMove) return;
+    dispatch({
+      type: 'UPDATE_COMPLETED',
+      id: completedToMove.id,
+      updates: {
+        manicuristId: mId,
+        manicuristName: newMani.name,
+        manicuristColor: newMani.color,
+      },
+    });
   }
 
   function onDragStart(e: React.DragEvent, appt: Appointment, svcName: string, occurrence: number) {
@@ -1109,11 +1139,14 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                              : '#6b7280';
           const pl = isFirst ? '14px' : '4px';
 
-          // Locked = no drag/move allowed. Requested appts must be modified via the edit
-          // modal so accidental hand-drags can't shift a client-requested time/staff.
-          // Per user request: only checked-out OR awaiting-payment is locked — the
-          // service is done, dragging the block would desync the linked completed row.
-          const isLocked = isCheckedOut || isAwaitingPayment || hasRequest;
+          // Locked = no drag/move allowed. Requested appts must be modified via the
+          // edit modal so accidental hand-drags can't shift a client-requested
+          // time/staff. Per user request 2026-05-22: every light-gray lifecycle
+          // state (waiting-Q, in-service, awaiting-payment) is draggable too.
+          // executeDrop assigns the destination column's manicurist as the new
+          // service staff via serviceRequests. Only checked-out (paid) and
+          // requested appts stay locked.
+          const isLocked = isCheckedOut || hasRequest;
           // Treat the old "isCompleted" semantics (muted look, no action buttons) as
           // "checked out OR currently in a queue lifecycle". Hover action row stays
           // hidden in those states.
