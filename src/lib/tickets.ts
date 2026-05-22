@@ -1307,11 +1307,20 @@ export async function syncEntryToTicket(
     discount_cents: number;
     sort_order: number;
   };
+  // Match THIS entry's lines only: the canonical id (bare) OR the `#svcN`
+  // / `#N` collision-suffixed siblings. A bare LIKE `${entry.id}%` looks
+  // tempting but over-matches because manicurist ids like `mani-1` are a
+  // string prefix of `mani-10`, `mani-15`, etc. — so processing Tommy's
+  // entry would grab Christina's row, mark it "unmatched", and DELETE it.
+  // Symptom: ticket #88 (Maria Aguilar) repeatedly lost Christina's
+  // Gel Fill line whenever syncEntryToTicket ran for Tommy's entry on
+  // the same visit. The `#` delimiter is reserved by updateOpenTicket /
+  // syncEntryToTicket for collision suffixes, so it's a safe boundary.
   const { data: itemRows, error: iErr } = await supabase
     .from('ticket_items')
     .select('id, queue_entry_id, name, service_id, staff1_id, staff2_id, unit_price_cents, ext_price_cents, quantity, discount_cents, sort_order')
     .eq('ticket_id', ticket.id)
-    .like('queue_entry_id', `${entry.id}%`);
+    .or(`queue_entry_id.eq.${entry.id},queue_entry_id.like.${entry.id}#%`);
   if (iErr) {
     console.warn('[tickets] syncEntryToTicket items fetch:', iErr.message);
     return false;
@@ -2292,11 +2301,15 @@ export async function cleanupDuplicateLinesForEntry(
   if (tErr || !tRow) return 0;
   const ticket = tRow as { id: string; discount_cents: number; tax_cents: number; tip_cents: number };
 
+  // Same prefix-collision guard as syncEntryToTicket: match the bare
+  // entry.id OR explicit `#`-suffixed siblings, not a naive LIKE that
+  // would over-match `mani-1` against `mani-15` etc. Without this,
+  // de-duping Tommy's entry was eating Christina's row.
   const { data: rows, error: iErr } = await supabase
     .from('ticket_items')
     .select('id, queue_entry_id, staff1_id, name, sort_order, unit_price_cents, quantity, discount_cents')
     .eq('ticket_id', ticket.id)
-    .like('queue_entry_id', `${entry.id}%`);
+    .or(`queue_entry_id.eq.${entry.id},queue_entry_id.like.${entry.id}#%`);
   if (iErr || !rows) return 0;
   type Row = {
     id: string;
@@ -2340,8 +2353,6 @@ export async function cleanupDuplicateLinesForEntry(
   const patch: Record<string, unknown> = {};
   if (keeper.queue_entry_id !== entry.id) patch.queue_entry_id = entry.id;
   if (keeper.staff1_id !== assignedM.id) {
-    patch.staff1_id = assignedM.id;
-    patch.staff1_name = assignedM.name;
     patch.staff1_color = assignedM.color;
   }
   if (Object.keys(patch).length > 0) {
