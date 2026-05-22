@@ -1,14 +1,19 @@
 // GiftCardSaleModal — opened from the ADD GIFT button on TicketModal.
 //
-// Shows a sequential auto-generated serial number, a Staff selector (which
-// receptionist sold the card), and a Gift Value input. On Add, the parent
-// ticket gets a new gift_card_sale line item named "Gift Certificate
-// #XXXXX" with the entered value as its price and the chosen staff on
-// staff1 so the sale gets credited correctly.
+// Shows the next sequential serial number (pre-computed by the parent
+// TicketModal before mount — see openGiftModal() there), a Staff selector
+// (which receptionist sold the card), and a Gift Value input. On Add, the
+// parent ticket gets a new gift_card_sale line item named
+// "Gift Certificate #XXXXX" with the entered value as its price and the
+// chosen staff on staff1 so the sale gets credited correctly.
+//
+// Serial allocation is OWNED BY THE PARENT — this modal does NOT query the
+// DB on mount and has no async race with subsequent gift adds on the same
+// ticket. The parent passes a different serial each time the modal opens.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Gift, X } from 'lucide-react';
-import { nextGiftCardSerial, parseDollarsToCents } from '../../lib/tickets';
+import { parseDollarsToCents } from '../../lib/tickets';
 import { useApp } from '../../state/AppContext';
 
 export interface GiftSaleStaff {
@@ -18,16 +23,20 @@ export interface GiftSaleStaff {
 }
 
 interface Props {
+  /** Pre-computed next serial (zero-padded, e.g. "00042"). Parent
+   *  TicketModal calculates this as
+   *  max(dbMaxSerial, ...pendingSerialsFromCurrentLines) + 1 before
+   *  mounting this modal, so the second / third / Nth gift on the same
+   *  ticket gets a unique number every time. */
+  serial: string;
   onClose: () => void;
   onAdd: (serial: string, valueCents: number, staff: GiftSaleStaff) => void;
 }
 
-export default function GiftCardSaleModal({ onClose, onAdd }: Props) {
+export default function GiftCardSaleModal({ serial, onClose, onAdd }: Props) {
   const { state } = useApp();
 
-  const [serial, setSerial] = useState<string>('…');
   const [valueInput, setValueInput] = useState<string>('0.00');
-  const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Only receptionists can sell a gift card — they're the only role that
@@ -44,19 +53,6 @@ export default function GiftCardSaleModal({ onClose, onAdd }: Props) {
   const [staffId, setStaffId] = useState<string>(() =>
     receptionists.length === 1 ? receptionists[0].id : '',
   );
-
-  // Pull the next sequential serial when the modal mounts.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const next = await nextGiftCardSerial();
-      if (!cancelled) {
-        setSerial(next);
-        setBusy(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   // Esc closes
   useEffect(() => {
@@ -75,10 +71,6 @@ export default function GiftCardSaleModal({ onClose, onAdd }: Props) {
     }
     if (!staffId) {
       setError('Pick which staff member sold this gift card.');
-      return;
-    }
-    if (busy) {
-      setError('Serial number is still loading — try again in a moment.');
       return;
     }
     const m = state.manicurists.find((mm) => mm.id === staffId) ?? null;
@@ -174,8 +166,7 @@ export default function GiftCardSaleModal({ onClose, onAdd }: Props) {
           </button>
           <button
             onClick={handleAdd}
-            disabled={busy}
-            className="px-4 py-2 rounded-lg bg-pink-600 text-white hover:bg-pink-700 font-mono text-xs font-bold disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-pink-600 text-white hover:bg-pink-700 font-mono text-xs font-bold"
           >
             ADD GIFT CARD
           </button>

@@ -24,6 +24,7 @@ import {
   computeLineExt,
   formatMoneyCents,
   getVisitId,
+  nextGiftCardSerial,
   parseDollarsToCents,
   updateOpenTicket,
   replaceTicketPayments,
@@ -564,8 +565,82 @@ export default function TicketModal({
     ]);
   }
 
-  // Whether the gift-card-sale modal is open.
-  const [showGiftModal, setShowGiftModal] = useState(false);
+  // ─── Gift card sale modal ─────────────────────────────────────────────────
+  //
+  // Sequential gift serials must work for multiple gift cards added to the
+  // SAME ticket (e.g. a couple buying two $50 gifts). Strategy:
+  //   1. Pre-fetch the salon-wide max serial ONCE when this TicketModal
+  //      mounts. Cached in `dbMaxSerial`. The DB doesn't get re-queried for
+  //      subsequent ADD GIFT clicks on the same ticket — instead we derive
+  //      the next number synchronously from cache + current draft lines.
+  //   2. On each ADD GIFT click, compute the next serial as
+  //      `max(dbMaxSerial, ...pendingSerialsFromCurrentLines) + 1`.
+  //   3. Pass that pre-computed serial as a prop to GiftCardSaleModal so it
+  //      can render the number instantly (no loading state, no async race).
+  //
+  // The "next number pops up the moment you click ADD GIFT" UX comes from
+  // (3) — the modal opens already showing the next serial because we
+  // computed it before mounting it. Each subsequent gift bumps further past
+  // the previously-added (unsaved) lines, so a 2nd / 3rd / Nth gift on the
+  // same ticket gets a unique sequential number every time.
+
+  const [dbMaxSerial, setDbMaxSerial] = useState<number | null>(null);
+  const [giftModalSerial, setGiftModalSerial] = useState<string | null>(null);
+
+  // Pre-fetch the salon-wide max gift serial when this ticket modal opens.
+  // Idempotent in the React sense — if the fetch fails we leave dbMaxSerial
+  // null and the openGiftModal() helper falls back to a fresh fetch on
+  // first click. The "…" delay only ever appears on the first ADD GIFT
+  // click if the user clicks faster than this fetch resolves.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await nextGiftCardSerial();
+        const n = parseInt(s, 10);
+        if (!cancelled && Number.isFinite(n)) {
+          // nextGiftCardSerial returns max+1. We store the max itself so
+          // openGiftModal can add 1 once it knows about pendingSerials.
+          setDbMaxSerial(n - 1);
+        }
+      } catch (err) {
+        console.warn('[ticket modal] gift serial prefetch failed', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  async function openGiftModal() {
+    // Pull pending serials from THIS modal's current draft lines. Includes
+    // both gift lines loaded from ticket.items at mount (existingId set) and
+    // gift lines added during this session (existingId undefined) — both
+    // sit in `lines` with kind='gift_card_sale'.
+    const pendingFromLines = lines
+      .filter((l) => l.kind === 'gift_card_sale')
+      .map((l) => {
+        const m = (l.name ?? '').match(/#(\d+)/);
+        return m ? parseInt(m[1], 10) : NaN;
+      })
+      .filter((n) => Number.isFinite(n));
+
+    // Resolve DB max — usually pre-fetched; if not, fetch now (one-time
+    // cost on the first ADD GIFT click before prefetch resolved).
+    let max = dbMaxSerial;
+    if (max == null) {
+      try {
+        const s = await nextGiftCardSerial();
+        const n = parseInt(s, 10);
+        if (Number.isFinite(n)) {
+          max = n - 1;
+          setDbMaxSerial(max);
+        }
+      } catch (err) {
+        console.warn('[ticket modal] gift serial fetch failed', err);
+      }
+    }
+    const next = Math.max(max ?? 0, ...pendingFromLines, 0) + 1;
+    setGiftModalSerial(String(next).padStart(5, '0'));
+  }
 
   // ─── Pending payment edits ────────────────────────────────────────────────
   function addPending(method: PaymentMethod) {
@@ -1487,7 +1562,7 @@ export default function TicketModal({
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-300 text-gray-800 hover:bg-white font-mono text-xs font-semibold transition-colors">
                       <Plus size={14} /> CUSTOM
                     </button>
-                    <button onClick={() => setShowGiftModal(true)}
+                    <button onClick={() => { void openGiftModal(); }}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-pink-300 bg-pink-50 text-pink-800 hover:bg-pink-100 hover:border-pink-400 font-mono text-xs font-semibold transition-colors">
                       <Plus size={14} /> GIFT
                     </button>
@@ -1740,17 +1815,11 @@ canEdit && (
           onClose={() => setShowHistory(false)}
         />
       )}
-      {showGiftModal && (
+      {giftModalSerial !== null && (
         <GiftCardSaleModal
-          onClose={() => setShowGiftModal(false)}
+          serial={giftModalSerial}
+          onClose={() => setGiftModalSerial(null)}
           onAdd={(serial, valueCents, staff) => addGiftLine(serial, valueCents, staff)}
-          pendingSerials={lines
-            .filter((l) => l.kind === 'gift_card_sale')
-            .map((l) => {
-              const m = (l.name ?? '').match(/#(\d+)/);
-              return m ? m[1] : '';
-            })
-            .filter((s) => s.length > 0)}
         />
       )}
       <ReceptionistPinGate
@@ -1963,6 +2032,72 @@ function CustomerHistoryModal({
       });
       const out = filtered.map((t) => ({
         id: t.id,
+        ticketNumber: t.ticket_number,
+        businessDate: t.business_date,
+        closedAt: t.closed_at,
+        totalCents: t.total_cents,
+        status: t.status,
+        primaryStaff: t.primary_manicurist_name || '—',
+        services: (t.items ?? [])
+          .filter((it) => it.kind === 'service')
+          .map((it) => it.name)
+          .join(', ') || '—',
+      }));
+      setRows(out);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [clientName, clientPhone]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-bebas text-xl tracking-widest text-gray-900">CUSTOMER HISTORY</h3>
+            <p className="font-mono text-xs text-gray-500 mt-0.5">{clientName || 'Walk-in'}{clientPhone ? ` · ${clientPhone}` : ''}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {rows.length === 0 ? (
+            <div className="px-5 py-10 text-center font-mono text-xs text-gray-400">
+              {loading ? 'Loading…' : 'No previous tickets on file.'}
+            </div>
+          ) : (
+            <div>
+              <div className="grid grid-cols-[70px_110px_1fr_1fr_90px_90px] gap-2 px-5 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+                <span>Ticket</span>
+                <span>Date</span>
+                <span>Staff</span>
+                <span>Services</span>
+                <span className="text-right">Total</span>
+                <span className="text-right">Status</span>
+              </div>
+              {rows.map((r) => (
+                <div key={r.id} className="grid grid-cols-[70px_110px_1fr_1fr_90px_90px] gap-2 px-5 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
+                  <span className="font-mono text-sm font-bold text-gray-800">#{r.ticketNumber}</span>
+                  <span className="font-mono text-xs text-gray-700">{r.businessDate}</span>
+                  <span className="font-mono text-xs text-gray-800 truncate">{r.primaryStaff}</span>
+                  <span className="font-mono text-xs text-gray-700 truncate" title={r.services}>{r.services}</span>
+                  <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoneyCents(r.totalCents)}</span>
+                  <span className={`font-mono text-[10px] tracking-wider font-bold uppercase text-right ${
+                    r.status === 'closed' ? 'text-gray-600' : r.status === 'voided' ? 'text-amber-600' : 'text-emerald-600'
+                  }`}>{r.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
         ticketNumber: t.ticket_number,
         businessDate: t.business_date,
         closedAt: t.closed_at,
