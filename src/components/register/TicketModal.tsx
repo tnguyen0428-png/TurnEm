@@ -38,6 +38,7 @@ import GiftCardSaleModal from './GiftCardSaleModal';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { supabase } from '../../lib/supabase';
+import { lookupGiftCardBalance, normalizeSerial, type GiftCardBalance } from '../../lib/giftCertificates';
 import type { PaymentMethod, ServiceType, Ticket } from '../../types';
 
 interface Props {
@@ -659,6 +660,43 @@ export default function TicketModal({
   }
   function patchPending(idx: number, patch: Partial<PendingPayment>) {
     setPending((prev) => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+  }
+
+  // ─── Gift card balance lookup ─────────────────────────────────────────────
+  //
+  // Keyed by normalized serial (so the cashier can switch between two gift
+  // pending rows without re-fetching). Each entry holds the lookup result OR
+  // 'loading' while the supabase query is in flight. When the cashier types
+  // a new serial into the gift_card_code field, we look it up on blur and
+  // stash the result here so the UI can:
+  //   - show "Balance $X.XX" in pink next to the gift card code label
+  //   - hard-cap that pending row's amount input at the remaining balance
+  const [giftBalances, setGiftBalances] = useState<Record<string, GiftCardBalance | 'loading' | 'unknown'>>({});
+
+  async function refreshGiftBalance(rawSerial: string) {
+    const norm = normalizeSerial(rawSerial);
+    if (!norm) return;
+    setGiftBalances((prev) => ({ ...prev, [norm]: 'loading' }));
+    try {
+      const result = await lookupGiftCardBalance(norm, ticket.id);
+      setGiftBalances((prev) => ({ ...prev, [norm]: result }));
+    } catch (err) {
+      console.warn('[ticket modal] gift balance lookup failed:', err);
+      setGiftBalances((prev) => ({ ...prev, [norm]: 'unknown' }));
+    }
+  }
+
+  // Cap amount input at the looked-up balance. Returns the input string
+  // clamped to min(typed, balance). If no balance known yet (loading or
+  // unknown serial), passes through unchanged.
+  function capGiftAmountToBalance(rawSerial: string, amountInput: string): string {
+    const norm = normalizeSerial(rawSerial);
+    const lookup = norm ? giftBalances[norm] : undefined;
+    if (!lookup || lookup === 'loading' || lookup === 'unknown') return amountInput;
+    if (!lookup.found) return amountInput;
+    const typedCents = parseDollarsToCents(amountInput);
+    if (typedCents <= lookup.balanceCents) return amountInput;
+    return (lookup.balanceCents / 100).toFixed(2);
   }
 
   // ─── Save (without closing) ───────────────────────────────────────────────
@@ -1429,38 +1467,18 @@ export default function TicketModal({
                             disabled={!canEdit}
                             className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-center focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           />
-                          <div className="flex items-center gap-1 min-w-0">
-                            <input
-                              type="text" value={line.name}
-                              onChange={(e) => updateLine(idx, { name: e.target.value })}
-                              disabled={!canEdit}
-                              placeholder="Service name"
-                              className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
-                            />
-                            {line.kind === 'service' && (
-                              <select
-                                value=""
-                                onChange={(e) => {
-                                  const svc = sortedServices.find((s) => s.id === e.target.value);
-                                  if (!svc) return;
-                                  updateLine(idx, {
-                                    serviceId: svc.id,
-                                    name: svc.name,
-                                    priceInput: svc.price.toFixed(2),
-                                  });
-                                }}
-                                disabled={!canEdit}
-                                title="Change service"
-                                aria-label="Change service"
-                                className="w-6 px-0 py-1 rounded-md border border-transparent text-gray-400 hover:border-gray-300 hover:text-gray-700 font-mono text-xs focus:outline-none cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                              >
-                                <option value=""></option>
-                                {sortedServices.map((s) => (
-                                  <option key={s.id} value={s.id}>{s.name}</option>
-                                ))}
-                              </select>
-                            )}
-                          </div>
+                          {/* Service name. The previous per-line "change service"
+                              dropdown arrow was removed — the category +
+                              service selector at the top of the modal is the
+                              canonical way to swap a service, and the inline
+                              dropdown duplicated that affordance. */}
+                          <input
+                            type="text" value={line.name}
+                            onChange={(e) => updateLine(idx, { name: e.target.value })}
+                            disabled={!canEdit}
+                            placeholder="Service name"
+                            className="w-full min-w-0 px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
+                          />
                           <select
                             value={line.staff1Id ?? ''}
                             onChange={(e) => {
@@ -1638,8 +1656,21 @@ canEdit && (
                           <span className="font-mono text-sm text-gray-600">$</span>
                           <input
                             type="text" inputMode="decimal" value={p.amountInput}
-                            onChange={(e) => patchPending(idx, { amountInput: e.target.value })}
-                            onBlur={(e) => patchPending(idx, { amountInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
+                            onChange={(e) => {
+                              // Hard cap gift redemptions at the looked-up
+                              // balance. Other methods accept any amount.
+                              const next = p.method === 'gift'
+                                ? capGiftAmountToBalance(p.giftCardCode ?? '', e.target.value)
+                                : e.target.value;
+                              patchPending(idx, { amountInput: next });
+                            }}
+                            onBlur={(e) => {
+                              const formatted = (parseDollarsToCents(e.target.value) / 100).toFixed(2);
+                              const capped = p.method === 'gift'
+                                ? capGiftAmountToBalance(p.giftCardCode ?? '', formatted)
+                                : formatted;
+                              patchPending(idx, { amountInput: capped });
+                            }}
                             className="flex-1 px-2 py-1 rounded-md border border-gray-300 font-mono text-base text-right text-gray-900 focus:outline-none focus:border-gray-500"
                           />
                           <button onClick={() => removePending(idx)}
@@ -1650,18 +1681,39 @@ canEdit && (
                       ))}
                       {pending.some((p) => p.method === 'gift') && (
                         <div className="px-2.5 py-2">
-                          <label className="font-mono text-xs tracking-wider text-gray-700 uppercase font-semibold">Gift card code</label>
-                          {pending.map((p, idx) =>
-                            p.method !== 'gift' ? null : (
-                              <input
-                                key={idx} type="text"
-                                value={p.giftCardCode ?? ''}
-                                onChange={(e) => patchPending(idx, { giftCardCode: e.target.value })}
-                                className="mt-1 w-full px-2 py-1 rounded-md border border-gray-300 font-mono text-base text-gray-900 focus:outline-none focus:border-gray-500"
-                                placeholder="GC-####"
-                              />
-                            ),
-                          )}
+                          {pending.map((p, idx) => {
+                            if (p.method !== 'gift') return null;
+                            const norm = normalizeSerial(p.giftCardCode ?? '');
+                            const lookup = norm ? giftBalances[norm] : undefined;
+                            // Pink balance label: shows "Balance $X.XX" once we
+                            // know the card exists, "Not found" if not, "..."
+                            // while loading. Cashier sees it inline next to the
+                            // GIFT CARD CODE header so they don't need to leave
+                            // the field to check balance.
+                            let pinkLabel = '';
+                            if (lookup === 'loading') pinkLabel = '…';
+                            else if (lookup === 'unknown') pinkLabel = '';
+                            else if (lookup && !lookup.found) pinkLabel = 'Not found';
+                            else if (lookup && lookup.found) pinkLabel = `Balance ${formatMoneyCents(lookup.balanceCents)}`;
+                            return (
+                              <div key={idx} className="mb-1 last:mb-0">
+                                <div className="flex items-baseline gap-2">
+                                  <label className="font-mono text-xs tracking-wider text-gray-700 uppercase font-semibold">Gift card code</label>
+                                  {pinkLabel && (
+                                    <span className="font-mono text-xs font-bold text-pink-600">{pinkLabel}</span>
+                                  )}
+                                </div>
+                                <input
+                                  type="text"
+                                  value={p.giftCardCode ?? ''}
+                                  onChange={(e) => patchPending(idx, { giftCardCode: e.target.value })}
+                                  onBlur={(e) => { void refreshGiftBalance(e.target.value); }}
+                                  className="mt-1 w-full px-2 py-1 rounded-md border border-gray-300 font-mono text-base text-gray-900 focus:outline-none focus:border-gray-500"
+                                  placeholder="GC-####"
+                                />
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -1740,13 +1792,13 @@ canEdit && (
             />
             {isOpen && (
               <>
-                <span className="w-px h-6 bg-gray-200 mx-1" />
+                <span className="w-px h-8 bg-gray-200 mx-1" />
                 <button onClick={() => { void doSave(); }} disabled={busy !== 'idle'}
-                  className="px-3 py-1.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-xs font-bold disabled:opacity-50">
+                  className="px-5 py-2.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-sm font-bold disabled:opacity-50">
                   {busy === 'saving' ? 'SAVING…' : 'SAVE'}
                 </button>
                 <button onClick={handleVoid} disabled={busy !== 'idle'}
-                  className="px-3 py-1.5 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 font-mono text-xs font-bold disabled:opacity-50">
+                  className="px-5 py-2.5 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 font-mono text-sm font-bold disabled:opacity-50">
                   {busy === 'voiding' ? 'VOIDING…' : 'VOID'}
                 </button>
                 <button
@@ -1761,7 +1813,7 @@ canEdit && (
                         : `Payments ${formatMoneyCents(pendingPaidCents)} ≠ total ${formatMoneyCents(totalCents)}.`
                       : undefined
                   }
-                  className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-900"
+                  className="px-6 py-2.5 rounded-lg bg-gray-900 text-white font-mono text-sm font-bold hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-900"
                 >
                   {busy === 'processing' ? 'PROCESSING…' : 'PROCESS'}
                 </button>
@@ -1964,7 +2016,7 @@ function FooterBtn({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`px-3 py-2 rounded-lg border ${toneClasses} font-mono text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors`}
+      className={`px-5 py-2.5 rounded-lg border ${toneClasses} font-mono text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors`}
     >
       {label}
     </button>
