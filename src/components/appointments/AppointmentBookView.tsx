@@ -250,14 +250,39 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // stay in the in-service light-gray state until payment is processed; only
   // then does COMPLETE_SERVICE's sibling — TicketModal.handleProcess — flip
   // the appt status to 'completed' (dark gray).
+  //
+  // Match by lowercase client name across today's completed_services rows and
+  // today's appts. The originalAppointmentId field is in-memory only (the DB
+  // table has no such column), so it disappears on every page refresh. Without
+  // a name-based fallback the block goes back to its "checked-in green"
+  // palette right after refresh, which is what you saw with Sarah/Joney/Danny.
   const awaitingPaymentApptIds = useMemo(() => {
     const ids = new Set<string>();
+    const norm = (v: string | undefined) =>
+      (v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    // 1) Direct id link — covers the same-session case before refresh.
     for (const c of state.completed) {
       if (c.voided) continue;
       if (c.originalAppointmentId) ids.add(c.originalAppointmentId);
     }
+    // 2) Refresh-safe fallback: name-match today's completed entries to today's
+    //    appts. Only count an appt as awaiting payment if it isn't already
+    //    'completed' (ticket closed) and the client doesn't have a live queue
+    //    entry (which would render in-service / waiting-Q instead).
+    const completedNamesToday = new Set<string>();
+    for (const c of state.completed) {
+      if (c.voided) continue;
+      const k = norm(c.clientName);
+      if (k) completedNamesToday.add(k);
+    }
+    for (const a of state.appointments) {
+      if (a.date !== selectedDate) continue;
+      if (a.status === 'completed' || a.status === 'cancelled' || a.status === 'no-show') continue;
+      const k = norm(a.clientName);
+      if (k && completedNamesToday.has(k)) ids.add(a.id);
+    }
     return ids;
-  }, [state.completed]);
+  }, [state.completed, state.appointments, selectedDate]);
   const dayAppts = state.appointments.filter(
     (a) =>
       a.date === selectedDate &&
