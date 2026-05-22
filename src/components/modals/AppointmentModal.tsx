@@ -750,6 +750,14 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       };
       dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
       void (async () => {
+        // Only persist a Blueprint customer profile when the receptionist
+        // entered first name, last name, AND phone. Half-filled intakes
+        // (walk-ins typed in a hurry, single-name jot-downs) were creating
+        // junk rows in the customers table; we now drop those silently.
+        const _first = (clientFirstName ?? '').trim();
+        const _last = (clientLastName ?? '').trim();
+        const _phone = (clientPhone ?? '').trim();
+        if (!_first || !_last || !_phone) return;
         const cid = await upsertCustomerFromIntake({
           firstName: clientFirstName,
           lastName: clientLastName,
