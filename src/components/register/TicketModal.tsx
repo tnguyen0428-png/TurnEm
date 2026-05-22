@@ -1070,15 +1070,15 @@ export default function TicketModal({
           // mismatch), still credit the turn so the cashier doesn't lose
           // the count.
         }
-        const { data: mRow } = await supabase
-          .from('manicurists')
-          .select('total_turns')
-          .eq('id', l.staff1Id)
-          .maybeSingle();
-        const current = Number((mRow as { total_turns?: number } | null)?.total_turns ?? 0);
+        // Write the EXACT post-dispatch value, not (current + turnValue).
+        // syncManicurists may have already uploaded localCurrentTurns + turnValue
+        // by the time this runs, so re-fetching and adding turnValue again
+        // double-credits. The dispatch above and this write must converge on
+        // the same value: localCurrentTurns + turnValue. Idempotent if
+        // syncManicurists fires in between.
         await supabase
           .from('manicurists')
-          .update({ total_turns: current + turnValue })
+          .update({ total_turns: localCurrentTurns + turnValue })
           .eq('id', l.staff1Id);
       })();
     }
