@@ -940,7 +940,14 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
   function renderColumn(m: Manicurist | null) {
     const mId    = m ? m.id : null;
-    const blocks = getServiceBlocks(mId);
+    const rawBlocks = getServiceBlocks(mId);
+    // Sort blocks by top ascending so when two blocks in the same column overlap
+    // in time, the earlier-starting block renders FIRST (lower DOM order) and the
+    // later block stacks on top. The earlier block's name strip (its top portion)
+    // remains visible above the overlap line — e.g. Sam's two near-same-time appts.
+    // Tie-break by height descending so a longer block sits behind a shorter one
+    // that starts at the same minute.
+    const blocks = [...rawBlocks].sort((a, b) => a.top - b.top || b.height - a.height);
     return (
       <div key={mId ?? 'any'} className="flex-shrink-0 relative border-r border-gray-200"
         style={{ width: colWidth, height: TOTAL_H }}
@@ -1011,14 +1018,15 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           const isInService  = !isCheckedOut && linkedQ?.status === 'inProgress';
           const isWaitingQ   = !isCheckedOut && !isInService && !!linkedQ; // in queue, not yet started
           const isCheckedIn  = !isCheckedOut && !isInService && !isWaitingQ && appt.status === 'checked-in';
-          // Color progression: scheduled → light-gray (waiting Q) → gray (in service) → black (checked out)
-          const bg     = isCheckedOut ? '#1f2937'
-                       : isInService   ? '#d1d5db'
+          // Color progression: scheduled → light-gray (waiting Q) → light-gray (in service) → dark-gray (checked out)
+          // Note: in-service softened from #d1d5db → #e5e7eb, checked-out from #1f2937 → #4b5563 per user request.
+          const bg     = isCheckedOut ? '#4b5563'
+                       : isInService   ? '#e5e7eb'
                        : isWaitingQ    ? '#f3f4f6'
                        : isCheckedIn   ? '#d1fae5'
                        : palette.bg;
-          const border = isCheckedOut ? '#111827'
-                       : isInService   ? '#6b7280'
+          const border = isCheckedOut ? '#1f2937'
+                       : isInService   ? '#9ca3af'
                        : isWaitingQ    ? '#9ca3af'
                        : isCheckedIn   ? '#10b981'
                        : palette.border;
@@ -1027,16 +1035,17 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                           : isWaitingQ    ? '#6b7280'
                           : '#111827';
           const subTextColor = isCheckedOut ? '#e5e7eb'
-                             : isInService   ? '#4b5563'
+                             : isInService   ? '#6b7280'
                              : isWaitingQ    ? '#9ca3af'
                              : '#6b7280';
           const pl = isFirst ? '14px' : '4px';
 
           // Locked = no drag/move allowed. Requested appts must be modified via the edit
           // modal so accidental hand-drags can't shift a client-requested time/staff.
-          // Once the appt is checked-out, in-service, or queued, dragging would corrupt
-          // the linked queue entry's snapshot — so lock it.
-          const isLocked = isCheckedOut || isInService || isWaitingQ || hasRequest;
+          // Per user request: only checked-out is locked among the lifecycle states —
+          // waiting-Q and in-service blocks remain draggable. (Trade-off: a drag while
+          // queued can desync the queue entry's snapshot; user accepts.)
+          const isLocked = isCheckedOut || hasRequest;
           // Treat the old "isCompleted" semantics (muted look, no action buttons) as
           // "checked out OR currently in a queue lifecycle". Hover action row stays
           // hidden in those states.
