@@ -1801,25 +1801,52 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
 
       // 3. INSERT each new line (no id). These are catalog adds or
       //    add-line flows in the modal.
-      const insertRows = newItems.map((it, idx) => ({
-        ticket_id: input.ticketId,
-        kind: it.kind,
-        name: it.name,
-        service_id: it.serviceId,
-        staff1_id: it.staff1Id,
-        staff1_name: it.staff1Name,
-        staff1_color: it.staff1Color,
-        staff2_id: it.staff2Id,
-        staff2_name: it.staff2Name,
-        staff2_color: it.staff2Color,
-        unit_price_cents: it.unitPriceCents,
-        quantity: it.quantity,
-        discount_cents: it.discountCents,
-        ext_price_cents: computeLineExt(it),
-        // Sort new lines to the end of the existing/edited block.
-        sort_order: input.items.length + idx,
-        queue_entry_id: disambiguated.get(it) ?? null,
-      }));
+      //
+      // Defense-in-depth: drop any row whose disambiguated queue_entry_id
+      // contains `-add-`. The cashier's add-line flow constructs a
+      // synthetic queue entry id of `${visit}-add-${staff}` to flip the
+      // manicurist card to BUSY (see TicketModal.ensureManicuristBusyForAddedLine),
+      // and that id must NEVER land on a ticket_item — TicketModal owns
+      // the ticket_items lifecycle for those lines via the bare
+      // ticket.queueEntryId fallback in buildItemsForSave (line 611).
+      // Parallels the appendItemsToTicket filter at the top of that
+      // function and the syncEntryToTicket early-return for
+      // `entry.id.includes('-add-')`. The same predicate is also enforced
+      // by the BEFORE INSERT trigger
+      // `silently_skip_ticket_items_with_add_child_qid` (migration
+      // 20260522080000) — this client-side filter just avoids the
+      // pointless round-trip.
+      const insertRows = newItems
+        .map((it, idx) => ({
+          ticket_id: input.ticketId,
+          kind: it.kind,
+          name: it.name,
+          service_id: it.serviceId,
+          staff1_id: it.staff1Id,
+          staff1_name: it.staff1Name,
+          staff1_color: it.staff1Color,
+          staff2_id: it.staff2Id,
+          staff2_name: it.staff2Name,
+          staff2_color: it.staff2Color,
+          unit_price_cents: it.unitPriceCents,
+          quantity: it.quantity,
+          discount_cents: it.discountCents,
+          ext_price_cents: computeLineExt(it),
+          // Sort new lines to the end of the existing/edited block.
+          sort_order: input.items.length + idx,
+          queue_entry_id: disambiguated.get(it) ?? null,
+        }))
+        .filter((row) => {
+          if (row.queue_entry_id && row.queue_entry_id.includes('-add-')) {
+            console.warn(
+              '[tickets] updateOpenTicket: dropping insert with add-child qid',
+              row.queue_entry_id,
+              row.name,
+            );
+            return false;
+          }
+          return true;
+        });
       if (insertRows.length > 0) {
         const { error: iErr } = await supabase.from('ticket_items').insert(insertRows);
         if (iErr) { console.error('[tickets] updateOpenTicket insert new items:', iErr.message); return null; }
