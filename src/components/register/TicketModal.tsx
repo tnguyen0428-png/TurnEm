@@ -917,6 +917,143 @@ export default function TicketModal({
       }
     }
 
+    // Staff-change sync: when an existing line's staff1Id changes (cashier
+    // swaps Kayla → Z-TEST 1 on a Gel Pedicure), mirror the swap onto the
+    // queue side so:
+    //   1. The OLD staff's queue card stops showing the service (the service
+    //      is removed from her queue_entry's services array; if that empties
+    //      her services, her queue_entry is deleted entirely).
+    //   2. The NEW staff's queue card shows the service (added to her existing
+    //      queue_entry on this visit, or a synthetic add-child is created if
+    //      she didn't have one).
+    //
+    // Without this block, ticket_items.staff1_id updates via updateOpenTicket
+    // but queue_entries stays stale — symptom: ticket #15 swapped Kayla → Z-TEST 1
+    // on a Gel Pedicure line, the cashier saw the name flip in the modal, but
+    // Kayla's manicurist card kept showing the work and Z-TEST 1's didn't
+    // pick it up. Turns also didn't move because reallocateTurnsForStaffChanges
+    // only repoints completed_services rows; with no DONE pressed yet there's
+    // no row to repoint, so turn credit was stuck on Kayla.
+    {
+      const visitId = ticket.queueEntryId;
+      if (visitId) {
+        for (const l of lines) {
+          if (l.kind !== 'service' || !l.existingId) continue;
+          const orig = originalStaffByItemId.get(l.existingId);
+          if (!orig) continue;
+          if (orig.staff1Id === l.staff1Id) continue;          // staff unchanged
+          const svcName = (l.name ?? orig.name ?? '').trim();
+          if (!svcName) continue;
+
+          // 1. Strip the service from the OLD staff's queue_entry.
+          if (orig.staff1Id) {
+            const oldEntry = state.queue.find(
+              (q) =>
+                getVisitId(q.parentQueueId ?? q.id) === visitId &&
+                q.assignedManicuristId === orig.staff1Id,
+            );
+            if (oldEntry) {
+              const idx = oldEntry.services.indexOf(svcName as ServiceType);
+              if (idx !== -1) {
+                const remaining = [...oldEntry.services];
+                remaining.splice(idx, 1);
+                if (remaining.length === 0) {
+                  // Old staff had this as her only service on this visit —
+                  // delete the queue_entry and free her card.
+                  const credit = Number(oldEntry.turnValue) || 0;
+                  if (credit > 0 && oldEntry.assignedManicuristId) {
+                    const m = state.manicurists.find((mm) => mm.id === oldEntry.assignedManicuristId);
+                    if (m) {
+                      dispatch({
+                        type: 'UPDATE_MANICURIST',
+                        id: m.id,
+                        updates: {
+                          totalTurns: Math.max(0, (m.totalTurns || 0) - credit),
+                          status: m.currentClient === oldEntry.id ? 'available' : m.status,
+                          currentClient: m.currentClient === oldEntry.id ? null : m.currentClient,
+                        },
+                      });
+                    }
+                  }
+                  dispatch({ type: 'REMOVE_CLIENT', id: oldEntry.id });
+                } else {
+                  const newTurnValue = remaining.reduce((sum, sv) => {
+                    const cat = state.salonServices.find((s) => s.name === sv);
+                    return sum + Number(cat?.turnValue ?? 0);
+                  }, 0);
+                  dispatch({
+                    type: 'UPDATE_CLIENT',
+                    id: oldEntry.id,
+                    updates: { services: remaining, turnValue: newTurnValue },
+                  });
+                }
+              }
+            }
+          }
+
+          // 2. Add the service to the NEW staff's queue_entry, or create one.
+          if (l.staff1Id) {
+            const newEntry = state.queue.find(
+              (q) =>
+                getVisitId(q.parentQueueId ?? q.id) === visitId &&
+                q.assignedManicuristId === l.staff1Id,
+            );
+            if (newEntry) {
+              if (!newEntry.services.includes(svcName as ServiceType)) {
+                const next = [...newEntry.services, svcName as ServiceType];
+                const newTurnValue = next.reduce((sum, sv) => {
+                  const cat = state.salonServices.find((s) => s.name === sv);
+                  return sum + Number(cat?.turnValue ?? 0);
+                }, 0);
+                dispatch({
+                  type: 'UPDATE_CLIENT',
+                  id: newEntry.id,
+                  updates: { services: next as ServiceType[], turnValue: newTurnValue },
+                });
+              }
+              // Flip the new staff's card to busy + point at this entry.
+              dispatch({
+                type: 'UPDATE_MANICURIST',
+                id: l.staff1Id,
+                updates: { status: 'busy', currentClient: newEntry.id },
+              });
+            } else {
+              // No existing queue entry for new staff — create an add-child.
+              const addChildId = `${visitId}-add-${l.staff1Id}`;
+              const cat = state.salonServices.find((s) => s.name === svcName);
+              const turnValueForSvc = Number(cat?.turnValue ?? 0);
+              const now = Date.now();
+              dispatch({
+                type: 'ADD_CLIENT',
+                client: {
+                  id: addChildId,
+                  parentQueueId: visitId,
+                  clientName: clientName || ticket.clientName || 'Walk-in',
+                  services: [svcName as ServiceType],
+                  turnValue: turnValueForSvc,
+                  serviceRequests: [],
+                  requestedManicuristId: null,
+                  isRequested: false,
+                  isAppointment: false,
+                  assignedManicuristId: l.staff1Id,
+                  status: 'inProgress',
+                  arrivedAt: now,
+                  startedAt: now,
+                  completedAt: null,
+                  extraTimeMs: 0,
+                },
+              });
+              dispatch({
+                type: 'UPDATE_MANICURIST',
+                id: l.staff1Id,
+                updates: { status: 'busy', currentClient: addChildId },
+              });
+            }
+          }
+        }
+      }
+    }
+
     // Service-edit sync: reconcile each touched visit's completed_services row
     // against the FINAL line state in the ticket. This is intentionally a
     // reconciliation pass (rebuild from current lines) rather than a diff
