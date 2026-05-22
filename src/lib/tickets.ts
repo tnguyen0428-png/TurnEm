@@ -2106,10 +2106,15 @@ export async function voidTicket(
   }
   if (!tRow) return false;
   const visitId = (tRow as { queue_entry_id: string | null }).queue_entry_id;
-  const alreadyVoided = (tRow as { status: string }).status !== 'open';
+  const currentStatus = (tRow as { status: string }).status;
+  const alreadyVoided = currentStatus === 'voided';
 
   // Mark voided first so concurrent flows (queue sync, trigger fires)
-  // see status='voided' and bail before adding any new lines.
+  // see status='voided' and bail before adding any new lines. We now accept
+  // BOTH 'open' and 'closed' as valid source states — the cashier may need
+  // to void after a payment has already been processed (per user request
+  // 2026-05-22). The completed_services rollback below runs unconditionally
+  // so turns are credited back either way.
   if (!alreadyVoided) {
     const { error } = await supabase
       .from('tickets')
@@ -2121,7 +2126,7 @@ export async function voidTicket(
         voided_by_receptionist_id: receptionistId ?? null,
       })
       .eq('id', ticketId)
-      .eq('status', 'open');
+      .in('status', ['open', 'closed']);
     if (error) {
       console.error('[tickets] voidTicket:', error.message);
       return false;

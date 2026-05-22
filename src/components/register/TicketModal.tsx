@@ -2086,6 +2086,14 @@ canEdit && (
                   className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50">
                   {busy === 'saving' ? 'SAVING…' : 'SAVE'}
                 </button>
+                {/* VOID on a closed ticket — same PIN-gated flow as VOID on an
+                    open ticket. voidTicket() now accepts a 'closed' source
+                    state so the status flip + completed_services rollback both
+                    run. Per user request 2026-05-22. */}
+                <button onClick={handleVoid} disabled={busy !== 'idle'}
+                  className="px-3 py-1.5 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 font-mono text-xs font-bold disabled:opacity-50">
+                  {busy === 'voiding' ? 'VOIDING…' : 'VOID'}
+                </button>
                 <button onClick={onClose}
                   className="px-3 py-1.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-xs font-bold">
                   CANCEL
