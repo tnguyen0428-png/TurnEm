@@ -490,13 +490,19 @@ export default function TicketModal({
   function addCatalogService(svcId: string) {
     const svc = sortedServices.find((s) => s.id === svcId);
     if (!svc) return;
-    const m = manicuristById(primaryManicuristId);
+    // Do NOT default the staff to the ticket's primary. The cashier must
+    // explicitly pick a staff via the dropdown so ensureManicuristBusyForAddedLine
+    // only runs for the intended manicurist. Previously, defaulting to the
+    // primary staff appended the new service to that primary's queue entry
+    // immediately, which caused a phantom ticket_item to be inserted by
+    // updateOpenTicket when the cashier later changed the dropdown to a
+    // different staff (the modal's `lines` state held a stale draft).
     const newLine: DraftLine = {
       serviceId: svc.id,
       name: svc.name,
-      staff1Id: m?.id ?? null,
-      staff1Name: m?.name ?? '',
-      staff1Color: m?.color ?? '#9ca3af',
+      staff1Id: null,
+      staff1Name: '',
+      staff1Color: '#9ca3af',
       staff2Id: null,
       staff2Name: '',
       staff2Color: '#9ca3af',
@@ -506,7 +512,7 @@ export default function TicketModal({
       kind: 'service',
     };
     setLines((prev) => [...prev, newLine]);
-    ensureManicuristBusyForAddedLine(newLine);
+    // No ensureManicuristBusyForAddedLine here — staff is null at this point.
   }
 
   function addBlankCustomLine() {
