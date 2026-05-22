@@ -251,12 +251,16 @@ function HistoryTable({ entries, onEdit }: HistoryTableProps) {
     if (manicuristFilter !== 'all') {
       list = list.filter((c) => c.manicuristName === manicuristFilter);
     }
+    // In-progress entries have completedAt = null; fall back to startedAt so
+    // they sort sensibly alongside finished work (with the in-progress entry
+    // appearing as if "completed now" within the manicurist's section).
+    const ts = (c: CompletedEntry) => c.completedAt ?? c.startedAt ?? 0;
     if (sortMode === 'time') {
-      list.sort((a, b) => b.completedAt - a.completedAt);
+      list.sort((a, b) => ts(b) - ts(a));
     } else if (sortMode === 'client') {
       list.sort((a, b) => a.clientName.localeCompare(b.clientName));
     } else {
-      list.sort((a, b) => a.manicuristName.localeCompare(b.manicuristName) || b.completedAt - a.completedAt);
+      list.sort((a, b) => a.manicuristName.localeCompare(b.manicuristName) || ts(b) - ts(a));
     }
     return list;
   }, [entries, sortMode, manicuristFilter]);

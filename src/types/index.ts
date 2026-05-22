@@ -87,7 +87,11 @@ export interface CompletedEntry {
   manicuristName: string;
   manicuristColor: string;
   startedAt: number;
-  completedAt: number;
+  /** Null while work is in progress (manicurist assigned but DONE not pressed yet, OR
+   *  an open-ticket assignment where the cashier hasn't closed the modal). Set to
+   *  the completion timestamp once COMPLETE_SERVICE fires. Sort comparators MUST
+   *  guard against null. */
+  completedAt: number | null;
   requestedServices?: ServiceType[];
   isAppointment?: boolean;
   isRequested?: boolean;

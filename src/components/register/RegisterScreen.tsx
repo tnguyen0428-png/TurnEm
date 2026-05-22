@@ -113,9 +113,12 @@ export default function RegisterScreen() {
   }, [refresh]);
 
   useEffect(() => {
-    const completedForDate = state.completed.filter(
-      (c) => getLocalDateStr(new Date(c.completedAt)) === dateLA,
-    );
+    // In-progress entries have completedAt = null; fall back to startedAt
+    // so today's in-progress work still shows in today's register view.
+    const completedForDate = state.completed.filter((c) => {
+      const ts = c.completedAt ?? c.startedAt;
+      return ts ? getLocalDateStr(new Date(ts)) === dateLA : false;
+    });
     if (completedForDate.length === 0) return;
 
     let cancelled = false;

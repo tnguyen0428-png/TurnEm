@@ -163,7 +163,11 @@ function mapDbCompleted(row: Record<string, unknown>): CompletedEntry {
     manicuristName: row.manicurist_name as string,
     manicuristColor: row.manicurist_color as string,
     startedAt: new Date(row.started_at as string).getTime(),
-    completedAt: new Date(row.completed_at as string).getTime(),
+    // completed_at is nullable in the DB (in-progress rows from the
+    // queue_entries trigger have completed_at = NULL). Guard against
+    // calling new Date(null), which yields NaN and breaks
+    // syncCompleted's diff comparison + re-upload.
+    completedAt: row.completed_at ? new Date(row.completed_at as string).getTime() : null,
     requestedServices: rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined,
     isAppointment: (row.is_appointment as boolean) || false,
     isRequested: (row.is_requested as boolean) || false,
@@ -520,7 +524,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         manicuristName: row.manicurist_name as string,
         manicuristColor: row.manicurist_color as string,
         startedAt: new Date(row.started_at as string).getTime(),
-        completedAt: new Date(row.completed_at as string).getTime(),
+        // Null when work is still in progress (queue_entries trigger).
+        completedAt: row.completed_at ? new Date(row.completed_at as string).getTime() : null,
         requestedServices: isBadPattern ? undefined : (rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined),
         isAppointment: (row.is_appointment as boolean) || false,
         isRequested: (row.is_requested as boolean) || false,
@@ -618,7 +623,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (lastArchiveDate && lastArchiveDate < today) {
       console.log('[startup] missed reset detected â system_state.last_archive_date=', lastArchiveDate, 'today=', today);
     }
-    const staleCompleted = completed.filter(c => getLocalDateStr(new Date(c.completedAt)) < today);
+    // In-progress entries (completedAt = null) fall back to startedAt for
+    // staleness checks. If even startedAt is missing, treat as today (don't
+    // archive — let the trigger or manicurist DONE press fill it in).
+    const staleCompleted = completed.filter(c => {
+      const ts = c.completedAt ?? c.startedAt;
+      return ts ? getLocalDateStr(new Date(ts)) < today : false;
+    });
     const staleQueue = queue.filter(c => getLocalDateStr(new Date(c.arrivedAt)) < today);
 
     if (staleCompleted.length > 0 || staleQueue.length > 0) {
@@ -655,9 +666,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         console.error('[startup] fetch stale completed_services threw:', err);
       }
 
-      // Archive stale completed entries grouped by date, update in-memory state too
+      // Archive stale completed entries grouped by date, update in-memory state too.
+      // In-progress entries (completedAt = null) shouldn't be archived — they're
+      // ongoing work. Skip them; they'll be archived after DONE is pressed and
+      // a real completed_at is set.
       const byDate = new Map<string, CompletedEntry[]>();
       for (const c of dbCompletedById.values()) {
+        if (c.completedAt == null) continue;
         const d = getLocalDateStr(new Date(c.completedAt));
         if (!byDate.has(d)) byDate.set(d, []);
         byDate.get(d)!.push(c);
@@ -1681,7 +1696,10 @@ async function syncCompleted(
       manicurist_name: c.manicuristName,
       manicurist_color: c.manicuristColor,
       started_at: new Date(c.startedAt).toISOString(),
-      completed_at: new Date(c.completedAt).toISOString(),
+      // Null = work still in progress (queue_entries trigger created this row
+      // when the manicurist was assigned). Sending new Date(null) would
+      // serialize as the epoch and break the in-progress invariant.
+      completed_at: c.completedAt === null ? null : new Date(c.completedAt).toISOString(),
       requested_services: c.requestedServices ?? [],
       is_appointment: !!c.isAppointment,
       is_requested: !!c.isRequested,
@@ -1747,8 +1765,10 @@ async function syncCompleted(
             inFlightAutoCreates.add(visitId);
             try {
               // No ticket yet. Either consolidate onto the same client's
-              // open ticket or create a new one.
-              const businessDate = getLocalDateStr(new Date(c.completedAt));
+              // open ticket or create a new one. For in-progress rows
+              // (completedAt = null), fall back to startedAt so the business
+              // date still resolves to today.
+              const businessDate = getLocalDateStr(new Date(c.completedAt ?? c.startedAt ?? Date.now()));
               const sameClient = await findOpenTicketForClient(c.clientName, '', businessDate);
               if (sameClient) {
                 await appendItemsToTicket(sameClient.id, items, { allowDuplicates: true });

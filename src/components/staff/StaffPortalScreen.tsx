@@ -54,7 +54,8 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       .then(({ data }) => {
         const entries: CompletedEntry[] = (data?.entries || [])
           .filter((e: CompletedEntry) => e.manicuristId === initialManicurist.id)
-          .sort((a: CompletedEntry, b: CompletedEntry) => b.completedAt - a.completedAt);
+          .sort((a: CompletedEntry, b: CompletedEntry) =>
+            (b.completedAt ?? b.startedAt ?? 0) - (a.completedAt ?? a.startedAt ?? 0));
         setHistoryEntries(entries);
         setHistoryLoading(false);
       });
@@ -343,9 +344,16 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   // say, 11 PM still stay on the list through closing and the early morning,
   // and don't disappear at midnight.
   const completedToday = useMemo(() => {
+    // In-progress entries (completedAt = null) fall back to startedAt for
+    // the business-day check so they appear in today's list while the
+    // manicurist is still working on them.
     return state.completed
-      .filter((e) => e.manicuristId === manicurist.id && getBusinessDayLA(new Date(e.completedAt)) === todayStr)
-      .sort((a, b) => b.completedAt - a.completedAt);
+      .filter((e) => {
+        if (e.manicuristId !== manicurist.id) return false;
+        const ts = e.completedAt ?? e.startedAt;
+        return ts ? getBusinessDayLA(new Date(ts)) === todayStr : false;
+      })
+      .sort((a, b) => (b.completedAt ?? b.startedAt ?? 0) - (a.completedAt ?? a.startedAt ?? 0));
   }, [state.completed, manicurist.id, todayStr]);
   // The queue entry this manicurist is currently working on (if any).
   // Renders as a prominent emerald banner above the Services list. The
@@ -964,10 +972,16 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                           <span className="font-mono text-[10px] text-gray-600 font-semibold">
                             {entry.turnValue} turns
                           </span>
-                          <span className="flex items-center gap-1 font-mono text-[10px] text-gray-500 font-semibold">
-                            <Clock size={9} />
-                            {formatTime(entry.completedAt)}
-                          </span>
+                          {entry.completedAt == null ? (
+                            <span className="font-mono text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-300 rounded px-1.5 py-0.5 leading-none uppercase tracking-wider">
+                              In Progress
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 font-mono text-[10px] text-gray-500 font-semibold">
+                              <Clock size={9} />
+                              {formatTime(entry.completedAt)}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex-shrink-0 text-right">
