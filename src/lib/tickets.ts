@@ -1003,7 +1003,17 @@ export async function appendItemsToTicket(
   }>,
   options: { allowDuplicates?: boolean } = {},
 ): Promise<Ticket | null> {
-  if (items.length === 0) return fetchTicket(ticketId);
+  // Skip cashier-created add-children. TicketModal.updateOpenTicket owns
+  // their ticket_items lifecycle. Without this filter, the AppContext
+  // syncQueue (justAssigned + sibling-reconcile) paths race with the
+  // cashier's save and insert a duplicate line for the same (visit,
+  // staff, service). Parallels the DB trigger fix in migration
+  // 20260522050000_ticket_trigger_skip_add_children.
+  const filteredAddChildren = items.filter(
+    (it) => !it.queueEntryId || !it.queueEntryId.includes('-add-'),
+  );
+  if (filteredAddChildren.length === 0) return fetchTicket(ticketId);
+  items = filteredAddChildren;
 
   // Pull the existing ticket + its current items so we can de-dupe and
   // know the next sort_order to assign. auto_attributed_sources carries
@@ -1265,6 +1275,13 @@ export async function syncEntryToTicket(
   manicurists: Array<{ id: string; name: string; color: string }>,
   salonServices: Array<{ id: string; name: string; price: number }>,
 ): Promise<boolean> {
+  // Skip cashier-created add-children. TicketModal owns their lifecycle —
+  // without this guard, the broad syncEntryToTicket pass in
+  // AppContext.syncQueue recreates ticket_items that the cashier removed
+  // via the modal. Parallels the DB trigger fix in migration
+  // 20260522050000_ticket_trigger_skip_add_children.
+  if (entry.id.includes('-add-')) return false;
+
   if (!entry.assignedManicuristId) return false;
 
   // Normalize via getVisitId so deeper sibling entries (whose
