@@ -28,7 +28,7 @@ export default function TabBar() {
               src="/Turn_Em_Logo.png"
               alt="Turn Em"
               className="h-24 w-auto sm:h-44 origin-left"
-              style={{ transform: 'scale(1.5)' }}
+              style={{ transform: 'scale(1.9)' }}
             />
           </div>
           <div className="flex items-center gap-0.5 overflow-x-auto hide-scrollbar">

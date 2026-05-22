@@ -427,6 +427,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     return head || 'Walk-in';
   }
 
+  // First name + last-initial: privacy-safe form used inside the YOUR TURN
+  // alert. "John Smith" → "John S.", "John" → "John", "" → "Walk-in".
+  function firstNameLastInitial(name: string): string {
+    const trimmed = (name ?? '').trim();
+    if (!trimmed) return 'Walk-in';
+    const parts = trimmed.split(/\s+/);
+    if (parts.length === 1) return parts[0];
+    const initial = (parts[parts.length - 1][0] ?? '').toUpperCase();
+    return initial ? `${parts[0]} ${initial}.` : parts[0];
+  }
+
   // Queue position: rank among clocked-in available manicurists by turn count
   const queuePosition = useMemo(() => {
     if (!manicurist.clockedIn) return null;
@@ -556,16 +567,36 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     }
   }, [soundEnabled]);
 
+  // Second-alert timer. When the manicurist gets assigned (or becomes next),
+  // we fire the alert + sound immediately AND schedule a repeat 15s later so
+  // the manicurist can't miss it. Holding the timer in a ref lets us cancel
+  // if state changes (e.g. they start the service) before it fires.
+  const secondAlertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function cancelSecondAlert() {
+    if (secondAlertTimerRef.current) {
+      clearTimeout(secondAlertTimerRef.current);
+      secondAlertTimerRef.current = null;
+    }
+  }
+
   // Detect assignment (status changed to busy)
   useEffect(() => {
     if (prevStatusRef.current !== 'busy' && manicurist.status === 'busy' && manicurist.currentClient) {
       const client = state.queue.find((c) => c.id === manicurist.currentClient);
-      setAlert({
-        type: 'assigned',
-        clientName: client?.clientName || 'Client',
-        services: client?.services || [],
-      });
+      const safeName = firstNameLastInitial(client?.clientName || 'Client');
+      const services = client?.services || [];
+      const assignedClientId = manicurist.currentClient;
+      setAlert({ type: 'assigned', clientName: safeName, services });
       playAssignedSound();
+      // Repeat alert 15s later — only if this same client is still assigned.
+      cancelSecondAlert();
+      secondAlertTimerRef.current = setTimeout(() => {
+        if (manicurist.status === 'busy' && manicurist.currentClient === assignedClientId) {
+          setAlert({ type: 'assigned', clientName: safeName, services });
+          playAssignedSound();
+        }
+        secondAlertTimerRef.current = null;
+      }, 15000);
     }
     prevStatusRef.current = manicurist.status;
   }, [manicurist.status, manicurist.currentClient, state.queue, playAssignedSound]);
@@ -575,9 +606,23 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     if (prevQueuePosRef.current !== 1 && queuePosition === 1) {
       setAlert({ type: 'nextup' });
       playNextUpSound();
+      // Repeat 15s later — only if they're still next-up.
+      cancelSecondAlert();
+      secondAlertTimerRef.current = setTimeout(() => {
+        if (queuePosition === 1) {
+          setAlert({ type: 'nextup' });
+          playNextUpSound();
+        }
+        secondAlertTimerRef.current = null;
+      }, 15000);
     }
     prevQueuePosRef.current = queuePosition;
   }, [queuePosition, playNextUpSound]);
+
+  // Clean up the pending second-alert timer on unmount.
+  useEffect(() => {
+    return () => cancelSecondAlert();
+  }, []);
 
   // Auto-dismiss alert after 30 seconds
   useEffect(() => {
@@ -673,7 +718,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           <img
             src="/Turn_Em_Logo.jpg"
             alt="TurnEM Logo"
-            className="h-40 w-auto object-contain"
+            className="h-56 w-auto object-contain"
           />
         </div>
         <div className="max-w-lg mx-auto px-4 pb-3 flex items-center justify-between">
