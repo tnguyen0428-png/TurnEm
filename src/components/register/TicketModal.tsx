@@ -1018,7 +1018,15 @@ export default function TicketModal({
                 updates: { status: 'busy', currentClient: newEntry.id },
               });
             } else {
-              // No existing queue entry for new staff — create an add-child.
+              // No existing queue entry for new staff — create an add-child
+              // AND explicitly credit the turn. ADD_CLIENT doesn't touch
+              // totalTurns (turn credits normally come from COMPLETE_SERVICE
+              // or the cashier-add-line credit block at checkout), so without
+              // this UPDATE_MANICURIST the swap leaves the new staff missing
+              // her credit even though the old staff lost hers. Symptom:
+              // ticket #15 swap moved Gel Pedicure to Z-TEST 3 but only the
+              // dropdown text changed — old staff's turns went down, Z-TEST 3's
+              // didn't go up.
               const addChildId = `${visitId}-add-${l.staff1Id}`;
               const cat = state.salonServices.find((s) => s.name === svcName);
               const turnValueForSvc = Number(cat?.turnValue ?? 0);
@@ -1043,11 +1051,18 @@ export default function TicketModal({
                   extraTimeMs: 0,
                 },
               });
-              dispatch({
-                type: 'UPDATE_MANICURIST',
-                id: l.staff1Id,
-                updates: { status: 'busy', currentClient: addChildId },
-              });
+              const newStaff = state.manicurists.find((m) => m.id === l.staff1Id);
+              if (newStaff) {
+                dispatch({
+                  type: 'UPDATE_MANICURIST',
+                  id: l.staff1Id,
+                  updates: {
+                    status: 'busy',
+                    currentClient: addChildId,
+                    totalTurns: Math.max(0, (newStaff.totalTurns || 0) + turnValueForSvc),
+                  },
+                });
+              }
             }
           }
         }
@@ -2315,6 +2330,15 @@ function CustomerHistoryModal({
                   <span className={`font-mono text-[10px] tracking-wider font-bold uppercase text-right ${
                     r.status === 'closed' ? 'text-gray-600' : r.status === 'voided' ? 'text-amber-600' : 'text-emerald-600'
                   }`}>{r.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
                 </div>
               ))}
             </div>
