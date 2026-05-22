@@ -1,0 +1,21 @@
+-- Stop History-modal edits to completed_services from auto-inserting ticket_items
+-- lines on already-closed tickets. The INSERT trigger still runs on initial
+-- completion so first-time ticket creation works as before — only post-hoc
+-- edits via EditCompletedModal now stay scoped to History without
+-- ghost-writing into the ticket.
+--
+-- Symptom we just hit (2026-05-21):
+--   - Ticket #15 (Elena): phantom "Gel Fill / TAMMY" line appeared after the
+--     ticket was closed. The History edit added "Gel Fill" to Tammy's
+--     completed_services row, which fired the UPDATE trigger →
+--     tickets_ensure_for_visit → INSERT new ticket_item.
+--   - Ticket #9 (Anette): same pattern — phantom "Gel Full Set / TOMMY".
+--   - Kelly's "Erica" row: services array gained a duplicate "Gel Pedicure"
+--     via a History edit, padding turn_value.
+--
+-- All three had completed_services.edited = true, which proves the entrypoint.
+--
+-- Cashier-side ticket edits should be done via TicketModal directly. History
+-- edits via EditCompletedModal will continue to update the History view + the
+-- manicurist's turn totals, but will NO LONGER cascade into ticket_items.
+DROP TRIGGER IF EXISTS trg_tickets_on_completed_update ON public.completed_services;
