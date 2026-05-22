@@ -1972,6 +1972,112 @@ export async function closeTicket(input: CloseTicketInput): Promise<Ticket | nul
   return fetchTicket(input.ticketId);
 }
 
+/**
+ * Defensive reconcile: ensure the ticket has a `service` line for every
+ * service in every (non-voided) completed_services row tied to this visit.
+ *
+ * Why: syncEntryToTicket can transiently see a shorter `entry.services` array
+ * during a SPLIT_AND_ASSIGN race or a sibling reconcile, and its delete branch
+ * removes the "extra" ticket_items line. Later the completed_services row
+ * lands with the full services list, but ticket_items stays short — the
+ * cashier ends up undercharging the client. This helper diffs the two and
+ * fills in any missing service line so the ticket can't drift below what was
+ * actually performed.
+ *
+ * Safe to call multiple times — it skips entries already represented on the
+ * ticket (matched on a service-name + staff multiset).
+ */
+export async function reconcileTicketItemsFromCompleted(
+  ticketId: string,
+  visitId: string | null,
+  salonServices: Array<{ name: string; price: number; id: string }>,
+): Promise<{ added: number; ticket: Ticket | null } | null> {
+  if (!visitId) return { added: 0 };
+
+  // Pull all completed_services rows for this visit (parent + split children).
+  // Visit id is the canonical key; children use `${visitId}-${staffId}` and may
+  // also carry a per-service suffix like `${visitId}-mani-3#svc1`.
+  const { data: cRows, error: cErr } = await supabase
+    .from('completed_services')
+    .select('id, services, manicurist_id, manicurist_name, manicurist_color, voided')
+    .or(`id.eq.${visitId},id.like.${visitId}-%`);
+  if (cErr) {
+    console.warn('[tickets] reconcile completed fetch:', cErr.message);
+    return null;
+  }
+  const completed = (cRows ?? [])
+    .filter((r) => !(r as { voided: boolean }).voided) as Array<{
+      id: string;
+      services: string[];
+      manicurist_id: string | null;
+      manicurist_name: string | null;
+      manicurist_color: string | null;
+    }>;
+
+  // Pull current ticket service lines.
+  const { data: iRows, error: iErr } = await supabase
+    .from('ticket_items')
+    .select('id, name, kind, staff1_id, quantity')
+    .eq('ticket_id', ticketId);
+  if (iErr) {
+    console.warn('[tickets] reconcile items fetch:', iErr.message);
+    return null;
+  }
+  const serviceLines = (iRows ?? []).filter(
+    (r) => (r as { kind: string }).kind === 'service',
+  ) as Array<{ id: string; name: string; staff1_id: string | null; quantity: number }>;
+
+  // Build a multiset of (name|staff_id) keys for what's on the ticket.
+  const actualCounts = new Map<string, number>();
+  for (const r of serviceLines) {
+    const k = `${r.name}|${r.staff1_id ?? ''}`;
+    actualCounts.set(k, (actualCounts.get(k) ?? 0) + Math.max(1, r.quantity ?? 1));
+  }
+
+  // Compute the missing services. We allow each completed row to contribute
+  // multiple entries (e.g. two identical Pedicures).
+  const missing: Array<{
+    name: string;
+    serviceId: string | null;
+    staff1Id: string | null;
+    staff1Name: string;
+    staff1Color: string;
+    unitPriceCents: number;
+    quantity: number;
+    queueEntryId: string | null;
+  }> = [];
+  for (const c of completed) {
+    for (const svcName of c.services ?? []) {
+      const key = `${svcName}|${c.manicurist_id ?? ''}`;
+      const remaining = actualCounts.get(key) ?? 0;
+      if (remaining > 0) {
+        actualCounts.set(key, remaining - 1);
+        continue;
+      }
+      const svc = salonServices.find((s) => s.name === svcName);
+      missing.push({
+        name: svcName,
+        serviceId: svc?.id ?? null,
+        staff1Id: c.manicurist_id,
+        staff1Name: c.manicurist_name ?? '',
+        staff1Color: c.manicurist_color ?? '#9ca3af',
+        unitPriceCents: Math.round((svc?.price ?? 0) * 100),
+        quantity: 1,
+        // Tie each refilled line to the completed_services row id so future
+        // reconciles don't re-add it (queue_entry_id is the dedupe key in
+        // appendItemsToTicket). Different services within the same row get
+        // distinct suffixes so the partial unique index is happy.
+        queueEntryId: `${c.id}#refill-${missing.length}`,
+      });
+    }
+  }
+
+  if (missing.length === 0) return { added: 0, ticket: null };
+
+  const updated = await appendItemsToTicket(ticketId, missing, { allowDuplicates: true });
+  return { added: missing.length, ticket: updated };
+}
+
 // void ticket --------------------------------------------------------------
 
 /**

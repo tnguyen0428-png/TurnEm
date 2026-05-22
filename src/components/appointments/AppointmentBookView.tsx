@@ -214,12 +214,36 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // This map is built once per render and consumed by the block renderer below.
   const queueByApptId = useMemo(() => {
     const m = new Map<string, QueueEntry>();
+    // First pass: direct link via originalAppointment.id. This is the
+    // canonical mapping the Q-press flow produces.
     for (const q of state.queue) {
       const aid = q.originalAppointment?.id;
       if (aid) m.set(aid, q);
     }
+    // Second pass: soft-match by client name for any of TODAY's appts that
+    // still have no entry attached. This catches the case where the appt's
+    // status sync to Supabase lagged (block stays scheduled-color even
+    // though the client is in service) or the queue entry's
+    // originalAppointment link was lost in a split. We only consider
+    // top-level entries (no parentQueueId) so a sibling doesn't shadow the
+    // real Q'd entry, and we skip the appt id if it's already linked.
+    const norm = (s: string | undefined) =>
+      (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const byNameToday = new Map<string, QueueEntry>();
+    for (const q of state.queue) {
+      if (q.parentQueueId) continue;
+      const k = norm(q.clientName);
+      if (k && !byNameToday.has(k)) byNameToday.set(k, q);
+    }
+    for (const a of state.appointments) {
+      if (a.date !== selectedDate) continue;
+      if (m.has(a.id)) continue;
+      const k = norm(a.clientName);
+      const hit = k ? byNameToday.get(k) : undefined;
+      if (hit) m.set(a.id, hit);
+    }
     return m;
-  }, [state.queue]);
+  }, [state.queue, state.appointments, selectedDate]);
 
   // Appointment ids that have a completed_services row attached but the
   // register ticket hasn't been closed yet. Per user request 2026-05-22, these

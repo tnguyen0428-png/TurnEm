@@ -31,6 +31,7 @@ import {
   closeTicket,
   voidTicket,
   reallocateTurnsForStaffChanges,
+  reconcileTicketItemsFromCompleted,
   type ClosingPaymentInput,
 } from '../../lib/tickets';
 import { fetchOpenShift } from '../../lib/shifts';
@@ -124,6 +125,36 @@ export default function TicketModal({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unlockedForEdit]);
+
+  // Defensive ticket-items reconcile. Runs once on open for any 'open' ticket.
+  // Compares what the cashier sees on the ticket to the completed_services
+  // rows for the same visit (parent + split children) and auto-inserts any
+  // missing service line. Stops the "Barbara had 2 pedis on the appt book
+  // but the ticket only billed 1" pattern dead — the receipt now reflects
+  // what was actually performed even if syncEntryToTicket lost a duplicate
+  // line during a SPLIT_AND_ASSIGN race. Idempotent + safe to no-op.
+  useEffect(() => {
+    if (ticket.status !== 'open') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await reconcileTicketItemsFromCompleted(
+          ticket.id,
+          ticket.queueEntryId,
+          state.salonServices,
+        );
+        if (cancelled || !result || result.added === 0) return;
+        console.info('[ticket-modal] reconciled ticket — added', result.added, 'missing service line(s)');
+        if (result.ticket) onChanged?.(result.ticket);
+      } catch (err) {
+        console.warn('[ticket-modal] reconcile failed', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  // Only on first open per ticket — re-running on every state.salonServices
+  // change isn't necessary and could double-fire.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket.id]);
 
   // ─── Header state ─────────────────────────────────────────────────────────
   // Split the stored single-string client name into first/last on first render.
