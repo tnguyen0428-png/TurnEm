@@ -575,6 +575,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         requestedServices: requestedServices.length > 0 ? requestedServices : undefined,
         isAppointment: !!client.isAppointment,
         isRequested: wholeEntryRequested,
+        // Link back to the appointment book entry so the register can flip the
+        // appt to 'completed' (black) when the ticket is closed.
+        originalAppointmentId: client.originalAppointment?.id,
       };
       // Idempotent merge: if a row with this id already exists in completed
       // (e.g. a remote echo or a duplicate dispatch), replace it in place
@@ -585,22 +588,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const nextCompleted = completedAlreadyExists
         ? state.completed.map((c) => (c.id === completedEntry.id ? completedEntry : c))
         : [...state.completed, completedEntry];
-      // If this queue entry was promoted from an appointment, mark the linked
-      // appointment as 'completed' so the appointment book turns the block
-      // black (the "checked out" visual state). We match by the snapshot id;
-      // if the appointment no longer exists (legacy data), this map is a no-op.
-      const linkedApptId = client.originalAppointment?.id;
-      const nextAppointments = linkedApptId
-        ? state.appointments.map((a) =>
-            a.id === linkedApptId ? { ...a, status: 'completed' as const } : a
-          )
-        : state.appointments;
+      // DO NOT flip the linked appointment to 'completed' here. Per user
+      // request 2026-05-22, the appt should stay light gray (in-service color)
+      // until the register ticket is actually closed. The 'completed' flip now
+      // lives in TicketModal.handleProcess after closeTicket() succeeds, which
+      // looks up the linked appt via state.completed[].originalAppointmentId.
       return {
         ...state,
         queue: updatedQueue,
         manicurists: updatedManicurists,
         completed: nextCompleted,
-        appointments: nextAppointments,
       };
     }
 

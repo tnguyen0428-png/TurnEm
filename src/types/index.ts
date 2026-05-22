@@ -99,6 +99,11 @@ export interface CompletedEntry {
   edited?: boolean;
   /** Set to true when the row was voided (kept for visibility, excluded from turn totals). */
   voided?: boolean;
+  /** Snapshot id of the originating appointment, if this completion was promoted
+   *  from an appointment book entry. Set in COMPLETE_SERVICE; lets the register
+   *  flip the appt to 'completed' only when the ticket is closed (not when the
+   *  service itself completes). Undefined for walk-ins / non-appt visits. */
+  originalAppointmentId?: string;
 }
 
 // ── POS / Register ───────────────────────────────────────────────────────────

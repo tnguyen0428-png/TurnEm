@@ -220,6 +220,20 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     }
     return m;
   }, [state.queue]);
+
+  // Appointment ids that have a completed_services row attached but the
+  // register ticket hasn't been closed yet. Per user request 2026-05-22, these
+  // stay in the in-service light-gray state until payment is processed; only
+  // then does COMPLETE_SERVICE's sibling — TicketModal.handleProcess — flip
+  // the appt status to 'completed' (dark gray).
+  const awaitingPaymentApptIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const c of state.completed) {
+      if (c.voided) continue;
+      if (c.originalAppointmentId) ids.add(c.originalAppointmentId);
+    }
+    return ids;
+  }, [state.completed]);
   const dayAppts = state.appointments.filter(
     (a) =>
       a.date === selectedDate &&
@@ -1017,35 +1031,40 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           const isCheckedOut = appt.status === 'completed';
           const isInService  = !isCheckedOut && linkedQ?.status === 'inProgress';
           const isWaitingQ   = !isCheckedOut && !isInService && !!linkedQ; // in queue, not yet started
-          const isCheckedIn  = !isCheckedOut && !isInService && !isWaitingQ && appt.status === 'checked-in';
-          // Color progression: scheduled → light-gray (waiting Q) → light-gray (in service) → dark-gray (checked out)
+          // Service complete but ticket not yet closed — stays light gray.
+          const isAwaitingPayment = !isCheckedOut && !isInService && !isWaitingQ && awaitingPaymentApptIds.has(appt.id);
+          const isCheckedIn  = !isCheckedOut && !isInService && !isWaitingQ && !isAwaitingPayment && appt.status === 'checked-in';
+          // Color progression: scheduled → light-gray (waiting Q) → light-gray (in service / awaiting payment) → dark-gray (checked out after ticket close)
           // Note: in-service softened from #d1d5db → #e5e7eb, checked-out from #1f2937 → #4b5563 per user request.
-          const bg     = isCheckedOut ? '#4b5563'
-                       : isInService   ? '#e5e7eb'
-                       : isWaitingQ    ? '#f3f4f6'
-                       : isCheckedIn   ? '#d1fae5'
+          const bg     = isCheckedOut       ? '#4b5563'
+                       : isInService        ? '#e5e7eb'
+                       : isAwaitingPayment  ? '#e5e7eb'
+                       : isWaitingQ         ? '#f3f4f6'
+                       : isCheckedIn        ? '#d1fae5'
                        : palette.bg;
-          const border = isCheckedOut ? '#1f2937'
-                       : isInService   ? '#9ca3af'
-                       : isWaitingQ    ? '#9ca3af'
-                       : isCheckedIn   ? '#10b981'
+          const border = isCheckedOut       ? '#1f2937'
+                       : isInService        ? '#9ca3af'
+                       : isAwaitingPayment  ? '#9ca3af'
+                       : isWaitingQ         ? '#9ca3af'
+                       : isCheckedIn        ? '#10b981'
                        : palette.border;
-          const textColor = isCheckedOut ? '#ffffff'
-                          : isInService   ? '#374151'
-                          : isWaitingQ    ? '#6b7280'
+          const textColor = isCheckedOut       ? '#ffffff'
+                          : isInService        ? '#374151'
+                          : isAwaitingPayment  ? '#374151'
+                          : isWaitingQ         ? '#6b7280'
                           : '#111827';
-          const subTextColor = isCheckedOut ? '#e5e7eb'
-                             : isInService   ? '#6b7280'
-                             : isWaitingQ    ? '#9ca3af'
+          const subTextColor = isCheckedOut       ? '#e5e7eb'
+                             : isInService        ? '#6b7280'
+                             : isAwaitingPayment  ? '#6b7280'
+                             : isWaitingQ         ? '#9ca3af'
                              : '#6b7280';
           const pl = isFirst ? '14px' : '4px';
 
           // Locked = no drag/move allowed. Requested appts must be modified via the edit
           // modal so accidental hand-drags can't shift a client-requested time/staff.
-          // Per user request: only checked-out is locked among the lifecycle states —
-          // waiting-Q and in-service blocks remain draggable. (Trade-off: a drag while
-          // queued can desync the queue entry's snapshot; user accepts.)
-          const isLocked = isCheckedOut || hasRequest;
+          // Per user request: only checked-out OR awaiting-payment is locked — the
+          // service is done, dragging the block would desync the linked completed row.
+          const isLocked = isCheckedOut || isAwaitingPayment || hasRequest;
           // Treat the old "isCompleted" semantics (muted look, no action buttons) as
           // "checked out OR currently in a queue lifecycle". Hover action row stays
           // hidden in those states.

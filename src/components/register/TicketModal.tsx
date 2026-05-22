@@ -1407,6 +1407,21 @@ export default function TicketModal({
       setError('Could not process ticket — try again.');
       return;
     }
+    // Flip the linked appointment (if any) to 'completed' so the appointment
+    // book turns the block dark gray. Per user request 2026-05-22, this is the
+    // ONLY place that flips appt → 'completed' — COMPLETE_SERVICE leaves it
+    // alone so the block stays light gray until payment is processed.
+    if (ticket.queueEntryId) {
+      const completedRow = state.completed.find((c) => c.id === ticket.queueEntryId);
+      const linkedApptId = completedRow?.originalAppointmentId;
+      if (linkedApptId) {
+        dispatch({
+          type: 'UPDATE_APPOINTMENT',
+          id: linkedApptId,
+          updates: { status: 'completed' },
+        });
+      }
+    }
     // Auto-clear: any manicurist still pointing at this visit drops back
     // to available, and any synthetic `${visitId}-add-${staffId}` queue
     // entry created by ensureManicuristBusyForAddedLine is swept out.
