@@ -243,6 +243,10 @@ export interface Appointment {
   createdAt: number;
   sameTime: boolean;          // visual flag: client wants same time as another booking
   partyId: string | null;     // group id linking party-group bookings
+  /** Cashier/receptionist flagged this booking for caution (problem client,
+   *  unpaid history, etc.). Rendered with diagonal warning stripes over the
+   *  appointment block in the book. Defaults to false; optional for legacy rows. */
+  caution?: boolean;
   /** Receptionist (manicurist row, is_receptionist=true) who PIN-gated the
    *  booking. Null for legacy appts created before this field existed. */
   bookedByReceptionistId?: string | null;

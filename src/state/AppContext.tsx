@@ -199,6 +199,8 @@ function mapDbAppointment(row: Record<string, unknown>): Appointment {
     createdAt: row.created_at ? new Date(row.created_at as string).getTime() : Date.now(),
     sameTime: (row.same_time as boolean) || false,
     partyId: (row.party_id as string) || null,
+    // `caution` column may not exist on older DBs yet — coalesce undefined to false.
+    caution: (row.caution as boolean | undefined) || false,
     bookedByReceptionistId: (row.booked_by_receptionist_id as string) || null,
     lastEditedByReceptionistId: (row.last_edited_by_receptionist_id as string) || null,
     lastEditedAt: row.last_edited_at
@@ -1831,7 +1833,8 @@ function appointmentUnchanged(a: Appointment, b: Appointment): boolean {
     (a.notes || null) === (b.notes || null) &&
     a.status === b.status &&
     (a.sameTime || false) === (b.sameTime || false) &&
-    (a.partyId || null) === (b.partyId || null)
+    (a.partyId || null) === (b.partyId || null) &&
+    (a.caution || false) === (b.caution || false)
   );
 }
 
@@ -1850,6 +1853,10 @@ function appointmentToRow(a: Appointment) {
     status: a.status,
     same_time: a.sameTime || false,
     party_id: a.partyId || null,
+    // NOTE: `caution` is intentionally NOT written here until the DB migration
+    // adding the column has been applied. Once the column exists in Supabase,
+    // uncomment the line below to start persisting the flag.
+    // caution: a.caution || false,
     booked_by_receptionist_id: a.bookedByReceptionistId || null,
     last_edited_by_receptionist_id: a.lastEditedByReceptionistId || null,
     last_edited_at: a.lastEditedAt ? new Date(a.lastEditedAt).toISOString() : null,

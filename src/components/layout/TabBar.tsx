@@ -19,11 +19,16 @@ export default function TabBar() {
     <nav className="bg-white border-b border-gray-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         <div className="flex items-center justify-between h-28 sm:h-48">
-          <div className="flex items-center flex-shrink-0">
+          {/* Visually scale the logo larger without growing its layout box —
+              the nav-bar height stays h-28 / sm:h-48 so the schedule below
+              doesn't get pushed down. The image just overflows the nav and
+              renders bigger to the eye. */}
+          <div className="flex items-center flex-shrink-0 relative">
             <img
               src="/Turn_Em_Logo.png"
               alt="Turn Em"
-              className="h-24 w-auto sm:h-44"
+              className="h-24 w-auto sm:h-44 origin-left"
+              style={{ transform: 'scale(1.5)' }}
             />
           </div>
           <div className="flex items-center gap-0.5 overflow-x-auto hide-scrollbar">

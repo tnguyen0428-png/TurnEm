@@ -173,22 +173,6 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
 //
 // Used by TicketModal to show the remaining balance in pink next to the gift
 // card code field and hard-cap the redemption amount.
-//
-// Returns:
-//   - originalCents: the face value of the gift card (ticket_items.ext_price_cents
-//     on the gift_card_sale row whose name contains this serial)
-//   - usedCents: SUM of payments.amount_cents WHERE method='gift' AND
-//     normalized(gift_card_code) matches this serial. Treats every redemption
-//     ever captured against this serial as "used" — multiple partial
-//     redemptions are summed.
-//   - balanceCents: originalCents - usedCents (clamped at 0)
-//   - found: false if no sale line exists for this serial (cashier typo, or
-//     trying to redeem against a never-sold card)
-//
-// `excludeTicketId` skips redemptions captured against the named ticket so a
-// cashier editing an OPEN ticket sees the balance BEFORE their own pending
-// redemption row counts against it. Pass the current ticket id when this is
-// called from TicketModal during checkout.
 export interface GiftCardBalance {
   found: boolean;
   originalCents: number;

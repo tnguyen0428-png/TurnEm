@@ -232,6 +232,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     approved: boolean;
   } | null>(null);
   const [partyGroup, setPartyGroup] = useState(false);
+  // Caution flag — paints diagonal warning stripes over the appointment block
+  // in the book so the salon can spot risky bookings at a glance.
+  const [caution, setCaution] = useState(false);
   // Cancel-appointment confirmation gate. Set when the receptionist clicks
   // CANCEL APPT in edit mode; cleared once they confirm or back out.
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -282,6 +285,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       }
       setSameTime(editing.sameTime || false);
       setPartyGroup(!!editing.partyId);
+      setCaution(!!editing.caution);
 
       const svcs = editing.services?.length ? editing.services : [editing.service];
       // Use occurrence tracking for duplicate service names
@@ -717,6 +721,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           notes: notes.trim(),
           sameTime: autoPerService && selectedServices.length > 1 ? true : sameTime,
           partyId,
+          caution,
           lastEditedByReceptionistId: editingReceptionistId,
         },
       });
@@ -740,6 +745,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         createdAt: Date.now(),
         sameTime: autoPerService && selectedServices.length > 1 ? true : sameTime,
         partyId,
+        caution,
         bookedByReceptionistId: receptionistId,
       };
       dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
@@ -821,7 +827,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     <Modal
       title={mode === 'edit' ? 'EDIT APPOINTMENT' : 'NEW APPOINTMENT'}
       onClose={handleClose}
-      width="max-w-2xl"
+      width="max-w-xl"
+      dock="right"
     >
       <form data-appointment-form onSubmit={handleSubmit} className="space-y-4">
         {mode === 'edit' && editing && (
@@ -1153,6 +1160,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             />
             <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-500 text-white font-bold text-[9px]">P</span>
             <span className="font-mono text-xs text-gray-700">Party group</span>
+          </label>
+          <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-white cursor-pointer hover:bg-gray-50 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={caution}
+              onChange={(e) => setCaution(e.target.checked)}
+              className="w-4 h-4 accent-amber-500"
+            />
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-500 text-white font-bold text-[9px]">C</span>
+            <span className="font-mono text-xs text-gray-700">Caution</span>
           </label>
         </div>
 

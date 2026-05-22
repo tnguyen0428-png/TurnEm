@@ -1061,6 +1061,39 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               }}
               onDoubleClick={() => !isDragging && openEditModalGated(appt)}>
 
+              {/* Caution overlay — 5 faint diagonal warning stripes tucked
+                  into the bottom-right corner of the block. Subtle visual
+                  cue so receptionists notice the flag without the stripes
+                  cluttering the whole appointment card. SVG line endpoints
+                  fall in the bottom-right quadrant; non-scaling-stroke keeps
+                  the lines a constant width regardless of block size. */}
+              {appt.caution && (
+                <svg
+                  className="absolute inset-0 pointer-events-none"
+                  width="100%" height="100%"
+                  preserveAspectRatio="none"
+                  viewBox="0 0 100 100"
+                  style={{ zIndex: 2 }}
+                >
+                  {[
+                    { x1: 50, y1: 100, x2: 100, y2: 50 },
+                    { x1: 60, y1: 100, x2: 100, y2: 60 },
+                    { x1: 70, y1: 100, x2: 100, y2: 70 },
+                    { x1: 80, y1: 100, x2: 100, y2: 80 },
+                    { x1: 90, y1: 100, x2: 100, y2: 90 },
+                  ].map((l, i) => (
+                    <line
+                      key={i}
+                      x1={l.x1} y1={l.y1}
+                      x2={l.x2} y2={l.y2}
+                      stroke="rgba(220,38,38,0.35)"
+                      strokeWidth={1.5}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                </svg>
+              )}
+
               <div className="px-1.5 py-1 h-full flex flex-col overflow-hidden gap-0.5">
                 <div className="flex items-center gap-1 min-w-0">
                   {!isLocked && <GripVertical size={10} className="text-gray-400 flex-shrink-0 cursor-grab" />}
