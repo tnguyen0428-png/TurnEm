@@ -23,10 +23,10 @@ export default function TabBar() {
             <img
               src="/Turn_Em_Logo.png"
               alt="Turn Em"
-              className="h-24 w-auto sm:h-44 object-contain"
+              className="h-36 w-auto sm:h-72 object-contain"
             />
           </div>
-          <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
+          <div className="flex items-center gap-1 overflow-x-auto hide-scrollbar">
             {TABS.map((tab) => {
               const blueprintViews = ['blueprint', 'staff', 'services', 'criteria', 'calendar'];
               const isActive = tab.id === 'blueprint'
@@ -37,30 +37,30 @@ export default function TabBar() {
                 <button
                   key={tab.id}
                   onClick={() => dispatch({ type: 'SET_VIEW', view: tab.id })}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-bebas text-lg tracking-[1.5px] transition-all duration-200 whitespace-nowrap flex-shrink-0 ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-bebas text-xs tracking-[1.2px] transition-all duration-200 whitespace-nowrap flex-shrink-0 ${
                     isActive
                       ? 'bg-pink-50 text-pink-600'
                       : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
                   }`}
                 >
-                  <Icon size={20} />
+                  <Icon size={14} />
                   <span className="hidden sm:inline">{tab.label}</span>
                 </button>
               );
             })}
           </div>
-          <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-shrink-0">
             {user && (
-              <span className="font-mono text-xs text-gray-400 hidden md:block truncate max-w-[160px]">
+              <span className="font-mono text-[10px] text-gray-400 hidden md:block truncate max-w-[140px]">
                 {user.email}
               </span>
             )}
             <button
               onClick={signOut}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-xs font-semibold transition-all"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 font-mono text-[10px] font-semibold transition-all"
               title="Sign out"
             >
-              <LogOut size={14} />
+              <LogOut size={12} />
               <span className="hidden sm:inline">LOGOUT</span>
             </button>
           </div>
