@@ -206,22 +206,25 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const totalGridW  = TIME_COL_W + manicurists.length * colWidth;
   const TOTAL_H     = TOTAL_SLOTS * slotHeight;
 
-  // Safety net: if an appointment has already been promoted to a queue entry
-  // (i.e. some queue entry's originalAppointment snapshot has this appt's id),
-  // hide it from the book. This protects against any sync race where the appt
-  // row gets resurrected in state.appointments after Q'ing — the queue entry
-  // is the source of truth once the customer has been queued.
-  const queuedApptIds = new Set(
-    state.queue
-      .map((q) => q.originalAppointment?.id)
-      .filter((id): id is string => !!id)
-  );
+  // Appointments now REMAIN visible in the book after being Q'd. We track the
+  // linked queue entry by `originalAppointment.id` so we can recolor the block:
+  //   - waiting in queue   → light gray
+  //   - inProgress         → gray (in service)
+  //   - appt.status === 'completed' → black (checked out)
+  // This map is built once per render and consumed by the block renderer below.
+  const queueByApptId = useMemo(() => {
+    const m = new Map<string, QueueEntry>();
+    for (const q of state.queue) {
+      const aid = q.originalAppointment?.id;
+      if (aid) m.set(aid, q);
+    }
+    return m;
+  }, [state.queue]);
   const dayAppts = state.appointments.filter(
     (a) =>
       a.date === selectedDate &&
       a.status !== 'cancelled' &&
-      a.status !== 'no-show' &&
-      !queuedApptIds.has(a.id)
+      a.status !== 'no-show'
   );
 
   // Per-column busy intervals for the visible day, used by Same-Time fan-out
@@ -707,7 +710,11 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
   function addApptToQueue(e: React.MouseEvent, appt: Appointment) {
     e.stopPropagation();
-    dispatch({ type: 'DELETE_APPOINTMENT', id: appt.id });
+    // Keep the appointment in the book; flag it as 'checked-in' so the block
+    // renderer can recolor it (light gray while waiting, gray while in service,
+    // black after checkout). The Revert button on the queue card flips this
+    // back to 'scheduled'.
+    dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'checked-in' } });
     const services = getApptSvcs(appt) as ServiceType[];
     // CRITICAL: only ServiceRequests with clientRequest === true represent an actual
     // request from the customer. Anything else is just a salon-placed parking slot in
@@ -975,21 +982,21 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(75, 85, 99, 0.08) 6px, rgba(75, 85, 99, 0.08) 12px)',
               zIndex: 1,
             }}
-            onClick={(e) => {
+            onDoubleClick={(e) => {
               e.stopPropagation();
               setEditingSchedule({ manicuristId: mId, weekday: weekdayFromYmd(selectedDate) });
             }}
-            title="Click to edit this technician's schedule"
+            title="Double-click to edit this technician's schedule"
           >
             {band.label && band.height > 24 && (
               <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-[10px] font-bold tracking-wider text-gray-400 gap-0.5">
                 <span>{band.label}</span>
-                <span className="opacity-0 group-hover/off:opacity-100 transition-opacity text-pink-500 text-[9px] font-semibold">CLICK TO EDIT</span>
+                <span className="opacity-0 group-hover/off:opacity-100 transition-opacity text-pink-500 text-[9px] font-semibold">DOUBLE-CLICK TO EDIT</span>
               </div>
             )}
             {!band.label && band.height > 16 && (
               <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/off:opacity-100 transition-opacity">
-                <span className="font-mono text-[9px] font-semibold text-pink-500 tracking-wider">EDIT SCHEDULE</span>
+                <span className="font-mono text-[9px] font-semibold text-pink-500 tracking-wider">DOUBLE-CLICK TO EDIT</span>
               </div>
             )}
           </div>
@@ -999,15 +1006,41 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           const { appt, serviceName, occurrence, top, height, isFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;
           const palette     = apptPalette(appt);
           const isDragging  = dragInfo?.apptId === appt.id && dragInfo?.serviceName === serviceName;
-          const isCompleted = appt.status === 'completed';
-          const isCheckedIn = appt.status === 'checked-in';
-          const bg     = isCompleted ? '#f3f4f6' : isCheckedIn ? '#d1fae5' : palette.bg;
-          const border = isCompleted ? '#9ca3af' : isCheckedIn ? '#10b981' : palette.border;
+          const linkedQ     = queueByApptId.get(appt.id);
+          const isCheckedOut = appt.status === 'completed';
+          const isInService  = !isCheckedOut && linkedQ?.status === 'inProgress';
+          const isWaitingQ   = !isCheckedOut && !isInService && !!linkedQ; // in queue, not yet started
+          const isCheckedIn  = !isCheckedOut && !isInService && !isWaitingQ && appt.status === 'checked-in';
+          // Color progression: scheduled → light-gray (waiting Q) → gray (in service) → black (checked out)
+          const bg     = isCheckedOut ? '#1f2937'
+                       : isInService   ? '#d1d5db'
+                       : isWaitingQ    ? '#f3f4f6'
+                       : isCheckedIn   ? '#d1fae5'
+                       : palette.bg;
+          const border = isCheckedOut ? '#111827'
+                       : isInService   ? '#6b7280'
+                       : isWaitingQ    ? '#9ca3af'
+                       : isCheckedIn   ? '#10b981'
+                       : palette.border;
+          const textColor = isCheckedOut ? '#ffffff'
+                          : isInService   ? '#374151'
+                          : isWaitingQ    ? '#6b7280'
+                          : '#111827';
+          const subTextColor = isCheckedOut ? '#e5e7eb'
+                             : isInService   ? '#4b5563'
+                             : isWaitingQ    ? '#9ca3af'
+                             : '#6b7280';
           const pl = isFirst ? '14px' : '4px';
 
           // Locked = no drag/move allowed. Requested appts must be modified via the edit
           // modal so accidental hand-drags can't shift a client-requested time/staff.
-          const isLocked = isCompleted || hasRequest;
+          // Once the appt is checked-out, in-service, or queued, dragging would corrupt
+          // the linked queue entry's snapshot — so lock it.
+          const isLocked = isCheckedOut || isInService || isWaitingQ || hasRequest;
+          // Treat the old "isCompleted" semantics (muted look, no action buttons) as
+          // "checked out OR currently in a queue lifecycle". Hover action row stays
+          // hidden in those states.
+          const isCompleted = isCheckedOut;
 
           return (
             <div key={`${appt.id}-${serviceName}-${idx}`}
@@ -1032,12 +1065,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 <div className="flex items-center gap-1 min-w-0">
                   {!isLocked && <GripVertical size={10} className="text-gray-400 flex-shrink-0 cursor-grab" />}
                   <p className="font-mono text-[13px] font-bold truncate leading-tight flex-1"
-                    style={{ color: isCompleted ? '#9ca3af' : '#111827' }}>
+                    style={{ color: textColor }}>
                     {appt.clientName || 'Walk-in'}
                   </p>
                   {isFirst && appt.time && (
                     <span className="font-mono text-[10px] font-semibold flex-shrink-0 leading-tight"
-                      style={{ color: isCompleted ? '#9ca3af' : '#6b7280' }}>
+                      style={{ color: subTextColor }}>
                       {formatTimeOfDay(appt.time)}
                     </span>
                   )}
@@ -1045,7 +1078,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
                 <div className="flex items-center gap-1 min-w-0" style={{ paddingLeft: pl }}>
                   <p className="font-mono text-xs font-semibold truncate leading-tight flex-1"
-                    style={{ color: isCompleted ? '#9ca3af' : border }}>
+                    style={{ color: (isCheckedOut || isInService || isWaitingQ) ? subTextColor : border }}>
                     {serviceName}
                   </p>
                   {hasRequest && (
@@ -1066,7 +1099,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     top-right corner of the first block. The repeated time under each service
                     name was redundant and ate vertical space. */}
 
-                {height > 36 && !isCompleted && (
+                {height > 36 && !isCheckedOut && !isInService && !isWaitingQ && (
                   <div className="flex gap-1 mt-auto opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{ paddingLeft: pl }}
                     draggable={false}

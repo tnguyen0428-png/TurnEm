@@ -109,7 +109,10 @@ export default function AppointmentsScreen() {
   }
 
   function handleCheckIn(appt: Appointment) {
-    dispatch({ type: 'DELETE_APPOINTMENT', id: appt.id });
+    // Keep the appointment in the book; mark it 'checked-in' so the book view
+    // can recolor the block based on the linked queue entry's lifecycle
+    // (light gray waiting → gray in service → black after checkout).
+    dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'checked-in' } });
     const services = appt.services?.length ? appt.services : [appt.service as ServiceType];
     // CRITICAL: only ServiceRequests with clientRequest === true represent an actual
     // request from the customer. Anything else is just a salon-placed parking slot in

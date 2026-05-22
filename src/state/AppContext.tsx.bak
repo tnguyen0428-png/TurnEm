@@ -1,0 +1,1992 @@
+import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
+import { appendItemsToTicket, backfillTicketStaff, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, syncEntryToTicket } from '../lib/tickets';
+import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
+import type { AppAction } from './actions';
+import { appReducer, INITIAL_STATE } from './reducer';
+import { supabase } from '../lib/supabase';
+import { defaultSalonServices } from '../constants/salonServices';
+import { defaultManicurists } from '../constants/manicurists';
+import { getLocalDateStr, getTodayLA } from '../utils/time';
+
+// Visible save status. Driven by a counter of in-flight DB writes:
+// - 'saving': at least one upsert/delete is awaiting a response
+// - 'saved': all in-flight writes resolved successfully (auto-fades to 'idle' after ~1.5s)
+// - 'error': a write failed; cleared by the next successful save
+// - 'idle': nothing to show
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
+interface AppContextType {
+  state: AppState;
+  dispatch: React.Dispatch<AppAction>;
+  saveTodayHistory: (dateOverride?: string) => Promise<boolean>;
+  archiveTodayIfNeeded: (skipHourCheck?: boolean) => Promise<void>;
+  syncError: string | null;
+  clearSyncError: () => void;
+  saveStatus: SaveStatus;
+  // Persist Blueprint priority lists. Writes to Supabase singleton system_state row,
+  // updates local state via SET_PRIORITY dispatch, and mirrors to localStorage so the
+  // legacy reads in assignHelpers.getDistinctServices keep working. Both args optional —
+  // pass only the dimension you changed (categoryPriority OR servicePriority).
+  setPriority: (next: { categoryPriority?: string[]; servicePriority?: Record<string, string[]> }) => Promise<void>;
+}
+
+// localStorage keys mirrored from utils/priorityStorage. Duplicated here so the
+// AppContext doesn't have to import from a UI module — the Realtime handler and
+// initial-load path both write these so legacy reads (assignHelpers) continue working.
+const CAT_PRIORITY_KEY = 'turnem_category_priority';
+const SVC_PRIORITY_KEY = 'turnem_service_priority';
+
+function readLocalCatPriority(): string[] | null {
+  try {
+    const raw = localStorage.getItem(CAT_PRIORITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+function readLocalSvcPriority(): Record<string, string[]> | null {
+  try {
+    const raw = localStorage.getItem(SVC_PRIORITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+const AppContext = createContext<AppContextType | null>(null);
+
+// Separate dispatch context so dispatch-only consumers (modals, action buttons
+// that fire reducer actions but never read state) don't re-render when state
+// changes. The dispatch reference is stable from useReducer, so this context
+// value never changes after mount.
+const AppDispatchContext = createContext<React.Dispatch<AppAction> | null>(null);
+
+
+function mapDbManicurist(row: Record<string, unknown>): Manicurist {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    color: row.color as string,
+    phone: (row.phone as string) || '',
+    skills: (row.skills as string[]) || [],
+    clockedIn: row.clocked_in as boolean,
+    clockInTime: row.clock_in_time ? new Date(row.clock_in_time as string).getTime() : null,
+    totalTurns: Number(row.total_turns) || 0,
+    currentClient: (row.current_client_id as string) || null,
+    status: (row.status as Manicurist['status']) || 'available',
+    hasFourthPositionSpecial: (row.has_fourth_position_special as boolean) || false,
+    hasCheck2: (row.has_check2 as boolean) || false,
+    hasCheck3: (row.has_check3 as boolean) || false,
+    hasWax: (row.has_wax as boolean) || false,
+    hasWax2: (row.has_wax2 as boolean) || false,
+    hasWax3: (row.has_wax3 as boolean) || false,
+    timeAdjustments: (row.time_adjustments as Record<string, number>) || {},
+    pinCode: (row.pin_code as string) || '',
+    breakStartTime: row.break_start_time ? Number(row.break_start_time) : null,
+    smsOptIn: (row.sms_opt_in as boolean) || false,
+    showInBook: row.show_in_book === false ? false : true,
+    isReceptionist: (row.is_receptionist as boolean) || false,
+    notificationBody: (row.notification_body as string) || '',
+  };
+}
+
+function mapDbServiceRequest(r: Record<string, unknown>): ServiceRequest {
+  // Preserve clientRequest, startTime, and durationAdjustment fields when round-
+  // tripping through the DB. Dropping them would silently demote real customer
+  // requests or lose per-appointment duration tweaks once the row syncs back.
+  const clientRequest = r.clientRequest === true ? true : undefined;
+  const startTime = typeof r.startTime === 'string' ? r.startTime : undefined;
+  const durationAdjustment = typeof r.durationAdjustment === 'number' && r.durationAdjustment !== 0
+    ? r.durationAdjustment
+    : undefined;
+  if (Array.isArray(r.manicuristIds)) {
+    return {
+      service: r.service as ServiceType,
+      manicuristIds: r.manicuristIds as string[],
+      ...(clientRequest !== undefined ? { clientRequest } : {}),
+      ...(startTime !== undefined ? { startTime } : {}),
+      ...(durationAdjustment !== undefined ? { durationAdjustment } : {}),
+    };
+  }
+  const legacy = r.manicuristId as string | null;
+  return {
+    service: r.service as ServiceType,
+    manicuristIds: legacy ? [legacy] : [],
+    ...(clientRequest !== undefined ? { clientRequest } : {}),
+    ...(startTime !== undefined ? { startTime } : {}),
+    ...(durationAdjustment !== undefined ? { durationAdjustment } : {}),
+  };
+}
+
+function mapDbQueueEntry(row: Record<string, unknown>): QueueEntry {
+  const dbServices = row.services as string[] | null;
+  const fallback = row.service as string;
+  const rawRequests = row.service_requests as Array<Record<string, unknown>> | null;
+  const serviceRequests: ServiceRequest[] = Array.isArray(rawRequests)
+    ? rawRequests.map(mapDbServiceRequest)
+    : [];
+  return {
+    id: row.id as string,
+    parentQueueId: (row.parent_queue_id as string) || (row.id as string),
+    clientName: row.client_name as string,
+    services: (dbServices && dbServices.length > 0 ? dbServices : [fallback]).filter(Boolean) as ServiceType[],
+    turnValue: Number(row.turn_value) || 0,
+    serviceRequests,
+    requestedManicuristId: (row.requested_manicurist_id as string) || null,
+    isRequested: row.is_requested as boolean,
+    isAppointment: (row.is_appointment as boolean) || false,
+    assignedManicuristId: (row.assigned_manicurist_id as string) || null,
+    status: (row.status as QueueEntry['status']) || 'waiting',
+    arrivedAt: new Date(row.arrived_at as string).getTime(),
+    startedAt: row.started_at ? new Date(row.started_at as string).getTime() : null,
+    completedAt: row.completed_at ? new Date(row.completed_at as string).getTime() : null,
+    extraTimeMs: Number(row.extra_time_ms) || 0,
+    originalAppointment: (row.original_appointment as Appointment | null) || undefined,
+  };
+}
+
+// Used by the realtime subscription on completed_services. The initial-load path has its own
+// inline mapper with extra "bad pattern" cleanup — that cleanup is only relevant for historic
+// rows and doesn't belong in a realtime event handler.
+function mapDbCompleted(row: Record<string, unknown>): CompletedEntry {
+  const dbSvcs = row.services as string[] | null;
+  const fallbackSvc = row.service as string;
+  const services = (dbSvcs && dbSvcs.length > 0 ? dbSvcs : [fallbackSvc]).filter(Boolean) as ServiceType[];
+  const rawRequested = Array.isArray(row.requested_services) ? (row.requested_services as string[]) : [];
+  return {
+    id: row.id as string,
+    clientName: row.client_name as string,
+    services,
+    turnValue: Number(row.turn_value) || 0,
+    manicuristId: row.manicurist_id as string,
+    manicuristName: row.manicurist_name as string,
+    manicuristColor: row.manicurist_color as string,
+    startedAt: new Date(row.started_at as string).getTime(),
+    completedAt: new Date(row.completed_at as string).getTime(),
+    requestedServices: rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined,
+    isAppointment: (row.is_appointment as boolean) || false,
+    isRequested: (row.is_requested as boolean) || false,
+    edited: (row.edited as boolean) || false,
+    voided: (row.voided as boolean) || false,
+  };
+}
+
+function mapDbAppointment(row: Record<string, unknown>): Appointment {
+  const legacyService = (row.service as string) || '';
+  const dbServices = row.services as ServiceType[] | null;
+  const services = dbServices && dbServices.length > 0 ? dbServices : (legacyService ? [legacyService as ServiceType] : []);
+  const serviceRequests = (row.service_requests as ServiceRequest[]) || [];
+  // Derive legacy manicuristId from first service request if available
+  const firstReq = serviceRequests[0];
+  const manicuristId = (row.manicurist_id as string) || (firstReq?.manicuristIds?.[0] ?? null);
+  return {
+    id: row.id as string,
+    clientName: (row.client_name as string) || '',
+    clientPhone: (row.client_phone as string) || '',
+    service: services[0] || legacyService as ServiceType,
+    services,
+    serviceRequests,
+    manicuristId,
+    date: row.date as string,
+    time: row.time as string,
+    notes: (row.notes as string) || '',
+    status: (row.status as Appointment['status']) || 'scheduled',
+    createdAt: row.created_at ? new Date(row.created_at as string).getTime() : Date.now(),
+    sameTime: (row.same_time as boolean) || false,
+    partyId: (row.party_id as string) || null,
+    bookedByReceptionistId: (row.booked_by_receptionist_id as string) || null,
+    lastEditedByReceptionistId: (row.last_edited_by_receptionist_id as string) || null,
+    lastEditedAt: row.last_edited_at
+      ? new Date(row.last_edited_at as string).getTime()
+      : null,
+  };
+}
+
+function mapDbSalonService(row: Record<string, unknown>): SalonService {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    turnValue: Number(row.turn_value) || 0,
+    duration: Number(row.duration),
+    price: Number(row.price),
+    isActive: row.is_active as boolean,
+    category: (row.category as string) || '',
+    sortOrder: Number(row.sort_order) || 0,
+    isFourthPositionSpecial: (row.is_fourth_position_special as boolean) || false,
+  };
+}
+
+function mapDbTurnCriteria(row: Record<string, unknown>): TurnCriteria {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    description: (row.description as string) || '',
+    priority: Number(row.priority),
+    enabled: row.enabled as boolean,
+    type: (row.type as TurnCriteria['type']) || 'sort',
+    value: Number(row.value),
+  };
+}
+
+function mapDbCalendarDay(row: Record<string, unknown>): CalendarDay {
+  return {
+    date: row.date as string,
+    status: (row.status as CalendarDay['status']) || 'open',
+    note: (row.note as string) || '',
+  };
+}
+
+// Postgres `time` columns may serialize as 'HH:MM:SS' or 'HH:MM'. The UI works
+// in 'HH:MM', so strip seconds if present and pass through nulls untouched.
+function timeToHHMM(v: unknown): string {
+  if (typeof v !== 'string') return '00:00';
+  return v.length >= 5 ? v.slice(0, 5) : v;
+}
+
+function mapDbStaffSchedule(row: Record<string, unknown>): StaffScheduleEntry {
+  return {
+    id: row.id as string,
+    manicuristId: row.manicurist_id as string,
+    weekday: Number(row.weekday),
+    startTime: timeToHHMM(row.start_time),
+    endTime: timeToHHMM(row.end_time),
+    lunchStart: row.lunch_start ? timeToHHMM(row.lunch_start) : null,
+    lunchEnd: row.lunch_end ? timeToHHMM(row.lunch_end) : null,
+  };
+}
+
+function mapDbStaffTimeOff(row: Record<string, unknown>): StaffTimeOff {
+  return {
+    id: row.id as string,
+    manicuristId: row.manicurist_id as string,
+    startDate: row.start_date as string,
+    endDate: row.end_date as string,
+    reason: (row.reason as string) || '',
+    createdAt: row.created_at ? new Date(row.created_at as string).getTime() : Date.now(),
+  };
+}
+
+
+// Module-level guard: prevents loadInitialData from running more than once per page load,
+// even if Vite Fast Refresh re-mounts the component during development.
+let _dataLoadStarted = false;
+
+export function AppProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const clearSyncError = useCallback(() => {
+    setSyncError(null);
+    setSaveStatus((current) => (current === 'error' ? 'idle' : current));
+  }, []);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  // Counter of currently in-flight sync operations. When this drops back to zero with
+  // no error, status flips to 'saved' and auto-fades. On error, status flips to 'error'.
+  const pendingSavesRef = useRef(0);
+  const savedFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevStateRef = useRef<AppState>(INITIAL_STATE);
+  const completedRef = useRef<AppState['completed']>(INITIAL_STATE.completed);
+  const dailyHistoryRef = useRef<AppState['dailyHistory']>(INITIAL_STATE.dailyHistory);
+
+  // Wraps a sync function so we track in-flight count and surface 'saving' / 'saved' /
+  // 'error' to the UI. Each call increments the counter and shows 'saving'; when the
+  // last in-flight resolves we either flip to 'saved' (auto-fade) or 'error'.
+  const trackSave = useCallback(async (fn: () => Promise<void>) => {
+    pendingSavesRef.current += 1;
+    setSaveStatus('saving');
+    if (savedFadeTimerRef.current) {
+      clearTimeout(savedFadeTimerRef.current);
+      savedFadeTimerRef.current = null;
+    }
+    let failed = false;
+    try {
+      await fn();
+    } catch (err) {
+      failed = true;
+      console.error('[trackSave] uncaught error:', err);
+    } finally {
+      pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
+      if (pendingSavesRef.current === 0) {
+        if (failed) {
+          setSaveStatus('error');
+        } else {
+          // The sync function reports its own errors via setSyncError. If syncError is
+          // already set we surface 'error'; otherwise show a brief 'saved' confirmation.
+          setSaveStatus((current) => (current === 'error' ? 'error' : 'saved'));
+          savedFadeTimerRef.current = setTimeout(() => {
+            setSaveStatus((current) => (current === 'saved' ? 'idle' : current));
+          }, 1500);
+        }
+      }
+    }
+  }, []);
+
+  // When setSyncError is called by a sync function, also surface 'error' status so the
+  // banner+toast pair stay consistent. Wrap the setter so callers don't need to know.
+  const setSyncErrorTracked = useCallback((msg: string | null) => {
+    setSyncError(msg);
+    if (msg) setSaveStatus('error');
+  }, []);
+  // When a REMOTE_* action is about to be dispatched, the subscription handler sets this
+  // to true so the sync effect below skips its DB flush for that state transition.
+  // This prevents echo loops: Device A writes → subscription fires on A → dispatch REMOTE_*
+  // → flag=true → sync effect skips so A doesn't re-upsert its own change. Same logic
+  // prevents Device B from writing back a row it just received from the subscription.
+  const isApplyingRemoteRef = useRef(false);
+
+  // Tombstone map: when we delete an appt locally, we remember its id for ~10 seconds.
+  // The race we're protecting against: a stale UPDATE event for that appt may already be
+  // in flight from a prior write. When it arrives AFTER the local DELETE, the reducer's
+  // "if idx === -1, add as new" branch resurrects the row. With a tombstone, the realtime
+  // handler refuses to dispatch REMOTE_APPOINTMENT_UPSERT for IDs we just nuked.
+  const apptTombstonesRef = useRef<Map<string, number>>(new Map());
+  const TOMBSTONE_MS = 10000;
+  function tombstone(id: string) {
+    apptTombstonesRef.current.set(id, Date.now());
+    // Sweep old entries
+    const cutoff = Date.now() - TOMBSTONE_MS;
+    for (const [k, ts] of apptTombstonesRef.current) {
+      if (ts < cutoff) apptTombstonesRef.current.delete(k);
+    }
+  }
+  function isTombstoned(id: string): boolean {
+    const ts = apptTombstonesRef.current.get(id);
+    if (!ts) return false;
+    if (Date.now() - ts > TOMBSTONE_MS) {
+      apptTombstonesRef.current.delete(id);
+      return false;
+    }
+    return true;
+  }
+
+  // Per-table write chain: every appointments-table write (upsert OR delete) is queued onto
+  // this promise so they execute strictly in dispatch order. Without this, two trackSave
+  // calls (e.g. an edit's UPSERT followed quickly by a delete) run in parallel — and if the
+  // DELETE lands first then the in-flight UPSERT lands second, the row is recreated in the
+  // DB. The tombstone protects this tab from the realtime echo, but other tabs (and this tab
+  // after the tombstone expires) see the resurrected row. Serializing writes eliminates the
+  // race entirely.
+  const appointmentWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const chainAppointmentWrite = useCallback((fn: () => Promise<void>): Promise<void> => {
+    const next = appointmentWriteChainRef.current.then(fn, fn).catch((err) => {
+      console.error('[appointmentWriteChain] error:', err);
+    });
+    appointmentWriteChainRef.current = next;
+    return next;
+  }, []);
+
+  useEffect(() => {
+    if (!_dataLoadStarted) {
+      _dataLoadStarted = true;
+      loadInitialData();
+    }
+  }, []);
+
+  // When a tab is hidden, the browser throttles its WebSocket and it can miss realtime
+  // events. On return-to-foreground we re-fetch appointments from DB so this tab can't
+  // push a stale local copy back over a row another tab just deleted.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    async function reconcileAppts() {
+      if (document.visibilityState !== 'visible') return;
+      const { data, error } = await supabase.from('appointments').select('*');
+      if (error || !data) return;
+      // Filter out tombstoned IDs - their DELETE may still be in flight; we don't want
+      // to resurrect them by fetching the pre-delete server snapshot.
+      const fresh = data
+        .map((row) => mapDbAppointment(row as Record<string, unknown>))
+        .filter((a) => !isTombstoned(a.id));
+      isApplyingRemoteRef.current = true;
+      dispatch({ type: 'LOAD_STATE', state: { appointments: fresh } });
+    }
+    document.addEventListener('visibilitychange', reconcileAppts);
+    window.addEventListener('focus', reconcileAppts);
+    return () => {
+      document.removeEventListener('visibilitychange', reconcileAppts);
+      window.removeEventListener('focus', reconcileAppts);
+    };
+  }, []);
+
+  async function loadInitialData() {
+    const [
+      { data: staffRows, error: staffError },
+      { data: queueRows },
+      { data: completedRows },
+      { data: appointmentRows },
+      { data: serviceRows, error: serviceError },
+      { data: criteriaRows },
+      { data: calendarRows },
+      { data: dailyHistoryRows },
+      { data: scheduleRows },
+      { data: timeOffRows },
+    ] = await Promise.all([
+      supabase.from('manicurists').select('*').order('sort_order', { ascending: true }),
+      supabase.from('queue_entries').select('*'),
+      supabase.from('completed_services').select('*'),
+      supabase.from('appointments').select('*'),
+      supabase.from('salon_services').select('*').order('sort_order'),
+      supabase.from('turn_criteria').select('*'),
+      supabase.from('calendar_days').select('*'),
+      supabase.from('daily_history').select('*').order('date', { ascending: false }),
+      supabase.from('staff_schedules').select('*'),
+      supabase.from('staff_time_off').select('*'),
+    ]);
+
+    const appointments = (appointmentRows || []).map(mapDbAppointment);
+    // Only seed defaults when the query itself succeeded and genuinely returned nothing.
+    // If serviceError is set it means the DB call failed â we must not overwrite with defaults.
+    if (!serviceError && (!serviceRows || serviceRows.length === 0)) {
+      for (const s of defaultSalonServices) {
+        const { error } = await supabase.from('salon_services').upsert({
+          id: s.id,
+          name: s.name,
+          category: s.category,
+          price: s.price,
+          sort_order: s.sortOrder,
+          turn_value: s.turnValue,
+          duration: s.duration,
+          is_active: s.isActive,
+          is_fourth_position_special: s.isFourthPositionSpecial,
+        }, { onConflict: 'id' });
+        if (error) console.error('[loadInitialData] salon_services seed error:', error);
+      }
+    }
+    const salonServices = (serviceRows && serviceRows.length > 0)
+      ? serviceRows.map(mapDbSalonService)
+      : defaultSalonServices;
+    const turnCriteria = (criteriaRows || []).map(mapDbTurnCriteria);
+    const calendarDays = (calendarRows || []).map(mapDbCalendarDay);
+    const staffSchedules = (scheduleRows || []).map(mapDbStaffSchedule);
+    const staffTimeOff = (timeOffRows || []).map(mapDbStaffTimeOff);
+    const dailyHistory: DailyHistory[] = (dailyHistoryRows || []).map((row: Record<string, unknown>) => ({
+      id: row.id as string,
+      date: row.date as string,
+      entries: (row.entries as CompletedEntry[]) || [],
+    }));
+
+    let manicurists = (staffRows || []).map(mapDbManicurist);
+    // Guard: only seed default manicurists when the query succeeded with zero rows.
+    // A staffError means the DB call failed â seeding here would replace real data with defaults.
+    if (!staffError && manicurists.length === 0) {
+      for (const m of defaultManicurists) {
+        const { error } = await supabase.from('manicurists').insert({
+          id: m.id,
+          name: m.name,
+          color: m.color,
+          phone: m.phone,
+          skills: m.skills,
+          clocked_in: m.clockedIn,
+          clock_in_time: m.clockInTime ? new Date(m.clockInTime).toISOString() : null,
+          total_turns: m.totalTurns,
+          current_client_id: m.currentClient,
+          status: m.status,
+          has_fourth_position_special: m.hasFourthPositionSpecial,
+          has_check2: m.hasCheck2,
+          has_check3: m.hasCheck3,
+          has_wax: m.hasWax,
+          has_wax2: m.hasWax2,
+          has_wax3: m.hasWax3,
+          time_adjustments: m.timeAdjustments || {},
+          pin_code: m.pinCode || null,
+          break_start_time: m.breakStartTime ?? null,
+          sms_opt_in: m.smsOptIn || false,
+        });
+        if (error) console.error('[loadInitialData] manicurists seed error:', error);
+      }
+      manicurists = defaultManicurists;
+    }
+    const queue = (queueRows || []).map(mapDbQueueEntry);
+    const completed = (completedRows || []).map((row: Record<string, unknown>) => {
+      const dbSvcs = row.services as string[] | null;
+      const fallbackSvc = row.service as string;
+      const services = (dbSvcs && dbSvcs.length > 0 ? dbSvcs : [fallbackSvc]).filter(Boolean) as ServiceType[];
+      const rawRequested = Array.isArray(row.requested_services) ? (row.requested_services as string[]) : [];
+
+      // Cleanup: a bug caused ALL services on multi-service split entries to get synthetic
+      // requested_services (even when the client never requested anyone). Detect and clear:
+      // bad pattern = every service in the entry is also in requestedServices (all marked requested)
+      // AND there are 2+ services (single-service genuine requests are safe to keep).
+      const reqSet = new Set(rawRequested);
+      const isBadPattern = services.length > 1
+        && rawRequested.length > 0
+        && services.every((s) => reqSet.has(s as string));
+
+      return {
+        id: row.id as string,
+        clientName: row.client_name as string,
+        services,
+        turnValue: Number(row.turn_value) || 0,
+        manicuristId: row.manicurist_id as string,
+        manicuristName: row.manicurist_name as string,
+        manicuristColor: row.manicurist_color as string,
+        startedAt: new Date(row.started_at as string).getTime(),
+        completedAt: new Date(row.completed_at as string).getTime(),
+        requestedServices: isBadPattern ? undefined : (rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined),
+        isAppointment: (row.is_appointment as boolean) || false,
+        isRequested: (row.is_requested as boolean) || false,
+      };
+    });
+
+    // Persist the cleanup to DB for any bad entries we found above
+    for (const e of completed) {
+      const rawRow = (completedRows || []).find((r: Record<string, unknown>) => r.id === e.id);
+      const rawRequested = Array.isArray(rawRow?.requested_services) ? rawRow.requested_services as string[] : [];
+      if (rawRequested.length > 0 && e.requestedServices === undefined) {
+        // This entry had bad data â clear it in the DB too
+        const { error: cleanupError } = await supabase.from('completed_services').update({ requested_services: [] }).eq('id', e.id);
+        if (cleanupError) console.error('[loadInitialData] cleanup error:', cleanupError);
+      }
+    }
+
+    // Also clean daily_history entries with the same bad pattern
+    const cleanedHistory = dailyHistory.map((day) => ({
+      ...day,
+      entries: day.entries.map((e) => {
+        const rawReq = Array.isArray(e.requestedServices) ? (e.requestedServices as string[]) : [];
+        if (rawReq.length === 0 || e.services.length <= 1) return e;
+        const reqSet2 = new Set(rawReq);
+        const isBad = (e.services as string[]).every((s) => reqSet2.has(s));
+        return isBad ? { ...e, requestedServices: undefined } : e;
+      }),
+    }));
+    for (const day of cleanedHistory) {
+      const orig = dailyHistory.find((d) => d.id === day.id);
+      const changed = orig && JSON.stringify(orig.entries) !== JSON.stringify(day.entries);
+      if (changed) {
+        const { error: cleanupError } = await supabase.from('daily_history').update({ entries: day.entries }).eq('id', day.id);
+        if (cleanupError) console.error('[loadInitialData] cleanup error:', cleanupError);
+      }
+    }
+
+    // Priority list: load from system_state singleton. If DB null but localStorage has values,
+    // perform a one-time migration so the existing settings on this device aren't blown away.
+    // We mirror the chosen values into localStorage so legacy reads in
+    // assignHelpers.getDistinctServices keep working.
+    const localCat = readLocalCatPriority();
+    const localSvc = readLocalSvcPriority();
+
+    let initialCatPriority: string[] = [];
+    let initialSvcPriority: Record<string, string[]> = {};
+
+    const { data: priorityRow } = await supabase
+      .from('system_state')
+      .select('category_priority, service_priority')
+      .eq('id', 'singleton')
+      .single();
+    const dbCatPriority = (priorityRow as Record<string, unknown> | null)?.category_priority as string[] | null;
+    const dbSvcPriority = (priorityRow as Record<string, unknown> | null)?.service_priority as Record<string, string[]> | null;
+
+    if (Array.isArray(dbCatPriority)) {
+      initialCatPriority = dbCatPriority;
+      try { localStorage.setItem(CAT_PRIORITY_KEY, JSON.stringify(dbCatPriority)); } catch {}
+    } else if (localCat && localCat.length > 0) {
+      initialCatPriority = localCat;
+      const { error: migErr } = await supabase
+        .from('system_state')
+        .upsert({ id: 'singleton', category_priority: localCat, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      if (migErr) console.error('[loadInitialData] category_priority migration error:', migErr);
+      else console.log('[loadInitialData] migrated localStorage category_priority to system_state');
+    }
+
+    if (dbSvcPriority && typeof dbSvcPriority === 'object') {
+      initialSvcPriority = dbSvcPriority;
+      try { localStorage.setItem(SVC_PRIORITY_KEY, JSON.stringify(dbSvcPriority)); } catch {}
+    } else if (localSvc && Object.keys(localSvc).length > 0) {
+      initialSvcPriority = localSvc;
+      const { error: migErr } = await supabase
+        .from('system_state')
+        .upsert({ id: 'singleton', service_priority: localSvc, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      if (migErr) console.error('[loadInitialData] service_priority migration error:', migErr);
+      else console.log('[loadInitialData] migrated localStorage service_priority to system_state');
+    }
+
+    dispatch({ type: 'LOAD_STATE', state: {
+      manicurists, queue, completed, appointments, salonServices,
+      turnCriteria, calendarDays, dailyHistory: cleanedHistory,
+      staffSchedules, staffTimeOff,
+      categoryPriority: initialCatPriority,
+      servicePriority: initialSvcPriority,
+    } });
+
+    // Startup stale-data check: two conditions trigger an archive+reset on load:
+    // 1. system_state.last_archive_date is behind today â the 11:59pm timer missed (app closed,
+    //    or stale closure bug prevented it from firing). Archive any missed day's data now.
+    // 2. Stale completed/queue entries exist with dates before today â belt-and-suspenders catch.
+    const today = getTodayLA();
+    const { data: sysStateRow } = await supabase.from('system_state').select('last_archive_date').eq('id', 'singleton').single();
+    const lastArchiveDate = (sysStateRow as Record<string,unknown> | null)?.last_archive_date as string | null;
+    if (lastArchiveDate && lastArchiveDate < today) {
+      console.log('[startup] missed reset detected â system_state.last_archive_date=', lastArchiveDate, 'today=', today);
+    }
+    const staleCompleted = completed.filter(c => getLocalDateStr(new Date(c.completedAt)) < today);
+    const staleQueue = queue.filter(c => getLocalDateStr(new Date(c.arrivedAt)) < today);
+
+    if (staleCompleted.length > 0 || staleQueue.length > 0) {
+      console.log('[startup] stale data detected from previous day â archiving and resetting', { staleCompleted: staleCompleted.length, staleQueue: staleQueue.length });
+
+      // SAFETY: read every stale completed_services row directly from the DB
+      // and merge with the JS-state entries by id. Without this, anything in
+      // the DB that hadn't yet been pulled into JS state (realtime sync lag,
+      // a concurrent write from another tab) would be deleted in the cleanup
+      // step below without being archived. Root cause of the 5/17 partial
+      // archive incident: the JS state held only 18 entries, but the DB had
+      // ~108. The 90 in the gap were wiped by the delete with no archive.
+      const dbCompletedById = new Map<string, CompletedEntry>();
+      for (const c of staleCompleted) {
+        dbCompletedById.set(c.id, c);
+      }
+      try {
+        const todayMidnightLA = new Date(today + 'T00:00:00-07:00').toISOString();
+        const { data: dbRows, error: fetchErr } = await supabase
+          .from('completed_services')
+          .select('*')
+          .lt('completed_at', todayMidnightLA);
+        if (fetchErr) {
+          console.error('[startup] failed to fetch stale completed_services from DB:', fetchErr);
+        } else if (dbRows) {
+          for (const row of dbRows as Array<Record<string, unknown>>) {
+            const id = String(row.id ?? '');
+            if (id && !dbCompletedById.has(id)) {
+              dbCompletedById.set(id, mapDbCompleted(row));
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[startup] fetch stale completed_services threw:', err);
+      }
+
+      // Archive stale completed entries grouped by date, update in-memory state too
+      const byDate = new Map<string, CompletedEntry[]>();
+      for (const c of dbCompletedById.values()) {
+        const d = getLocalDateStr(new Date(c.completedAt));
+        if (!byDate.has(d)) byDate.set(d, []);
+        byDate.get(d)!.push(c);
+      }
+      // Track which date archives committed successfully so we only delete
+      // their rows from completed_services. If a date's upsert errors, leave
+      // its rows in place so a future startup retries the archive.
+      const archivedDates = new Set<string>();
+      const updatedHistory = [...dailyHistory];
+      for (const [date, entries] of byDate) {
+        const existingIdx = updatedHistory.findIndex(h => h.date === date);
+        const existing = existingIdx >= 0 ? updatedHistory[existingIdx] : null;
+        // De-dupe by entry id when merging so re-runs of this path can't
+        // double-count the same completed_service rows.
+        const seenIds = new Set<string>();
+        const mergedEntries: CompletedEntry[] = [];
+        for (const e of [...(existing?.entries ?? []), ...entries]) {
+          if (seenIds.has(e.id)) continue;
+          seenIds.add(e.id);
+          mergedEntries.push(e);
+        }
+        const historyEntry: DailyHistory = {
+          id: existing?.id ?? crypto.randomUUID(),
+          date,
+          entries: mergedEntries,
+        };
+        const { error: histErr } = await supabase.from('daily_history').upsert(
+          { id: historyEntry.id, date: historyEntry.date, entries: historyEntry.entries },
+          { onConflict: 'date' }
+        );
+        if (histErr) {
+          console.error('[startup] daily_history upsert error for', date, ':', histErr);
+          setSyncError('Failed to archive history. Data preserved for retry on next startup.');
+          continue;
+        }
+        archivedDates.add(date);
+        // Update in-memory history so the history screen can find it immediately
+        dispatch({ type: 'SAVE_DAILY_HISTORY', entry: historyEntry });
+      }
+
+      // Clear stale queue entries unconditionally - these were unfinished work
+      // that the day boundary aged out, not data that needs archiving.
+      for (const c of staleQueue) {
+        await supabase.from('queue_entries').delete().eq('id', c.id);
+      }
+      // Only delete completed_services rows for dates whose archive succeeded.
+      // Rows for failed-archive dates stay in DB so the next startup retries.
+      const idsToDelete: string[] = [];
+      for (const [d, entries] of byDate) {
+        if (!archivedDates.has(d)) continue;
+        for (const e of entries) idsToDelete.push(e.id);
+      }
+      if (idsToDelete.length > 0) {
+        const { error: deleteErr } = await supabase.from('completed_services').delete().in('id', idsToDelete);
+        if (deleteErr) console.error('[startup] failed to delete archived completed_services:', deleteErr);
+      }
+
+      dispatch({ type: 'DAILY_RESET' });
+
+      // Update system_state ONLY if every date archived successfully. If any
+      // failed, leave last_archive_date stale so the next startup retries.
+      const allArchived = byDate.size === 0 || Array.from(byDate.keys()).every(d => archivedDates.has(d));
+      if (allArchived) {
+        const { error: ssErr } = await supabase
+          .from('system_state')
+          .upsert({ id: 'singleton', last_archive_date: today, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+        if (ssErr) console.error('[startup] failed to update system_state:', ssErr);
+        else console.log('[startup] system_state updated to', today);
+      } else {
+        console.warn('[startup] some dates failed to archive - leaving system_state stale for retry');
+      }
+    } else if (lastArchiveDate && lastArchiveDate < today) {
+      // system_state is stale but no stale entries found in DB â the reset DID clear the DB
+      // but system_state was never updated. Fix the date so future startups dont re-run.
+      await supabase
+        .from('system_state')
+        .upsert({ id: 'singleton', last_archive_date: today, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      console.log('[startup] system_state was stale with no stale data â updated to', today);
+    }
+  }
+
+  const saveTodayHistory = useCallback(async (dateOverride?: string): Promise<boolean> => {
+    const completed = completedRef.current;
+    if (completed.length === 0) return true; // nothing to save â not an error
+    const date = dateOverride ?? getTodayLA();
+    // Reuse the existing entry's ID for this date so repeated saves don't generate a new
+    // UUID each time (which would fight the onConflict 'date' upsert and change the stored id).
+    const existingEntry = dailyHistoryRef.current.find(h => h.date === date);
+    const entry: DailyHistory = {
+      id: existingEntry?.id ?? crypto.randomUUID(),
+      date,
+      entries: completed,
+    };
+    const { error } = await supabase
+      .from('daily_history')
+      .upsert({ id: entry.id, date: entry.date, entries: entry.entries }, { onConflict: 'date' });
+    if (error) {
+      console.error('[saveTodayHistory] upsert error:', error);
+      setSyncError('Failed to save history â data may not be saved. Check connection.');
+      return false; // caller must NOT dispatch or reset on failure
+    }
+    dispatch({ type: 'SAVE_DAILY_HISTORY', entry });
+    return true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Intentionally empty â reads completedRef/dailyHistoryRef, never stale state
+
+  const archiveTodayIfNeeded = useCallback(async (skipHourCheck = false) => {
+    const now = new Date();
+    const laHour = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        hour: '2-digit',
+        hour12: false,
+      }).format(now)
+    );
+    // The hour check is bypassed when called from startup (skipHourCheck=true),
+    // since a missed reset from a previous day should always run regardless of current time.
+    if (!skipHourCheck && (laHour < 23 || laHour >= 24)) {
+      console.error('[archiveTodayIfNeeded] aborted â not within rollover window', { laHour });
+      return;
+    }
+    const saved = await saveTodayHistory();
+    if (!saved) {
+      // Save failed â do NOT reset. Keeping today's data in memory is safer than
+      // wiping it. The scheduler will retry on the next tick.
+      console.error('[archiveTodayIfNeeded] save failed â skipping DAILY_RESET to prevent data loss');
+      return;
+    }
+    dispatch({ type: 'DAILY_RESET' });
+    // Write today's date to system_state so the startup check knows the reset ran.
+    const archiveDate = getTodayLA();
+    const { error: ssError } = await supabase
+      .from('system_state')
+      .upsert({ id: 'singleton', last_archive_date: archiveDate, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (ssError) console.error('[archiveTodayIfNeeded] failed to update system_state:', ssError);
+    else console.log('[archiveTodayIfNeeded] reset complete, system_state updated to', archiveDate);
+  }, [saveTodayHistory]);
+
+  // Setter for the Blueprint priority lists. Dispatches the local update immediately
+  // (so the UI doesn't snap-back during the round-trip), mirrors to localStorage so
+  // legacy reads in assignHelpers stay correct, and upserts to Supabase. The realtime
+  // subscription will broadcast the change to other devices, which dispatch SET_PRIORITY
+  // and update their own localStorage from the same channel handler.
+  const setPriority = useCallback(async (next: { categoryPriority?: string[]; servicePriority?: Record<string, string[]> }) => {
+    // Local state first — keeps the dragged item in its dropped position.
+    dispatch({ type: 'SET_PRIORITY', ...next });
+    // Mirror to localStorage so getPriorityRank() in priorityStorage sees the new order
+    // even before the round-trip completes.
+    if (next.categoryPriority !== undefined) {
+      try { localStorage.setItem(CAT_PRIORITY_KEY, JSON.stringify(next.categoryPriority)); } catch {}
+    }
+    if (next.servicePriority !== undefined) {
+      try { localStorage.setItem(SVC_PRIORITY_KEY, JSON.stringify(next.servicePriority)); } catch {}
+    }
+    // Persist to DB. Wrap in trackSave so save status indicators reflect the upsert.
+    await trackSave(async () => {
+      const row: Record<string, unknown> = { id: 'singleton', updated_at: new Date().toISOString() };
+      if (next.categoryPriority !== undefined) row.category_priority = next.categoryPriority;
+      if (next.servicePriority !== undefined) row.service_priority = next.servicePriority;
+      const { error } = await withRetry(() => supabase.from('system_state').upsert(row, { onConflict: 'id' }));
+      if (error) {
+        console.error('[setPriority] upsert error:', error);
+        setSyncErrorTracked('Sync failed — priority list may not be saved. Check connection.');
+      }
+    });
+  }, [trackSave, setSyncErrorTracked]);
+
+  const isStaffMode = typeof window !== 'undefined' && (
+    new URLSearchParams(window.location.search).get('mode') === 'staff' ||
+    (window as any).__TURNEM_STAFF_MODE__ === true
+  );
+
+  useEffect(() => {
+    if (!state.loaded) return;
+    // Snapshot-and-clear the remote flag up front so every early-return path clears it too.
+    const wasRemote = isApplyingRemoteRef.current;
+    isApplyingRemoteRef.current = false;
+    const prev = prevStateRef.current;
+
+    // CRITICAL: detect local appointment deletions BEFORE any early-return on wasRemote.
+    // Why: when React batches a local DELETE with a concurrent realtime UPSERT echo into one
+    // render, wasRemote ends up true and the rest of the sync gets skipped. Without this guard,
+    // the local delete is reflected in state but never persisted to DB, never tombstoned, and a
+    // subsequent UPSERT/refresh resurrects the row. Deletions are idempotent and don't cause
+    // echo loops, so we always run them regardless of wasRemote.
+    if (prev.loaded && !isStaffMode && prev.appointments !== state.appointments) {
+      const currentApptIds = new Set(state.appointments.map((a) => a.id));
+      const deletedAppts = prev.appointments.filter((a) => !currentApptIds.has(a.id));
+      if (deletedAppts.length > 0) {
+        for (const a of deletedAppts) tombstone(a.id);
+        trackSave(() => chainAppointmentWrite(async () => {
+          for (const a of deletedAppts) {
+            const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
+            if (error) {
+              console.error('[sync deleteAppt] error:', error);
+              setSyncErrorTracked('Sync failed - data may not be saved. Check connection.');
+            }
+          }
+        }));
+      }
+    }
+
+    // Staff mode is read-only - never sync back to DB
+    if (isStaffMode) {
+      prevStateRef.current = state;
+      completedRef.current = state.completed;
+      dailyHistoryRef.current = state.dailyHistory;
+      return;
+    }
+    // This state change came from a realtime subscription. Skip the flush so we don't
+    // echo the remote change back to the DB (which would re-broadcast and loop).
+    // (Deletion sync above runs unconditionally to survive batched local+remote renders.)
+    if (wasRemote) {
+      prevStateRef.current = state;
+      completedRef.current = state.completed;
+      dailyHistoryRef.current = state.dailyHistory;
+      return;
+    }
+    // On the very first render after loadInitialData dispatches LOAD_STATE, prev still holds
+    // INITIAL_STATE (all empty arrays). Syncing here would push empty state back to the DB
+    // and race with the just-completed fetch. Skip this first run and just advance the ref.
+    if (!prev.loaded) {
+      prevStateRef.current = state;
+      return;
+    }
+    if (prev.manicurists !== state.manicurists) trackSave(() => syncManicurists(state.manicurists, prev.manicurists, setSyncErrorTracked));
+    if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked, state.salonServices, state.manicurists, state.completed));
+    if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked, state.salonServices));
+    if (prev.appointments !== state.appointments) {
+      // Deletions already handled above (with tombstoning). syncAppointments here upserts
+      // current rows; its internal delete pass is a redundant safety net. We funnel both
+      // writes through chainAppointmentWrite so this UPSERT cannot overtake the DELETE that
+      // just got queued above (or any earlier write) — eliminating the write-write race
+      // that resurrects appointments after a quick edit-then-delete.
+      trackSave(() => chainAppointmentWrite(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked)));
+    }
+    if (prev.salonServices !== state.salonServices) trackSave(() => syncSalonServices(state.salonServices, prev.salonServices, setSyncErrorTracked));
+    if (prev.turnCriteria !== state.turnCriteria) trackSave(() => syncTurnCriteria(state.turnCriteria, prev.turnCriteria, setSyncErrorTracked));
+    if (prev.calendarDays !== state.calendarDays) trackSave(() => syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncErrorTracked));
+    if (prev.dailyHistory !== state.dailyHistory) trackSave(() => syncDailyHistory(state.dailyHistory, prev.dailyHistory, setSyncErrorTracked));
+    if (prev.staffSchedules !== state.staffSchedules) trackSave(() => syncStaffSchedules(state.staffSchedules, prev.staffSchedules, setSyncErrorTracked));
+    if (prev.staffTimeOff !== state.staffTimeOff) trackSave(() => syncStaffTimeOff(state.staffTimeOff, prev.staffTimeOff, setSyncErrorTracked));
+    prevStateRef.current = state;
+    completedRef.current = state.completed;
+    dailyHistoryRef.current = state.dailyHistory;
+  }, [state]);
+
+  // Realtime multi-device sync. Subscribes to postgres_changes on the five live-ops tables
+  // after the initial data load. Each INSERT/UPDATE/DELETE from another device (or an echo
+  // of our own write) becomes a REMOTE_* action. The sync effect above checks isApplyingRemoteRef
+  // and skips the DB flush for any state change caused by these actions, preventing echo loops.
+  useEffect(() => {
+    if (!state.loaded) return;
+
+    const manicuristsChan = supabase
+      .channel('realtime:manicurists')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'manicurists' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_MANICURIST_DELETE', id });
+          else isApplyingRemoteRef.current = false; // nothing dispatched, clear flag
+        } else {
+          dispatch({ type: 'REMOTE_MANICURIST_UPSERT', manicurist: mapDbManicurist(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const queueChan = supabase
+      .channel('realtime:queue_entries')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'queue_entries' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_QUEUE_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_QUEUE_UPSERT', entry: mapDbQueueEntry(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const completedChan = supabase
+      .channel('realtime:completed_services')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'completed_services' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_COMPLETED_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_COMPLETED_UPSERT', entry: mapDbCompleted(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const appointmentsChan = supabase
+      .channel('realtime:appointments')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, (payload) => {
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) {
+            tombstone(id); // remember it so any stale UPDATE that arrives later is ignored
+            isApplyingRemoteRef.current = true;
+            dispatch({ type: 'REMOTE_APPOINTMENT_DELETE', id });
+          }
+        } else {
+          const row = mapDbAppointment(payload.new as Record<string, unknown>);
+          // Reject resurrections: if we just deleted this id locally (or saw a remote DELETE),
+          // ignore any stale UPSERT that's still in flight.
+          if (isTombstoned(row.id)) return; // stale UPSERT for an id we just deleted — ignore
+          isApplyingRemoteRef.current = true;
+          dispatch({ type: 'REMOTE_APPOINTMENT_UPSERT', appointment: row });
+        }
+      })
+      .subscribe();
+
+    const salonServicesChan = supabase
+      .channel('realtime:salon_services')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'salon_services' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_SALON_SERVICE_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_SALON_SERVICE_UPSERT', service: mapDbSalonService(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const turnCriteriaChan = supabase
+      .channel('realtime:turn_criteria')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'turn_criteria' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_TURN_CRITERIA_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_TURN_CRITERIA_UPSERT', criteria: mapDbTurnCriteria(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const calendarDaysChan = supabase
+      .channel('realtime:calendar_days')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_days' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const date = (payload.old as { date?: string } | null)?.date;
+          if (date) dispatch({ type: 'REMOTE_CALENDAR_DAY_DELETE', date });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_CALENDAR_DAY_UPSERT', day: mapDbCalendarDay(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const staffSchedulesChan = supabase
+      .channel('realtime:staff_schedules')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_schedules' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_STAFF_SCHEDULE_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_STAFF_SCHEDULE_UPSERT', entry: mapDbStaffSchedule(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    const staffTimeOffChan = supabase
+      .channel('realtime:staff_time_off')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_time_off' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_STAFF_TIME_OFF_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_STAFF_TIME_OFF_UPSERT', entry: mapDbStaffTimeOff(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
+    // system_state is a singleton and the reducer's REMOTE_SYSTEM_STATE_UPDATE case
+    // returns state unchanged (no local field tracks it — the startup check reads from DB
+    // directly). We therefore DO NOT set isApplyingRemoteRef here: if we did, the reducer
+    // would short-circuit, useReducer would skip re-rendering, the sync effect would never
+    // run, and the flag would stay true — poisoning the next real local change.
+    const systemStateChan = supabase
+      .channel('realtime:system_state')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, (payload) => {
+        const newRow = payload.new as Record<string, unknown> | null;
+        const lastArchiveDate = (newRow?.last_archive_date as string) ?? null;
+        dispatch({ type: 'REMOTE_SYSTEM_STATE_UPDATE', lastArchiveDate });
+        // Priority columns: dispatch SET_PRIORITY (no need to set isApplyingRemoteRef
+        // because SET_PRIORITY updates only state.categoryPriority/servicePriority,
+        // neither of which is touched by the local sync effect — there's no echo to skip).
+        // Mirror to localStorage so legacy reads in assignHelpers.getDistinctServices
+        // (and the priorityStorage helpers) see the same ordering on every device.
+        const remoteCat = newRow?.category_priority as string[] | null | undefined;
+        const remoteSvc = newRow?.service_priority as Record<string, string[]> | null | undefined;
+        const priorityUpdate: { categoryPriority?: string[]; servicePriority?: Record<string, string[]> } = {};
+        if (Array.isArray(remoteCat)) {
+          priorityUpdate.categoryPriority = remoteCat;
+          try { localStorage.setItem(CAT_PRIORITY_KEY, JSON.stringify(remoteCat)); } catch {}
+        }
+        if (remoteSvc && typeof remoteSvc === 'object' && !Array.isArray(remoteSvc)) {
+          priorityUpdate.servicePriority = remoteSvc;
+          try { localStorage.setItem(SVC_PRIORITY_KEY, JSON.stringify(remoteSvc)); } catch {}
+        }
+        if (priorityUpdate.categoryPriority || priorityUpdate.servicePriority) {
+          dispatch({ type: 'SET_PRIORITY', ...priorityUpdate });
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(manicuristsChan);
+      supabase.removeChannel(queueChan);
+      supabase.removeChannel(completedChan);
+      supabase.removeChannel(appointmentsChan);
+      supabase.removeChannel(salonServicesChan);
+      supabase.removeChannel(turnCriteriaChan);
+      supabase.removeChannel(calendarDaysChan);
+      supabase.removeChannel(staffSchedulesChan);
+      supabase.removeChannel(staffTimeOffChan);
+      supabase.removeChannel(systemStateChan);
+    };
+  }, [state.loaded]);
+
+  useEffect(() => {
+    if (!state.loaded) return;
+
+    function getMillisecondsUntilLaSalonClose(): number {
+      const now = new Date();
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).formatToParts(now);
+      const laHour   = Number(parts.find(p => p.type === 'hour')?.value   ?? '0');
+      const laMinute = Number(parts.find(p => p.type === 'minute')?.value ?? '0');
+      const laSecond = Number(parts.find(p => p.type === 'second')?.value ?? '0');
+
+      const CLOSE_HOUR = 23; // 11pm LA â targets 11:59pm
+      const currentLaSeconds = laHour * 3600 + laMinute * 60 + laSecond;
+      const targetLaSeconds  = CLOSE_HOUR * 3600 + 59 * 60; // 11:59pm LA
+      let deltaSeconds = targetLaSeconds - currentLaSeconds;
+      if (deltaSeconds <= 0) deltaSeconds += 24 * 3600; // already past 9pm â target tomorrow
+      return deltaSeconds * 1000;
+    }
+
+    function scheduleReset() {
+      const msUntilClose = getMillisecondsUntilLaSalonClose();
+      const timeoutId = setTimeout(() => {
+        archiveTodayIfNeeded();
+        scheduleReset();
+      }, msUntilClose);
+      return timeoutId;
+    }
+
+    const timeoutId = scheduleReset();
+    return () => clearTimeout(timeoutId);
+  }, [state.loaded, archiveTodayIfNeeded]);
+
+  // Memoize the context value so AppProvider re-renders that didn't actually
+  // change anything (e.g. parent re-render with same props) don't cascade
+  // into all 30+ useApp() consumers. When state/syncError/saveStatus do change,
+  // useMemo returns a fresh object and consumers correctly re-render.
+  const ctxValue = useMemo(
+    () => ({ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority }),
+    [state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority],
+  );
+
+  return (
+    <AppDispatchContext.Provider value={dispatch}>
+      <AppContext.Provider value={ctxValue}>
+        {children}
+      </AppContext.Provider>
+    </AppDispatchContext.Provider>
+  );
+}
+
+/** Subscribe only to the dispatch function. Stable across the lifetime of
+ *  AppProvider, so consumers using this hook never re-render from state
+ *  changes — they only re-render if their own state/props change. */
+export function useAppDispatch() {
+  const dispatch = useContext(AppDispatchContext);
+  if (!dispatch) throw new Error('useAppDispatch must be used within AppProvider');
+  return dispatch;
+}
+
+async function withRetry<T>(
+  fn: () => PromiseLike<{ data?: T; error: unknown }>,
+  retries = 3,
+  delayMs = 2000
+): Promise<{ data?: T; error: unknown }> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const result = await fn();
+    if (!result.error) return result;
+    if (attempt < retries) await new Promise(res => setTimeout(res, delayMs * attempt));
+  }
+  return fn();
+}
+
+// Per-row equality for Manicurist. Reference equality short-circuits for the common
+// case (the reducer reused the same object). For changed references, compare the
+// fields we actually persist — including stable JSON encodings of the array/object
+// columns so structurally-equal blobs don't trigger writes.
+function manicuristUnchanged(a: Manicurist, b: Manicurist, aIdx: number, bIdx: number): boolean {
+  if (a === b && aIdx === bIdx) return true;
+  return (
+    aIdx === bIdx &&
+    a.name === b.name &&
+    a.color === b.color &&
+    a.phone === b.phone &&
+    a.clockedIn === b.clockedIn &&
+    a.clockInTime === b.clockInTime &&
+    a.totalTurns === b.totalTurns &&
+    a.currentClient === b.currentClient &&
+    a.status === b.status &&
+    a.hasFourthPositionSpecial === b.hasFourthPositionSpecial &&
+    a.hasCheck2 === b.hasCheck2 &&
+    a.hasCheck3 === b.hasCheck3 &&
+    a.hasWax === b.hasWax &&
+    a.hasWax2 === b.hasWax2 &&
+    a.hasWax3 === b.hasWax3 &&
+    a.pinCode === b.pinCode &&
+    a.breakStartTime === b.breakStartTime &&
+    a.smsOptIn === b.smsOptIn &&
+    a.showInBook === b.showInBook &&
+    a.isReceptionist === b.isReceptionist &&
+    (a.notificationBody || '') === (b.notificationBody || '') &&
+    JSON.stringify(a.skills) === JSON.stringify(b.skills) &&
+    JSON.stringify(a.timeAdjustments || {}) === JSON.stringify(b.timeAdjustments || {})
+  );
+}
+
+function manicuristToRow(m: Manicurist, idx: number) {
+  return {
+    id: m.id,
+    name: m.name,
+    color: m.color,
+    phone: m.phone || null,
+    skills: m.skills,
+    clocked_in: m.clockedIn,
+    clock_in_time: m.clockInTime ? new Date(m.clockInTime).toISOString() : null,
+    total_turns: m.totalTurns,
+    current_client_id: m.currentClient,
+    status: m.status,
+    has_fourth_position_special: m.hasFourthPositionSpecial,
+    has_check2: m.hasCheck2,
+    has_check3: m.hasCheck3,
+    has_wax: m.hasWax,
+    has_wax2: m.hasWax2,
+    has_wax3: m.hasWax3,
+    time_adjustments: m.timeAdjustments || {},
+    pin_code: m.pinCode || null,
+    break_start_time: m.breakStartTime ?? null,
+    sms_opt_in: m.smsOptIn || false,
+    sort_order: idx,
+    show_in_book: m.showInBook !== false,
+    is_receptionist: m.isReceptionist || false,
+    notification_body: m.notificationBody || null,
+  };
+}
+
+async function syncManicurists(manicurists: Manicurist[], prev: Manicurist[], onError: (msg: string) => void) {
+  const prevById = new Map(prev.map((m, idx) => [m.id, { m, idx }]));
+  const changed: ReturnType<typeof manicuristToRow>[] = [];
+  manicurists.forEach((m, idx) => {
+    const previous = prevById.get(m.id);
+    if (previous && manicuristUnchanged(previous.m, m, previous.idx, idx)) return;
+    changed.push(manicuristToRow(m, idx));
+  });
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('manicurists').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function queueEntryUnchanged(a: QueueEntry, b: QueueEntry): boolean {
+  if (a === b) return true;
+  return (
+    a.clientName === b.clientName &&
+    a.turnValue === b.turnValue &&
+    (a.parentQueueId ?? a.id) === (b.parentQueueId ?? b.id) &&
+    a.requestedManicuristId === b.requestedManicuristId &&
+    a.isRequested === b.isRequested &&
+    a.isAppointment === b.isAppointment &&
+    a.assignedManicuristId === b.assignedManicuristId &&
+    a.status === b.status &&
+    a.arrivedAt === b.arrivedAt &&
+    a.startedAt === b.startedAt &&
+    a.completedAt === b.completedAt &&
+    a.extraTimeMs === b.extraTimeMs &&
+    JSON.stringify(a.services) === JSON.stringify(b.services) &&
+    JSON.stringify(a.serviceRequests) === JSON.stringify(b.serviceRequests) &&
+    JSON.stringify(a.originalAppointment ?? null) === JSON.stringify(b.originalAppointment ?? null)
+  );
+}
+
+function queueEntryToRow(c: QueueEntry) {
+  return {
+    id: c.id,
+    parent_queue_id: c.parentQueueId ?? c.id,
+    client_name: c.clientName,
+    service: c.services[0] || '',
+    services: c.services,
+    turn_value: c.turnValue,
+    service_requests: c.serviceRequests,
+    requested_manicurist_id: c.requestedManicuristId,
+    is_requested: c.isRequested,
+    is_appointment: c.isAppointment,
+    assigned_manicurist_id: c.assignedManicuristId,
+    status: c.status,
+    arrived_at: new Date(c.arrivedAt).toISOString(),
+    started_at: c.startedAt ? new Date(c.startedAt).toISOString() : null,
+    completed_at: c.completedAt ? new Date(c.completedAt).toISOString() : null,
+    extra_time_ms: c.extraTimeMs || 0,
+    original_appointment: c.originalAppointment ?? null,
+  };
+}
+
+/**
+ * For each queue entry whose `assignedManicuristId` just changed from
+ * null/undefined to a real id, push that staff into the matching open
+ * ticket. Conservative: only fills empty ticket fields.
+ */
+async function maybeBackfillTicketsForAssignedEntries(
+  queue: QueueEntry[],
+  prevById: Map<string, QueueEntry>,
+  manicurists: AppState['manicurists'],
+  salonServices: AppState['salonServices'],
+) {
+  for (const c of queue) {
+    const previous = prevById.get(c.id);
+    if (!previous) continue; // newly-added entries are handled below
+    const before = previous.assignedManicuristId ?? null;
+    const after = c.assignedManicuristId ?? null;
+    if (after && after !== before) {
+      const m = manicurists.find((mm) => mm.id === after);
+      if (!m) continue;
+      try {
+        await backfillTicketStaff(c.id, m.id, m.name, m.color);
+      } catch (err) {
+        console.warn('[syncQueue] backfillTicketStaff failed for', c.id, err);
+      }
+    }
+  }
+
+  // Self-healing pass for SPLIT_AND_ASSIGN sibling visits: every assigned
+  // entry that belongs to a multi-sibling visit (parentQueueId points at a
+  // shared parent and another queue entry shares it) is reconciled via
+  // syncEntryToTicket. The helper is idempotent — it only writes when the
+  // ticket is missing a line for this sibling, which is exactly the case
+  // the old inFlightAutoCreates lock-leak left behind (Stacy / Marie).
+  // Now any sibling that ever gets missed — by an interrupted sync, a
+  // crashed tab, or a future race — gets reconciled on the next tick.
+  const siblingCountByVisit = new Map<string, number>();
+  for (const c of queue) {
+    if (!c.parentQueueId) continue;
+    siblingCountByVisit.set(c.parentQueueId, (siblingCountByVisit.get(c.parentQueueId) ?? 0) + 1);
+  }
+  for (const c of queue) {
+    if (!c.assignedManicuristId) continue;
+    if (!c.parentQueueId) continue;
+    if ((siblingCountByVisit.get(c.parentQueueId) ?? 0) < 2) continue;
+    try {
+      await syncEntryToTicket(c, manicurists, salonServices);
+    } catch (err) {
+      console.warn('[syncQueue] sibling reconcile failed for', c.id, err);
+    }
+  }
+}
+
+// In-memory guard: queue entry ids whose ticket auto-create is currently in
+// flight (or already completed within this tab session). Prevents the
+// fetchTicketByQueueEntry-then-insert race when syncQueue runs twice in
+// quick succession — e.g. user adds the client then immediately assigns a
+// manicurist, both dispatches mutate state.queue, both syncQueue calls see
+// the entry as "new" before either insert lands. Cross-tab races are still
+// possible; the partial unique index on tickets.queue_entry_id closes that.
+const inFlightAutoCreates = new Set<string>();
+
+async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg: string) => void, salonServices: AppState['salonServices'], manicurists: AppState['manicurists'], completed: AppState['completed']) {
+  const prevById = new Map(prev.map((c) => [c.id, c]));
+  const currentIds = new Set(queue.map((c) => c.id));
+  // Used by the orphan-ticket-line cleanup at the end: an entry that left
+  // the queue legitimately moves to `completed`, where COMPLETE_SERVICE
+  // gives the new row the same id as the queue entry. So an entry id that
+  // appears here is "removed because completed", not orphaned.
+  const completedIds = new Set(completed.map((c) => c.id));
+
+  // Deletes: rows in prev that are no longer in current state. Use .in() to batch.
+  const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
+  if (removedIds.length > 0) {
+    const { error } = await withRetry(() => supabase.from('queue_entries').delete().in('id', removedIds));
+    if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+  }
+
+  // Upserts: only rows that are new or whose tracked fields changed. Batched into
+  // one request instead of one round-trip per row.
+  const changed: ReturnType<typeof queueEntryToRow>[] = [];
+  for (const c of queue) {
+    const previous = prevById.get(c.id);
+    if (previous && queueEntryUnchanged(previous, c)) continue;
+    changed.push(queueEntryToRow(c));
+  }
+  if (changed.length === 0) {
+    // No queue rows to upsert, but assignment changes still need to backfill
+    // tickets in case the ticket was created before staff was assigned.
+    await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists, salonServices);
+    return;
+  }
+  const { error: upsertErr } = await withRetry(() => supabase.from('queue_entries').upsert(changed, { onConflict: 'id' }));
+  if (upsertErr) { console.error('[syncQueue] upsert error:', upsertErr); onError('Sync failed - data may not be saved. Check connection.'); return; }
+
+  // For existing entries whose assignedManicuristId just transitioned from
+  // null to a real id, patch the corresponding ticket's staff so checkout
+  // shows the right manicurist even before the service is completed.
+  await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists, salonServices);
+
+  // Auto-create a Register ticket the moment a manicurist gets assigned.
+  // Triggered by:
+  //   - new queue entries that already arrive with assignedManicuristId set
+  //     (e.g. REQUEST_ASSIGN, SPLIT_AND_ASSIGN children, or appointment
+  //     promotion that already had a tech penciled in)
+  //   - existing queue entries whose assignedManicuristId just transitioned
+  //     from null to a real id (the standard "drag client onto staff" path)
+  //
+  // Multi-service splits all share `parentQueueId`, so all sibling entries
+  // resolve to the same ticket. The first sibling to be assigned creates
+  // the ticket; later siblings append their services as additional line
+  // items with the sibling's manicurist on staff1.
+  //
+  // Idempotence: in-tab race guard + DB partial unique index on
+  // tickets.queue_entry_id keep us at exactly one ticket per visit even
+  // under concurrent writes.
+  const justAssigned = queue.filter((c) => {
+    if (!c.assignedManicuristId) return false;
+    const previous = prevById.get(c.id);
+    if (!previous) return true; // arrived already assigned
+    return !previous.assignedManicuristId; // just got assigned
+  });
+
+  for (const entry of justAssigned) {
+    // Normalize to the bare visit UUID so deeper SPLIT_AND_ASSIGN
+    // siblings (whose parentQueueId carries `-waiting` / `-mani-X` suffixes)
+    // all resolve to the same root ticket instead of opening duplicates.
+    const visitId = getVisitId(entry.parentQueueId ?? entry.id);
+    try {
+      // Race guard keyed on the VISIT id, so all siblings of a split share
+      // the same lock — no two siblings can create parallel tickets. If a
+      // sibling is mid-create, skip this tick entirely; the next syncQueue
+      // pass will see the new ticket and take the append path below.
+      if (inFlightAutoCreates.has(visitId)) {
+        continue;
+      }
+      const existing = await fetchTicketByQueueEntry(visitId);
+
+      // Build the line items for THIS entry's services with this entry's
+      // assigned manicurist (so split children attribute their lines to
+      // the correct tech).
+      const m = entry.assignedManicuristId
+        ? manicurists.find((mm) => mm.id === entry.assignedManicuristId) ?? null
+        : null;
+      const itemsForEntry = entry.services.map((svcName, idx) => {
+        const svc = salonServices.find((s2) => s2.name === svcName);
+        const sr = entry.serviceRequests.find((r) => r.service === svcName);
+        const lineMid = sr?.manicuristIds?.[0] ?? m?.id ?? null;
+        const lineM = lineMid ? manicurists.find((mm) => mm.id === lineMid) ?? null : null;
+        return {
+          name: svcName,
+          serviceId: svc?.id ?? null,
+          staff1Id: lineM?.id ?? null,
+          staff1Name: lineM?.name ?? '',
+          staff1Color: lineM?.color ?? '#9ca3af',
+          unitPriceCents: Math.round((svc?.price ?? 0) * 100),
+          quantity: 1,
+          // Per-line entry tag so each service lands as its own line and
+          // re-syncs are silently deduped. When a single queue entry holds
+          // multiple services (e.g. SPLIT_AND_ASSIGN grouping 2 Gel Pedis
+          // for the same staff) every service must carry a DISTINCT
+          // queue_entry_id, otherwise the upsert's ON CONFLICT (ticket_id,
+          // queue_entry_id) drops all but the first.
+          queueEntryId: entry.services.length > 1 ? `${entry.id}#svc${idx}` : entry.id,
+        };
+      });
+
+      if (existing) {
+        // Sibling already created the ticket. Add this entry's services as
+        // additional lines (de-duped by name/serviceId inside the helper).
+        await appendItemsToTicket(existing.id, itemsForEntry);
+        // Also patch primary manicurist if the existing ticket has none yet.
+        if (!existing.primaryManicuristId && m) {
+          try {
+            await backfillTicketStaff(visitId, m.id, m.name, m.color);
+          } catch (err) {
+            console.warn('[syncQueue] backfill on append failed for', visitId, err);
+          }
+        }
+        continue;
+      }
+
+      inFlightAutoCreates.add(visitId);
+      try {
+        // Before opening a fresh ticket, check whether this client already has
+        // an OPEN ticket today (e.g. a sibling visit started by a different
+        // manicurist, or a SPLIT_AND_ASSIGN child whose parent id we lost
+        // track of). If so, append our lines to the existing ticket so
+        // Sarah's manicure with Sam and her two pedicures land on a single
+        // ticket — even when the pedicures are assigned later. Match by
+        // client name today (queue rows don't carry a phone), case-insensitive.
+        const businessDate = getTodayLA();
+        const sameClient = await findOpenTicketForClient(
+          entry.clientName,
+          '',
+          businessDate,
+        );
+        if (sameClient) {
+          await appendItemsToTicket(sameClient.id, itemsForEntry, { allowDuplicates: true });
+          // If the existing ticket has no primary staff yet (it was opened
+          // before anyone was assigned), give it one now.
+          if (!sameClient.primaryManicuristId && m) {
+            try {
+              await backfillTicketStaff(
+                sameClient.queueEntryId ?? visitId,
+                m.id,
+                m.name,
+                m.color,
+              );
+            } catch (err) {
+              console.warn('[syncQueue] backfill on consolidated append failed for', visitId, err);
+            }
+          }
+        } else {
+          await createTicketAtCheckin({
+            queueEntryId: visitId,
+            appointmentId: entry.originalAppointment?.id ?? null,
+            clientName: entry.clientName,
+            primaryManicuristId: m?.id ?? null,
+            primaryManicuristName: m?.name ?? '',
+            primaryManicuristColor: m?.color ?? '#9ca3af',
+            items: itemsForEntry,
+          });
+        }
+      } finally {
+        // Release the lock as soon as the create (or consolidated append)
+        // finishes. Without this, siblings of a SPLIT_AND_ASSIGN that come
+        // later in the same justAssigned loop (or in a later tick) would
+        // hit the `continue` short-circuit and never get their service
+        // lines added — the exact bug behind Stacy's 1-of-3 ticket.
+        inFlightAutoCreates.delete(visitId);
+      }
+    } catch (err) {
+      console.error('[syncQueue] auto-create ticket failed for', entry.id, err);
+    }
+  }
+
+  // ── queue-edit → ticket reconciliation ─────────────────────────────────
+  //
+  // For every entry that's currently assigned to a manicurist AND was
+  // assigned in the previous tick (so a ticket exists or was about to),
+  // call syncEntryToTicket. The helper compares the queue's truth to the
+  // ticket's truth itself and only writes when they actually diverge, so
+  // it's idempotent — calling it broadly costs one Supabase round-trip
+  // per assigned entry but never produces a spurious change.
+  //
+  // We deliberately AVOID gating on a JS-side diff (servicesChanged etc)
+  // because the prev reference comparison can mis-detect changes when
+  // React batches multiple dispatches into one render, leaving the
+  // ticket out of sync with the queue. The helper's own DB-side diff is
+  // the source of truth.
+  //
+  // The justAssigned path above already covers the null→assigned
+  // transition. The orphan cleanup below covers removed-without-
+  // completion. This sits in the middle: same-id-and-still-assigned
+  // entries whose content might have changed mid-visit.
+  //
+  // Conservative on the ticket side: only ticket_items rows tagged with
+  // this entry's queue_entry_id (or `entry.id#svc<n>` siblings) are
+  // touched. Manually-added cashier lines, retail, and gift card sales
+  // are left alone.
+  for (const entry of queue) {
+    if (!entry.assignedManicuristId) continue;            // not assigned → no ticket yet
+    const previous = prevById.get(entry.id);
+    if (!previous) continue;                              // new entry → justAssigned handled it
+    if (!previous.assignedManicuristId) continue;         // null→assigned → justAssigned handled it
+    try {
+      const did = await syncEntryToTicket(entry, manicurists, salonServices);
+      if (did) {
+        console.info('[syncQueue] reconciled ticket for', entry.id, {
+          services: entry.services,
+          staffId: entry.assignedManicuristId,
+        });
+      }
+    } catch (err) {
+      console.error('[syncQueue] syncEntryToTicket failed for', entry.id, err);
+    }
+  }
+
+  // ── orphan ticket-line cleanup ─────────────────────────────────────────
+  //
+  // When a queue entry that was previously assigned to a manicurist
+  // disappears WITHOUT being completed (e.g. cashier re-ran
+  // MultiServiceAssign with different staff, or manually removed the entry
+  // before the work started), the line we appended at assignment time is
+  // now orphaned — the ticket bills the client for a service the
+  // manicurist never performed. Sweep those lines out here.
+  //
+  // We only act on entries that were assigned in `prev`. The cleanup
+  // helper also cross-checks completed_services, so even if a service was
+  // performed via a different code path we won't delete its line.
+  const removedWithoutCompletion = prev.filter(
+    (p) =>
+      !!p.assignedManicuristId &&
+      !currentIds.has(p.id) &&
+      !completedIds.has(p.id),
+  );
+  for (const removed of removedWithoutCompletion) {
+    const visitId = getVisitId(removed.parentQueueId ?? removed.id);
+    const staffId = removed.assignedManicuristId;
+    if (!staffId) continue;
+    try {
+      const n = await removeOrphanTicketLines(visitId, staffId, removed.services);
+      if (n > 0) {
+        console.info(
+          `[syncQueue] removed ${n} orphan ticket line(s) for visit ${visitId} / staff ${staffId}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[syncQueue] orphan cleanup failed for', removed.id, err);
+    }
+  }
+}
+//ZZZTRASH â
+
+async function syncCompleted(
+  completed: AppState['completed'],
+  prev: AppState['completed'],
+  onError: (msg: string) => void,
+  salonServices: AppState['salonServices'],
+) {
+  const prevById = new Map(prev.map((c) => [c.id, c]));
+  const currentIds = new Set(completed.map((c) => c.id));
+
+  // Handle deletes: entries in prev but not in current
+  const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
+  if (removedIds.length > 0) {
+    const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', removedIds));
+    if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+  }
+
+  // Handle inserts (new entries) and updates (entries that changed)
+  for (const c of completed) {
+    const previous = prevById.get(c.id);
+    // Shallow compare the fields we sync â skip if identical reference AND same data
+    if (previous && previous === c) continue;
+    if (previous) {
+      // Update â only push if any tracked field changed
+      const unchanged =
+        previous.clientName === c.clientName &&
+        previous.turnValue === c.turnValue &&
+        previous.manicuristId === c.manicuristId &&
+        previous.manicuristName === c.manicuristName &&
+        previous.manicuristColor === c.manicuristColor &&
+        previous.startedAt === c.startedAt &&
+        previous.completedAt === c.completedAt &&
+        previous.isAppointment === c.isAppointment &&
+        previous.isRequested === c.isRequested &&
+        !!previous.edited === !!c.edited &&
+        !!previous.voided === !!c.voided &&
+        JSON.stringify(previous.services) === JSON.stringify(c.services) &&
+        JSON.stringify(previous.requestedServices ?? []) === JSON.stringify(c.requestedServices ?? []);
+      if (unchanged) continue;
+    }
+    const { error } = await withRetry(() => supabase.from('completed_services').upsert({
+      id: c.id,
+      client_name: c.clientName,
+      service: c.services[0] || '',
+      services: c.services,
+      turn_value: c.turnValue,
+      manicurist_id: c.manicuristId,
+      manicurist_name: c.manicuristName,
+      manicurist_color: c.manicuristColor,
+      started_at: new Date(c.startedAt).toISOString(),
+      completed_at: new Date(c.completedAt).toISOString(),
+      requested_services: c.requestedServices ?? [],
+      is_appointment: !!c.isAppointment,
+      is_requested: !!c.isRequested,
+      edited: !!c.edited,
+      voided: !!c.voided,
+    }, { onConflict: 'id' }));
+    if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+
+    // Backfill the ticket's staff fields when this is the first time we've
+    // seen this completed entry (i.e. previous is undefined). The ticket was
+    // auto-created at queue-add time before a manicurist was assigned, so its
+    // staff fields are empty. The completed entry's id IS the original queue
+    // entry's id (set deterministically in COMPLETE_SERVICE), so we use it to
+    // find the matching open ticket.
+    //
+    // SAFETY NET: if no ticket exists for this queue entry yet (e.g. the
+    // service was completed without ever going through the standard
+    // "assign in queue" auto-create path), create one now so the register
+    // always reflects what was actually performed. Idempotent: we re-check
+    // existence inside the in-flight guard so siblings of a split-visit
+    // don't each create their own ticket.
+    if (!previous && c.manicuristId) {
+      // The visit id is what tickets are keyed on. For non-split entries it
+      // equals c.id; for SPLIT_AND_ASSIGN children (`${parent}-mani-N` or
+      // `${parent}-waiting`) it strips the suffix down to the parent UUID.
+      // Using c.id here was the bug that let split-visit children miss the
+      // existing ticket and fall into the "append with allowDuplicates"
+      // path on every re-mount.
+      const visitId = getVisitId(c.id);
+      try {
+        await backfillTicketStaff(visitId, c.manicuristId, c.manicuristName, c.manicuristColor);
+      } catch (err) {
+        console.warn('[syncCompleted] backfillTicketStaff failed for', c.id, err);
+      }
+
+      // Build this completed entry's items every time — appendItemsToTicket
+      // dedupes by queue_entry_id so a re-fire of the same entry is silent.
+      try {
+        const existing = await fetchTicketByQueueEntry(visitId);
+        const items = (c.services && c.services.length > 0 ? c.services : [''])
+          .filter((name) => name.trim().length > 0)
+          .map((svcName) => {
+            const svc = salonServices.find((s) => s.name === svcName);
+            return {
+              name: svcName,
+              serviceId: svc?.id ?? null,
+              staff1Id: c.manicuristId,
+              staff1Name: c.manicuristName,
+              staff1Color: c.manicuristColor,
+              unitPriceCents: Math.round((svc?.price ?? 0) * 100),
+              quantity: 1,
+              queueEntryId: c.id,
+            };
+          });
+        if (items.length > 0) {
+          if (existing) {
+            // Ticket already exists for this visit. Append this completed
+            // entry's services. The lock only gates CREATION; appending an
+            // already-created ticket has to happen for every sibling so a
+            // 4-service split visit gets all 4 lines (not just sibling #1).
+            await appendItemsToTicket(existing.id, items, { allowDuplicates: true });
+          } else if (!inFlightAutoCreates.has(visitId)) {
+            inFlightAutoCreates.add(visitId);
+            try {
+              // No ticket yet. Either consolidate onto the same client's
+              // open ticket or create a new one.
+              const businessDate = getLocalDateStr(new Date(c.completedAt));
+              const sameClient = await findOpenTicketForClient(c.clientName, '', businessDate);
+              if (sameClient) {
+                await appendItemsToTicket(sameClient.id, items, { allowDuplicates: true });
+                if (!sameClient.primaryManicuristId) {
+                  await backfillTicketStaff(
+                    sameClient.queueEntryId ?? visitId,
+                    c.manicuristId,
+                    c.manicuristName,
+                    c.manicuristColor,
+                  );
+                }
+              } else {
+                await createTicketAtCheckin({
+                  queueEntryId: visitId,
+                  appointmentId: null,
+                  clientName: c.clientName,
+                  primaryManicuristId: c.manicuristId,
+                  primaryManicuristName: c.manicuristName,
+                  primaryManicuristColor: c.manicuristColor,
+                  items,
+                });
+              }
+            } finally {
+              inFlightAutoCreates.delete(visitId);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[syncCompleted] fallback ticket create failed for', c.id, err);
+      }
+    }
+  }
+}
+
+async function syncDailyHistory(current: DailyHistory[], prev: DailyHistory[], onError: (msg: string) => void) {
+  const prevByDate = new Map(prev.map((d) => [d.date, d]));
+  for (const day of current) {
+    const previous = prevByDate.get(day.date);
+    if (previous && previous === day) continue;
+    if (previous && JSON.stringify(previous.entries) === JSON.stringify(day.entries)) continue;
+    // New day or changed entries â upsert
+    const { error } = await supabase
+      .from('daily_history')
+      .upsert({ id: day.id, date: day.date, entries: day.entries }, { onConflict: 'date' });
+    if (error) { console.error('[syncDailyHistory] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+  }
+}
+
+function appointmentUnchanged(a: Appointment, b: Appointment): boolean {
+  if (a === b) return true;
+  return (
+    a.clientName === b.clientName &&
+    (a.clientPhone || null) === (b.clientPhone || null) &&
+    (a.services?.[0] || a.service) === (b.services?.[0] || b.service) &&
+    JSON.stringify(a.services || [a.service]) === JSON.stringify(b.services || [b.service]) &&
+    JSON.stringify(a.serviceRequests || []) === JSON.stringify(b.serviceRequests || []) &&
+    (a.manicuristId || null) === (b.manicuristId || null) &&
+    a.date === b.date &&
+    a.time === b.time &&
+    (a.notes || null) === (b.notes || null) &&
+    a.status === b.status &&
+    (a.sameTime || false) === (b.sameTime || false) &&
+    (a.partyId || null) === (b.partyId || null)
+  );
+}
+
+function appointmentToRow(a: Appointment) {
+  return {
+    id: a.id,
+    client_name: a.clientName,
+    client_phone: a.clientPhone || null,
+    service: a.services?.[0] || a.service,
+    services: a.services || [a.service],
+    service_requests: a.serviceRequests || [],
+    manicurist_id: a.manicuristId || null,
+    date: a.date,
+    time: a.time,
+    notes: a.notes || null,
+    status: a.status,
+    same_time: a.sameTime || false,
+    party_id: a.partyId || null,
+    booked_by_receptionist_id: a.bookedByReceptionistId || null,
+    last_edited_by_receptionist_id: a.lastEditedByReceptionistId || null,
+    last_edited_at: a.lastEditedAt ? new Date(a.lastEditedAt).toISOString() : null,
+    created_at: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
+  };
+}
+
+async function syncAppointments(appointments: Appointment[], prev: Appointment[], onError: (msg: string) => void) {
+  const currentIds = new Set(appointments.map((a) => a.id));
+
+  // Delete appts that disappeared since last sync.
+  const deleted = prev.filter((a) => !currentIds.has(a.id));
+  for (const a of deleted) {
+    const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
+    if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed - data may not be saved. Check connection.'); }
+  }
+
+  // Per-row diff: only upsert appts whose data actually changed. Stops stale tabs from
+  // re-uploading every appt (which would resurrect rows another tab just deleted) and
+  // cuts realtime echo traffic.
+  const prevById = new Map(prev.map((a) => [a.id, a]));
+  const changed: ReturnType<typeof appointmentToRow>[] = [];
+  for (const a of appointments) {
+    const previous = prevById.get(a.id);
+    if (previous && appointmentUnchanged(previous, a)) continue;
+    changed.push(appointmentToRow(a));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('appointments').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed - data may not be saved. Check connection.'); }
+}
+
+function salonServiceUnchanged(a: SalonService, b: SalonService): boolean {
+  if (a === b) return true;
+  return (
+    a.name === b.name &&
+    a.turnValue === b.turnValue &&
+    a.duration === b.duration &&
+    a.price === b.price &&
+    a.isActive === b.isActive &&
+    a.category === b.category &&
+    a.sortOrder === b.sortOrder &&
+    a.isFourthPositionSpecial === b.isFourthPositionSpecial
+  );
+}
+
+function salonServiceToRow(s: SalonService) {
+  return {
+    id: s.id,
+    name: s.name,
+    turn_value: s.turnValue,
+    duration: s.duration,
+    price: s.price,
+    is_active: s.isActive,
+    category: s.category,
+    sort_order: s.sortOrder,
+    is_fourth_position_special: s.isFourthPositionSpecial,
+  };
+}
+
+async function syncSalonServices(salonServices: SalonService[], prev: SalonService[], onError: (msg: string) => void) {
+  const currentIds = new Set(salonServices.map((s) => s.id));
+  const removed = prev.filter((s) => !currentIds.has(s.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('salon_services').delete().in('id', removed.map((s) => s.id)));
+    if (error) { console.error('[syncSalonServices] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  // Per-row diff — only upsert services that actually changed since prev. This stops a stale
+  // device from clobbering another device's recent edit by re-pushing every row on every save.
+  const prevById = new Map(prev.map((s) => [s.id, s]));
+  const changed: ReturnType<typeof salonServiceToRow>[] = [];
+  for (const s of salonServices) {
+    const previous = prevById.get(s.id);
+    if (previous && salonServiceUnchanged(previous, s)) continue;
+    changed.push(salonServiceToRow(s));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('salon_services').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncSalonServices] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function turnCriteriaUnchanged(a: TurnCriteria, b: TurnCriteria): boolean {
+  if (a === b) return true;
+  return (
+    a.name === b.name &&
+    a.description === b.description &&
+    a.priority === b.priority &&
+    a.enabled === b.enabled &&
+    a.type === b.type &&
+    a.value === b.value
+  );
+}
+
+function turnCriteriaToRow(c: TurnCriteria) {
+  return {
+    id: c.id,
+    name: c.name,
+    description: c.description,
+    priority: c.priority,
+    enabled: c.enabled,
+    type: c.type,
+    value: c.value,
+  };
+}
+
+async function syncTurnCriteria(turnCriteria: TurnCriteria[], prev: TurnCriteria[], onError: (msg: string) => void) {
+  const currentIds = new Set(turnCriteria.map((c) => c.id));
+  const removed = prev.filter((c) => !currentIds.has(c.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('turn_criteria').delete().in('id', removed.map((c) => c.id)));
+    if (error) { console.error('[syncTurnCriteria] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((c) => [c.id, c]));
+  const changed: ReturnType<typeof turnCriteriaToRow>[] = [];
+  for (const c of turnCriteria) {
+    const previous = prevById.get(c.id);
+    if (previous && turnCriteriaUnchanged(previous, c)) continue;
+    changed.push(turnCriteriaToRow(c));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('turn_criteria').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncTurnCriteria] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function calendarDayUnchanged(a: CalendarDay, b: CalendarDay): boolean {
+  if (a === b) return true;
+  return a.status === b.status && a.note === b.note;
+}
+
+function calendarDayToRow(d: CalendarDay) {
+  return { date: d.date, status: d.status, note: d.note };
+}
+
+async function syncCalendarDays(calendarDays: CalendarDay[], prev: CalendarDay[], onError: (msg: string) => void) {
+  const currentDates = new Set(calendarDays.map((d) => d.date));
+  const removed = prev.filter((d) => !currentDates.has(d.date));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('calendar_days').delete().in('date', removed.map((d) => d.date)));
+    if (error) { console.error('[syncCalendarDays] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevByDate = new Map(prev.map((d) => [d.date, d]));
+  const changed: ReturnType<typeof calendarDayToRow>[] = [];
+  for (const d of calendarDays) {
+    const previous = prevByDate.get(d.date);
+    if (previous && calendarDayUnchanged(previous, d)) continue;
+    changed.push(calendarDayToRow(d));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('calendar_days').upsert(changed, { onConflict: 'date' }));
+  if (error) { console.error('[syncCalendarDays] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+
+// ─── Staff schedules / time off sync helpers ─────────────────────────────────
+
+function staffScheduleToRow(s: StaffScheduleEntry) {
+  return {
+    id: s.id,
+    manicurist_id: s.manicuristId,
+    weekday: s.weekday,
+    start_time: s.startTime,
+    end_time: s.endTime,
+    lunch_start: s.lunchStart,
+    lunch_end: s.lunchEnd,
+  };
+}
+
+function staffScheduleUnchanged(a: StaffScheduleEntry, b: StaffScheduleEntry): boolean {
+  if (a === b) return true;
+  return (
+    a.manicuristId === b.manicuristId &&
+    a.weekday === b.weekday &&
+    a.startTime === b.startTime &&
+    a.endTime === b.endTime &&
+    a.lunchStart === b.lunchStart &&
+    a.lunchEnd === b.lunchEnd
+  );
+}
+
+async function syncStaffSchedules(current: StaffScheduleEntry[], prev: StaffScheduleEntry[], onError: (msg: string) => void) {
+  const currentIds = new Set(current.map((s) => s.id));
+  const removed = prev.filter((s) => !currentIds.has(s.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('staff_schedules').delete().in('id', removed.map((s) => s.id)));
+    if (error) { console.error('[syncStaffSchedules] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((s) => [s.id, s]));
+  const changed: ReturnType<typeof staffScheduleToRow>[] = [];
+  for (const s of current) {
+    const previous = prevById.get(s.id);
+    if (previous && staffScheduleUnchanged(previ

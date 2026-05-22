@@ -1,0 +1,21 @@
+diff --git a/src/components/register/TicketModal.tsx b/src/components/register/TicketModal.tsx
+index 0ed1f94..30b33be 100644
+--- a/src/components/register/TicketModal.tsx
++++ b/src/components/register/TicketModal.tsx
+@@ -2012,14 +2012,4 @@ function CustomerHistoryModal({
+                   <span className="font-mono text-xs text-gray-700 truncate" title={r.services}>{r.services}</span>
+                   <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoneyCents(r.totalCents)}</span>
+                   <span className={`font-mono text-[10px] tracking-wider font-bold uppercase text-right ${
+-                    r.status === 'closed' ? 'text-gray-600' : r.status === 'voided' ? 'text-amber-600' : 'text-emerald-600'
+-                  }`}>{r.status}</span>
+-                </div>
+-              ))}
+-            </div>
+-          )}
+-        </div>
+-      </div>
+-    </div>
+-  );
+-}
++                    r.status === 'closed' ? 'text-gray-600' : r.status === 'voided' ? 'text-amber-600' : 
+\ No newline at end of file

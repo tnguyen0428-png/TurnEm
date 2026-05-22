@@ -36,25 +36,32 @@ export default function WaitingPanel() {
     const entry = state.queue.find((c) => c.id === clientId);
     if (!entry) return;
     // Preferred path: restore from the snapshot captured when the appointment was
-    // originally promoted via the "Q" key. This puts the appointment back into its
-    // exact original date, time, column, and per-service placement — including the
-    // manicuristIds we cleared from the queue's serviceRequests for parked entries.
+    // originally promoted via the "Q" key. The current flow KEEPS the appointment
+    // alive in state.appointments (marked 'checked-in'), so if we can find that
+    // existing row by id we just flip its status back to 'scheduled' — no new
+    // row, no duplicate. For legacy queue entries where the appt was deleted
+    // (older data), fall back to ADD_APPOINTMENT with a fresh id.
     if (entry.originalAppointment) {
-      dispatch({
-        type: 'ADD_APPOINTMENT',
-        appointment: {
-          ...entry.originalAppointment,
-          // Default fields after spread so legacy snapshots without sameTime/partyId
-          // still satisfy the Appointment type at runtime, but real values are
-          // kept when present on the original snapshot.
-          sameTime: entry.originalAppointment.sameTime ?? false,
-          partyId: entry.originalAppointment.partyId ?? null,
-          // Use a fresh id since the original was deleted on promotion.
-          id: crypto.randomUUID(),
-          status: 'scheduled',
-          createdAt: Date.now(),
-        },
-      });
+      const existing = state.appointments.find((a) => a.id === entry.originalAppointment!.id);
+      if (existing) {
+        dispatch({
+          type: 'UPDATE_APPOINTMENT',
+          id: existing.id,
+          updates: { status: 'scheduled' },
+        });
+      } else {
+        dispatch({
+          type: 'ADD_APPOINTMENT',
+          appointment: {
+            ...entry.originalAppointment,
+            sameTime: entry.originalAppointment.sameTime ?? false,
+            partyId: entry.originalAppointment.partyId ?? null,
+            id: crypto.randomUUID(),
+            status: 'scheduled',
+            createdAt: Date.now(),
+          },
+        });
+      }
       dispatch({ type: 'REMOVE_CLIENT', id: clientId });
       return;
     }
