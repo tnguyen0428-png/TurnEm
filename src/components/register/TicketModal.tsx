@@ -1467,18 +1467,55 @@ export default function TicketModal({
                             disabled={!canEdit}
                             className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-center focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           />
-                          {/* Service name. The previous per-line "change service"
-                              dropdown arrow was removed — the category +
-                              service selector at the top of the modal is the
-                              canonical way to swap a service, and the inline
-                              dropdown duplicated that affordance. */}
-                          <input
-                            type="text" value={line.name}
-                            onChange={(e) => updateLine(idx, { name: e.target.value })}
-                            disabled={!canEdit}
-                            placeholder="Service name"
-                            className="w-full min-w-0 px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
-                          />
+                          {/* Service name + per-line SWAP dropdown.
+                              The dropdown is grouped by category via
+                              <optgroup> so the long flat list of every salon
+                              service is digestible. Picking a service here
+                              UPDATEs the line in-place (no delete + insert),
+                              so it's the safe way to swap an existing line's
+                              service — the queue_entry name sync block in
+                              doSave then mirrors the change to the queue
+                              entry's services array. The "+ Add line" /
+                              category-picker flow at the top of the modal
+                              is for ADDING new lines, not swapping. */}
+                          <div className="flex items-center gap-1 min-w-0">
+                            <input
+                              type="text" value={line.name}
+                              onChange={(e) => updateLine(idx, { name: e.target.value })}
+                              disabled={!canEdit}
+                              placeholder="Service name"
+                              className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
+                            />
+                            {line.kind === 'service' && (
+                              <select
+                                value=""
+                                onChange={(e) => {
+                                  const svc = sortedServices.find((s) => s.id === e.target.value);
+                                  if (!svc) return;
+                                  updateLine(idx, {
+                                    serviceId: svc.id,
+                                    name: svc.name,
+                                    priceInput: svc.price.toFixed(2),
+                                  });
+                                }}
+                                disabled={!canEdit}
+                                title="Swap to a different service"
+                                aria-label="Swap service"
+                                className="w-6 px-0 py-1 rounded-md border border-transparent text-gray-400 hover:border-gray-300 hover:text-gray-700 font-mono text-xs focus:outline-none cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                              >
+                                <option value=""></option>
+                                {availableCategories.map((cat) => (
+                                  <optgroup key={cat} label={cat}>
+                                    {sortedServices
+                                      .filter((s) => s.category === cat)
+                                      .map((s) => (
+                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                      ))}
+                                  </optgroup>
+                                ))}
+                              </select>
+                            )}
+                          </div>
                           <select
                             value={line.staff1Id ?? ''}
                             onChange={(e) => {
