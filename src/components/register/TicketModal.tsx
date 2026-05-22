@@ -2339,12 +2339,3 @@ function CustomerHistoryModal({
     </div>
   );
 }
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
