@@ -24,14 +24,14 @@ export function getLocalDateStr(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-// "Business day" = the operating day for the salon. Rolls over at 9 AM LA
-// instead of midnight so a service finished at, say, 11 PM still shows on
-// the staff portal until 9 AM the next morning (rather than vanishing at
-// midnight). Returns the LA-local date string ('YYYY-MM-DD') of (input - 9h).
-// Default input is `now`.
+// "Business day" = the operating day for the salon. As of 2026-05-22 this
+// is the calendar day in LA (rollover at midnight). The earlier design
+// shifted back 9 hours so late-night close-out work still counted under the
+// day the work was performed, but that confused testing/operations done
+// between midnight and 9 AM (services appeared under "yesterday"). Now the
+// business day matches the wall-clock LA calendar.
 export function getBusinessDayLA(date: Date = new Date()): string {
-  const shifted = new Date(date.getTime() - 9 * 60 * 60 * 1000);
-  return getLocalDateStr(shifted);
+  return getLocalDateStr(date);
 }
 
 export function formatWaitTime(arrivedAt: number): string {
