@@ -1853,10 +1853,7 @@ function appointmentToRow(a: Appointment) {
     status: a.status,
     same_time: a.sameTime || false,
     party_id: a.partyId || null,
-    // NOTE: `caution` is intentionally NOT written here until the DB migration
-    // adding the column has been applied. Once the column exists in Supabase,
-    // uncomment the line below to start persisting the flag.
-    // caution: a.caution || false,
+    caution: a.caution || false,
     booked_by_receptionist_id: a.bookedByReceptionistId || null,
     last_edited_by_receptionist_id: a.lastEditedByReceptionistId || null,
     last_edited_at: a.lastEditedAt ? new Date(a.lastEditedAt).toISOString() : null,
