@@ -1292,7 +1292,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     top-right corner of the first block. The repeated time under each service
                     name was redundant and ate vertical space. */}
 
-                {height > 36 && !isCheckedOut && !isInService && !isWaitingQ && (
+                {height > 36 && !isCheckedOut && (
                   <div className="flex gap-1 mt-auto opacity-0 group-hover:opacity-100 transition-opacity"
                     style={{ paddingLeft: pl }}
                     draggable={false}

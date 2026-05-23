@@ -274,10 +274,39 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           );
         }
       }
+      // Mirror relevant queue-side changes back onto the linked appt block
+      // so the appointment book stays accurate. We sync services (string
+      // array), serviceRequests (the per-service request list), and
+      // manicuristId (on reassign). Only fires when the entry actually has
+      // a linked appt (`originalAppointment.id` exists in state.appointments).
+      let updatedAppointments = state.appointments;
+      const linkedApptIdForUpdate = existing?.originalAppointment?.id;
+      if (linkedApptIdForUpdate) {
+        const linkedAppt = state.appointments.find((a) => a.id === linkedApptIdForUpdate);
+        if (linkedAppt) {
+          const apptPatch: Partial<typeof linkedAppt> = {};
+          if (action.updates.services !== undefined) {
+            apptPatch.services = action.updates.services;
+            apptPatch.service = action.updates.services[0] ?? linkedAppt.service;
+          }
+          if (action.updates.serviceRequests !== undefined) {
+            apptPatch.serviceRequests = action.updates.serviceRequests;
+          }
+          if (action.updates.assignedManicuristId !== undefined) {
+            apptPatch.manicuristId = action.updates.assignedManicuristId ?? null;
+          }
+          if (Object.keys(apptPatch).length > 0) {
+            updatedAppointments = state.appointments.map((a) =>
+              a.id === linkedApptIdForUpdate ? { ...a, ...apptPatch } : a,
+            );
+          }
+        }
+      }
       return {
         ...state,
         queue: updatedQueue,
         manicurists: updatedManicurists,
+        appointments: updatedAppointments,
       };
     }
 
