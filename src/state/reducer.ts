@@ -84,7 +84,12 @@ function synthWalkInAppt(
   now: Date = new Date(),
 ): Appointment {
   const date = getLocalDateStr(now);
-  const start = roundLATimeToQuarter(now);
+  // Floor the search to 08:00 — the salon doesn't open before then and the
+  // appt book grid doesn't render slots earlier in the day. Without this,
+  // any walk-in added pre-open (or pre-rounded-08:00) lands at e.g. 06:15
+  // and is invisible above the book's first visible slot.
+  const rounded = roundLATimeToQuarter(now);
+  const start = rounded < '08:00' ? '08:00' : rounded;
   const time = pickNextOpenSlot(date, manicuristId, start, appts);
   return {
     id: crypto.randomUUID(),
