@@ -35,6 +35,7 @@ import {
   type ClosingPaymentInput,
 } from '../../lib/tickets';
 import { fetchOpenShift } from '../../lib/shifts';
+import { getTodayLA } from '../../utils/time';
 import GiftCardSaleModal from './GiftCardSaleModal';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
@@ -1462,7 +1463,11 @@ export default function TicketModal({
         const norm = (v: string | undefined) =>
           (v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
         const ticketName = norm(ticket.clientName);
-        const todayKey = new Date().toISOString().split('T')[0];
+        // CRITICAL: use LA date here, not new Date().toISOString().split('T')[0]
+        // — the latter returns the UTC date, which rolls over to "tomorrow"
+        // at 5pm PDT. Appts are stored with the LA date string, so a UTC
+        // lookup after 5pm finds nothing and the appt never auto-darkens.
+        const todayKey = getTodayLA();
         const candidates = state.appointments.filter((a) =>
           a.date === todayKey &&
           (a.status === 'scheduled' || a.status === 'checked-in') &&
