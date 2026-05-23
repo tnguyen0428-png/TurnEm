@@ -115,9 +115,12 @@ export default function RegisterScreen() {
   useEffect(() => {
     // In-progress entries have completedAt = null; fall back to startedAt
     // so today's in-progress work still shows in today's register view.
-    const completedForDate = state.completed.filter((c) => {
+    // Normalize completedAt to the effective timestamp so downstream
+    // (reconcileMissingTicketsForDate) gets a non-null number to sort by.
+    const completedForDate = state.completed.flatMap((c) => {
       const ts = c.completedAt ?? c.startedAt;
-      return ts ? getLocalDateStr(new Date(ts)) === dateLA : false;
+      if (!ts || getLocalDateStr(new Date(ts)) !== dateLA) return [];
+      return [{ ...c, completedAt: ts }];
     });
     if (completedForDate.length === 0) return;
 

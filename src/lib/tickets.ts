@@ -1833,7 +1833,7 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
           discount_cents: it.discountCents,
           ext_price_cents: computeLineExt(it),
           // Sort new lines to the end of the existing/edited block.
-          sort_order: input.items.length + idx,
+          sort_order: (input.items?.length ?? 0) + idx,
           queue_entry_id: disambiguated.get(it) ?? null,
         }))
         .filter((row) => {
@@ -1992,7 +1992,7 @@ export async function reconcileTicketItemsFromCompleted(
   visitId: string | null,
   salonServices: Array<{ name: string; price: number; id: string }>,
 ): Promise<{ added: number; ticket: Ticket | null } | null> {
-  if (!visitId) return { added: 0 };
+  if (!visitId) return { added: 0, ticket: null };
 
   // Pull all completed_services rows for this visit (parent + split children).
   // Visit id is the canonical key; children use `${visitId}-${staffId}` and may
