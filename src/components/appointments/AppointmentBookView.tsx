@@ -424,6 +424,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // ── Service-block drag/drop state ────────────────────────────────────────
   const [dragInfo, setDragInfo]         = useState<DragInfo | null>(null);
   const [dropTarget, setDropTarget]     = useState<{ mId: string | null; slot: number } | null>(null);
+  // Receptionist double-clicked a REQUEST appt (R badge) to temporarily
+  // unlock it for a one-time move. While the id matches, the block is
+  // draggable and the R badge pulses. executeDrop clears this back to
+  // null so the appt re-locks immediately after the drop. Other appts
+  // (non-R, or different id) still follow the standard isLocked rules.
+  const [movableRequestApptId, setMovableRequestApptId] = useState<string | null>(null);
 
   // Safety net: if a drag never finishes (dropped outside, Escape, etc.),
   // clear dragInfo on any document-level dragend or mouseup. Without this,
@@ -850,6 +856,11 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     if (appt.isWalkIn) updates.isWalkIn = false;
 
     dispatch({ type: 'UPDATE_APPOINTMENT', id: apptId, updates });
+    // A requested appt was just moved via the double-click unlock — re-lock
+    // it so the next interaction goes back to the normal "edit modal only"
+    // path. Done last so any UPDATE_APPOINTMENT side effects have already
+    // queued.
+    if (movableRequestApptId === apptId) setMovableRequestApptId(null);
 
     // Turn credit follow-through. If this appt is in the "awaiting payment"
     // state (service done, ticket still open), the turn was already credited
@@ -1158,7 +1169,11 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           // executeDrop assigns the destination column's manicurist as the new
           // service staff via serviceRequests. Only checked-out (paid) and
           // requested appts stay locked.
-          const isLocked = isCheckedOut || hasRequest;
+          // Standard locks: checked-out, OR client-requested (R badge) unless
+          // the receptionist has double-clicked this specific R appt to
+          // temporarily unlock it for a one-time move.
+          const isRequestUnlocked = hasRequest && movableRequestApptId === appt.id;
+          const isLocked = isCheckedOut || (hasRequest && !isRequestUnlocked);
           // Treat the old "isCompleted" semantics (muted look, no action buttons) as
           // "checked out OR currently in a queue lifecycle". Hover action row stays
           // hidden in those states.
@@ -1181,7 +1196,19 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 // While a drag is in progress, let drop events pass through other blocks to the slot grid underneath
                 pointerEvents: dragInfo && !isDragging ? 'none' : undefined,
               }}
-              onDoubleClick={() => !isDragging && openEditModalGated(appt)}>
+              onDoubleClick={() => {
+                if (isDragging) return;
+                // R appts: double-click toggles the one-time-move unlock
+                // instead of opening the edit modal. The receptionist
+                // confirmed they actually want to drag a client-requested
+                // appointment. The R badge starts pulsing while unlocked
+                // so they get visual feedback.
+                if (hasRequest && !isCheckedOut) {
+                  setMovableRequestApptId((prev) => prev === appt.id ? null : appt.id);
+                  return;
+                }
+                openEditModalGated(appt);
+              }}>
 
               {/* Caution overlay — 5 faint diagonal warning stripes tucked
                   into the bottom-right corner of the block. Subtle visual
@@ -1237,7 +1264,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                     {serviceName}
                   </p>
                   {hasRequest && (
-                    <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]" title="Manicurist requested">R</span>
+                    <span
+                      className={`flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]${
+                        isRequestUnlocked ? ' animate-pulse ring-2 ring-red-300' : ''
+                      }`}
+                      title={isRequestUnlocked ? 'Manicurist requested — UNLOCKED, drag to move' : 'Manicurist requested (double-click to unlock for move)'}
+                    >R</span>
                   )}
                   {appt.sameTime && (
                     <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white font-bold text-[9px]" title="Same time">S</span>
