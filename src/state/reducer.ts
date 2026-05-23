@@ -505,10 +505,24 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'SPLIT_AND_ASSIGN': {
       const now = Date.now();
+      // Inherit the parent's appointment-book linkage so split children
+      // don't get mistaken for fresh walk-ins (which would trigger a synth
+      // appt per child and duplicate the block already in the book).
+      // MultiServiceAssign / TicketModal / StaffPortalScreen build the
+      // child entries without copying `originalAppointment`, so we do it
+      // here in the reducer — one place, every caller.
+      const splitParent = state.queue.find((c) => c.id === action.originalId);
+      const parentOriginalAppt = splitParent?.originalAppointment;
       // All split children share parentQueueId = action.originalId so they
       // map to a single ticket at checkout.
       const newEntries = action.entries.map(({ client, manicuristId }) => {
-        const base = { ...client, parentQueueId: action.originalId };
+        const base = {
+          ...client,
+          parentQueueId: action.originalId,
+          // Children inherit parent's originalAppointment unless the caller
+          // explicitly supplied one on the child entry.
+          originalAppointment: client.originalAppointment ?? parentOriginalAppt,
+        };
         if (manicuristId) {
           return { ...base, status: 'inProgress' as const, assignedManicuristId: manicuristId, startedAt: now, turnValue: client.turnValue };
         }
