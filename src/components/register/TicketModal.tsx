@@ -831,6 +831,25 @@ export default function TicketModal({
     }
     if (changes.length > 0) {
       void reallocateTurnsForStaffChanges(changes);
+      // Walk-in appt sync: when a staff change touches a queue entry whose
+      // completed_services row is linked to an auto-placed walk-in appt
+      // (Appointment.isWalkIn === true), move the appt block to the new
+      // manicurist's column so the book stays in sync with the ticket.
+      // Scoped to walk-ins only — scheduled appointments don't get auto-
+      // moved by ticket edits.
+      for (const c of changes) {
+        if (!c.newStaffId) continue;
+        const completedRow = state.completed.find((cs) => cs.id === c.queueEntryId);
+        const apptId = completedRow?.originalAppointmentId;
+        if (!apptId) continue;
+        const appt = state.appointments.find((a) => a.id === apptId);
+        if (!appt || !appt.isWalkIn) continue;
+        dispatch({
+          type: 'UPDATE_APPOINTMENT',
+          id: apptId,
+          updates: { manicuristId: c.newStaffId },
+        });
+      }
     }
 
     // In-progress queue sync: when a line's service NAME is changed on an

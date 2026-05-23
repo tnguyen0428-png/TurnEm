@@ -845,6 +845,9 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
     const updates: Partial<typeof appt> = { serviceRequests: updatedReqs };
     if (isFirstService) updates.time = newTime;
+    // Receptionist confirmed the walk-in's placement by dragging it. Clear
+    // the isWalkIn flag so the flashing W badge + amber tint goes away.
+    if (appt.isWalkIn) updates.isWalkIn = false;
 
     dispatch({ type: 'UPDATE_APPOINTMENT', id: apptId, updates });
 
@@ -1113,26 +1116,35 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           // Service complete but ticket not yet closed — stays light gray.
           const isAwaitingPayment = !isCheckedOut && !isInService && !isWaitingQ && awaitingPaymentApptIds.has(appt.id);
           const isCheckedIn  = !isCheckedOut && !isInService && !isWaitingQ && !isAwaitingPayment && appt.status === 'checked-in';
+          // Walk-in pending placement: amber tint + a distinct border so the
+          // receptionist can spot auto-placed blocks at a glance. Once they
+          // drag it to the real slot, executeDrop clears isWalkIn and the
+          // block reverts to whatever its lifecycle color would otherwise be.
+          const isWalkInPending = !!appt.isWalkIn && !isCheckedOut;
           // Color progression: scheduled → light-gray (waiting Q) → light-gray (in service / awaiting payment) → dark-gray (checked out after ticket close)
           // Note: in-service softened from #d1d5db → #e5e7eb, checked-out from #1f2937 → #4b5563 per user request.
           const bg     = isCheckedOut       ? '#4b5563'
+                       : isWalkInPending    ? '#fef3c7'
                        : isInService        ? '#e5e7eb'
                        : isAwaitingPayment  ? '#e5e7eb'
                        : isWaitingQ         ? '#f3f4f6'
                        : isCheckedIn        ? '#d1fae5'
                        : palette.bg;
           const border = isCheckedOut       ? '#1f2937'
+                       : isWalkInPending    ? '#f59e0b'
                        : isInService        ? '#9ca3af'
                        : isAwaitingPayment  ? '#9ca3af'
                        : isWaitingQ         ? '#9ca3af'
                        : isCheckedIn        ? '#10b981'
                        : palette.border;
           const textColor = isCheckedOut       ? '#ffffff'
+                          : isWalkInPending    ? '#78350f'
                           : isInService        ? '#374151'
                           : isAwaitingPayment  ? '#374151'
                           : isWaitingQ         ? '#6b7280'
                           : '#111827';
           const subTextColor = isCheckedOut       ? '#e5e7eb'
+                             : isWalkInPending    ? '#92400e'
                              : isInService        ? '#6b7280'
                              : isAwaitingPayment  ? '#6b7280'
                              : isWaitingQ         ? '#9ca3af'
