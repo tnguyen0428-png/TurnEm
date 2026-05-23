@@ -19,7 +19,7 @@ export default function TabBar() {
     <nav className="bg-white border-b border-gray-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         <div className="flex items-center justify-between h-28 sm:h-48">
-          <div className="flex items-center flex-shrink-0">
+          <div className="flex items-center flex-shrink-0 pointer-events-none select-none">
             <img
               src="/Turn_Em_Logo.png"
               alt="Turn Em"

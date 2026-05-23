@@ -916,6 +916,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               onChange={(e) => setClientFirstName(e.target.value)}
               onBlur={(e) => setClientFirstName(toTitleCase(e.target.value))}
               placeholder="First"
+              autoFocus={mode === 'add'}
               className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>

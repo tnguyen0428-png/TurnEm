@@ -1233,6 +1233,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   {appt.partyId && (
                     <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-500 text-white font-bold text-[9px]" title="Party group">P</span>
                   )}
+                  {appt.isWalkIn && !isCheckedOut && (
+                    <span
+                      className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-pink-500 text-white font-bold text-[9px] animate-pulse ring-2 ring-pink-300"
+                      title="Walk-in (auto-placed — drag to the real slot)"
+                    >W</span>
+                  )}
                   {appt.notes && appt.notes.trim() && (
                     <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-sky-400 text-white font-bold text-[9px]" title={appt.notes}>N</span>
                   )}

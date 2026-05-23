@@ -252,6 +252,11 @@ export interface Appointment {
    *  unpaid history, etc.). Rendered with diagonal warning stripes over the
    *  appointment block in the book. Defaults to false; optional for legacy rows. */
   caution?: boolean;
+  /** Set to true when the appt block was auto-synthesized by the queue
+   *  assign flow (walk-in path). The book renders a flashing pink "W" badge
+   *  on these so the receptionist can spot auto-placed blocks and move them
+   *  to a real time slot if the rounded-now/8AM fallback isn't right. */
+  isWalkIn?: boolean;
   /** Receptionist (manicurist row, is_receptionist=true) who PIN-gated the
    *  booking. Null for legacy appts created before this field existed. */
   bookedByReceptionistId?: string | null;

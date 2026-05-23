@@ -1,7 +1,8 @@
-import type { AppState, Manicurist } from '../types';
+import type { AppState, Appointment, Manicurist, QueueEntry } from '../types';
 import type { AppAction } from './actions';
 import { clientHasAnyWaxService } from '../utils/salonRules';
 import { isFourthPositionSpecialService } from '../utils/priority';
+import { getLocalDateStr } from '../utils/time';
 
 function nextWaxSlot(m: Manicurist): 'hasWax' | 'hasWax2' | 'hasWax3' | null {
   if (!m.hasWax)  return 'hasWax';
@@ -16,6 +17,94 @@ function nextCheckSlot(m: Manicurist): 'hasFourthPositionSpecial' | 'hasCheck2' 
   if (!m.hasCheck3)                return 'hasCheck3';
   return null;
 }
+
+// === Walk-in auto-appt-slot helpers ─────────────────────────────────────
+// When a queue entry without a linked appointment gets assigned to a
+// manicurist, we synthesize a corresponding appointment-book block so the
+// walk-in flows through the same in-service → checked-out lifecycle as
+// Q'd-from-book appointments. The block lands in the assigned manicurist's
+// column at the current LA wall-clock time rounded to the nearest 15 min;
+// if that slot is already occupied (another booking starts at that exact
+// time in this column), we walk forward in 15-min steps until a free slot
+// is found, capping at 4 hours to avoid spinning.
+
+function roundLATimeToQuarter(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(date);
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  const total = h * 60 + m;
+  const safe = Math.min(Math.round(total / 15) * 15, 23 * 60 + 45);
+  const hh = Math.floor(safe / 60);
+  const mm = safe % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function pickNextOpenSlot(
+  date: string,
+  manicuristId: string,
+  startHHMM: string,
+  appts: Appointment[],
+): string {
+  const taken = new Set(
+    appts
+      .filter(
+        (a) =>
+          a.date === date &&
+          a.manicuristId === manicuristId &&
+          a.status !== 'cancelled' &&
+          a.status !== 'no-show',
+      )
+      .map((a) => a.time),
+  );
+  const [sh, sm] = startHHMM.split(':').map(Number);
+  let total = sh * 60 + sm;
+  for (let i = 0; i < 16; i++) {
+    const hh = Math.floor(total / 60);
+    if (hh >= 24) break;
+    const mm = total % 60;
+    const candidate = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    if (!taken.has(candidate)) return candidate;
+    total += 15;
+  }
+  // No free slot in the next 4 hours — drop to the 8 AM anchor slot, which
+  // is reliably empty (salon opens at 8). The receptionist drags it to the
+  // right place when convenient.
+  return '08:00';
+}
+
+function synthWalkInAppt(
+  client: QueueEntry,
+  manicuristId: string,
+  appts: Appointment[],
+  now: Date = new Date(),
+): Appointment {
+  const date = getLocalDateStr(now);
+  const start = roundLATimeToQuarter(now);
+  const time = pickNextOpenSlot(date, manicuristId, start, appts);
+  return {
+    id: crypto.randomUUID(),
+    clientName: client.clientName,
+    clientPhone: '',
+    service: client.services[0] || '',
+    services: client.services,
+    serviceRequests: client.serviceRequests || [],
+    manicuristId,
+    date,
+    time,
+    notes: '',
+    status: 'checked-in',
+    createdAt: now.getTime(),
+    sameTime: false,
+    partyId: null,
+    isWalkIn: true,
+  };
+}
+
 
 export const INITIAL_STATE: AppState = {
   manicurists: [],
@@ -233,11 +322,38 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ? state.queue.find((c) => c.id === orphanCandidateId && !c.parentQueueId)
         : null;
       const orphanedTurns = orphanedEntry ? Number(orphanedEntry.turnValue) || 0 : 0;
+      // Walk-in flow: if this entry isn't linked to an appointment yet,
+      // synthesize one in the assigned manicurist's column so the walk-in
+      // lives in the appt book and can be checked out from there. On
+      // re-assign (originalAppointment already exists in state.appointments),
+      // update the existing block's manicuristId so it moves to the new
+      // column instead of duplicating.
+      const existingAppt = client.originalAppointment
+        ? state.appointments.find((a) => a.id === client.originalAppointment!.id)
+        : null;
+      const synthAppt = !client.originalAppointment
+        ? synthWalkInAppt(client, action.manicuristId, state.appointments)
+        : null;
+      const nextAppointments = synthAppt
+        ? [...state.appointments, synthAppt]
+        : existingAppt && existingAppt.manicuristId !== action.manicuristId
+          ? state.appointments.map((a) =>
+              a.id === existingAppt.id ? { ...a, manicuristId: action.manicuristId } : a,
+            )
+          : state.appointments;
       return {
         ...state,
+        appointments: nextAppointments,
         queue: state.queue.map((c) => {
           if (c.id === action.clientId) {
-            return { ...c, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: turns };
+            return {
+              ...c,
+              status: 'inProgress' as const,
+              assignedManicuristId: action.manicuristId,
+              startedAt: now,
+              turnValue: turns,
+              originalAppointment: synthAppt ?? c.originalAppointment,
+            };
           }
           if (orphanedEntry && c.id === orphanedEntry.id) {
             return { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null };
@@ -294,15 +410,31 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ? state.queue.find((c) => c.id === requestOrphanCandidateId && !c.parentQueueId)
         : null;
       const requestOrphanedTurns = requestOrphanedEntry ? Number(requestOrphanedEntry.turnValue) || 0 : 0;
+      // Walk-in flow: synthesize an appt-book block for this freshly-
+      // requested client (REQUEST_ASSIGN always seeds a brand-new queue
+      // entry, so originalAppointment is never set here).
+      const requestSynthAppt = !action.client.originalAppointment
+        ? synthWalkInAppt(action.client, action.manicuristId, state.appointments)
+        : null;
       return {
         ...state,
+        appointments: requestSynthAppt
+          ? [...state.appointments, requestSynthAppt]
+          : state.appointments,
         queue: [
           ...state.queue.map((c) =>
             requestOrphanedEntry && c.id === requestOrphanedEntry.id
               ? { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null }
               : c
           ),
-          { ...action.client, status: 'inProgress' as const, assignedManicuristId: action.manicuristId, startedAt: now, turnValue: requestTurns },
+          {
+            ...action.client,
+            status: 'inProgress' as const,
+            assignedManicuristId: action.manicuristId,
+            startedAt: now,
+            turnValue: requestTurns,
+            originalAppointment: requestSynthAppt ?? action.client.originalAppointment,
+          },
         ],
         manicurists: state.manicurists.map((m) => {
           if (m.id !== action.manicuristId) return m;
@@ -420,10 +552,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         if (c.parentQueueId === action.originalId && !newEntryIds.has(c.id)) return false;
         return true;
       });
+      // Walk-in flow: synthesize one appt-book block per assigned split
+      // child. Accumulate into apptAcc as we go so siblings don't get
+      // dropped on the same time slot in the same manicurist's column.
+      // Skip children that already have an originalAppointment (e.g. the
+      // parent was Q'd from the book) and children with no manicuristId.
+      const apptAcc: Appointment[] = [...state.appointments];
+      const synthApptByChildId = new Map<string, Appointment>();
+      for (const e of newEntries) {
+        if (!e.assignedManicuristId) continue;
+        if (e.originalAppointment) continue;
+        const appt = synthWalkInAppt(e, e.assignedManicuristId, apptAcc);
+        synthApptByChildId.set(e.id, appt);
+        apptAcc.push(appt);
+      }
       const queueById = new Map(filteredQueue.map((c) => [c.id, c]));
-      for (const e of newEntries) queueById.set(e.id, e);
+      for (const e of newEntries) {
+        const synth = synthApptByChildId.get(e.id);
+        queueById.set(e.id, synth ? { ...e, originalAppointment: synth } : e);
+      }
       return {
         ...state,
+        appointments: apptAcc,
         queue: Array.from(queueById.values()),
         manicurists: state.manicurists.map((m) => {
           const delta = turnDeltaByStaff.get(m.id) ?? 0;

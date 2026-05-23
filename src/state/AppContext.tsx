@@ -201,6 +201,8 @@ function mapDbAppointment(row: Record<string, unknown>): Appointment {
     partyId: (row.party_id as string) || null,
     // `caution` column may not exist on older DBs yet — coalesce undefined to false.
     caution: (row.caution as boolean | undefined) || false,
+    // `is_walk_in` flags auto-created appt blocks from the queue-assign flow.
+    isWalkIn: (row.is_walk_in as boolean | undefined) || false,
     bookedByReceptionistId: (row.booked_by_receptionist_id as string) || null,
     lastEditedByReceptionistId: (row.last_edited_by_receptionist_id as string) || null,
     lastEditedAt: row.last_edited_at
@@ -1834,7 +1836,8 @@ function appointmentUnchanged(a: Appointment, b: Appointment): boolean {
     a.status === b.status &&
     (a.sameTime || false) === (b.sameTime || false) &&
     (a.partyId || null) === (b.partyId || null) &&
-    (a.caution || false) === (b.caution || false)
+    (a.caution || false) === (b.caution || false) &&
+    (a.isWalkIn || false) === (b.isWalkIn || false)
   );
 }
 
@@ -1854,6 +1857,7 @@ function appointmentToRow(a: Appointment) {
     same_time: a.sameTime || false,
     party_id: a.partyId || null,
     caution: a.caution || false,
+    is_walk_in: a.isWalkIn || false,
     booked_by_receptionist_id: a.bookedByReceptionistId || null,
     last_edited_by_receptionist_id: a.lastEditedByReceptionistId || null,
     last_edited_at: a.lastEditedAt ? new Date(a.lastEditedAt).toISOString() : null,
