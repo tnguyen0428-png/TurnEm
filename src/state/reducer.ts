@@ -284,8 +284,25 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_EDITING_CLIENT':
       return { ...state, editingClientId: action.clientId };
 
-    case 'REMOVE_CLIENT':
-      return { ...state, queue: state.queue.filter((c) => c.id !== action.id) };
+    case 'REMOVE_CLIENT': {
+      const removed = state.queue.find((c) => c.id === action.id);
+      // If the removed entry has a linked walk-in appt block that the
+      // receptionist hasn't drag-confirmed yet (appt.isWalkIn still true),
+      // delete it from the book too — there's no client to serve anymore.
+      // Drag-confirmed appts (isWalkIn cleared) stay.
+      const linkedApptId = removed?.originalAppointment?.id;
+      const linkedAppt = linkedApptId
+        ? state.appointments.find((a) => a.id === linkedApptId)
+        : null;
+      const shouldDeleteAppt = !!(linkedAppt && linkedAppt.isWalkIn);
+      return {
+        ...state,
+        queue: state.queue.filter((c) => c.id !== action.id),
+        appointments: shouldDeleteAppt
+          ? state.appointments.filter((a) => a.id !== linkedApptId)
+          : state.appointments,
+      };
+    }
 
     case 'ASSIGN_CLIENT': {
       const client = state.queue.find((c) => c.id === action.clientId);
@@ -660,9 +677,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
               ? { ...c, status: 'waiting' as const, assignedManicuristId: null, startedAt: null }
               : c
           );
+      // If the cancelled service was an auto-placed walk-in (still flagged
+      // isWalkIn=true on the appt — meaning the receptionist hasn't drag-
+      // confirmed it yet), drop the appt block from the book. The client
+      // is going back to waiting OR being removed entirely; either way the
+      // synth block has no reason to keep occupying a slot.
+      const cancelApptId = client.originalAppointment?.id;
+      const cancelApptStill = cancelApptId
+        ? state.appointments.find((a) => a.id === cancelApptId)
+        : null;
+      const cancelDeleteAppt = !!(cancelApptStill && cancelApptStill.isWalkIn);
       return {
         ...state,
         queue: updatedQueue,
+        appointments: cancelDeleteAppt
+          ? state.appointments.filter((a) => a.id !== cancelApptId)
+          : state.appointments,
         manicurists: state.manicurists.map((m) =>
           m.id === action.manicuristId
             ? { ...m, status: 'available' as const, currentClient: null, totalTurns: Math.max(0, m.totalTurns - turnDeduction), hasFourthPositionSpecial: false, hasCheck2: false, hasCheck3: false }

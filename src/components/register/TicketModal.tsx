@@ -1570,6 +1570,29 @@ export default function TicketModal({
             dispatch({ type: 'REMOVE_CLIENT', id: q.id });
           }
         }
+        // Walk-in cleanup: collect every appt id linked to this visit's
+        // queue entries (in-progress walk-ins) and completed_services
+        // entries (completed walk-ins). Delete any that are still flagged
+        // appt.isWalkIn === true — those are auto-placed blocks the
+        // receptionist hasn't drag-confirmed. Drag-confirmed blocks stay
+        // (they've become "real" appointments and survive the void).
+        const walkInApptIds = new Set<string>();
+        for (const q of state.queue) {
+          if ((q.id === visitId || q.parentQueueId === visitId) && q.originalAppointment?.id) {
+            walkInApptIds.add(q.originalAppointment.id);
+          }
+        }
+        for (const c of state.completed) {
+          if ((c.id === visitId || c.id.startsWith(`${visitId}-`)) && c.originalAppointmentId) {
+            walkInApptIds.add(c.originalAppointmentId);
+          }
+        }
+        for (const apptId of walkInApptIds) {
+          const appt = state.appointments.find((a) => a.id === apptId);
+          if (appt && appt.isWalkIn) {
+            dispatch({ type: 'DELETE_APPOINTMENT', id: apptId });
+          }
+        }
       }
       onClose();
     }
