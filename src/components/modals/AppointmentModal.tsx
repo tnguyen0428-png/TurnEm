@@ -114,6 +114,10 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // Recap shown after a successful new booking — receptionist taps DONE
   // to dismiss. Edits skip this.
   const [recap, setRecap] = useState<null | {
+    // Id of the just-saved appointment. Lets the EDIT button on the recap
+    // re-open this same record in edit mode (without re-typing anything)
+    // if the receptionist notices a wrong field after pressing SAVE.
+    appointmentId: string;
     clientName: string;
     services: string[];
     date: string;
@@ -786,6 +790,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         return { service: s.serviceName as string, staffName };
       });
       setRecap({
+        appointmentId: appt.id,
         clientName: name,
         services: services as string[],
         date,
@@ -1318,6 +1323,19 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       <BookingRecapModal
         info={recap}
         onClose={() => { setRecap(null); handleClose(); }}
+        onEdit={() => {
+          // "Wait, that's wrong" path: dismiss the recap and re-open this
+          // same modal in edit mode for the just-saved record. The add-mode
+          // instance unmounts and the edit-mode instance mounts with the
+          // record's data pre-populated — no fields to retype. We clear the
+          // appointmentDraft so edit mode reads from state.appointments
+          // (not the stale add-mode draft).
+          const apptId = recap.appointmentId;
+          setRecap(null);
+          dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: null });
+          dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: apptId });
+          dispatch({ type: 'SET_MODAL', modal: 'editAppointment' });
+        }}
       />
     )}
     </Modal>
@@ -1408,9 +1426,10 @@ function MatchedCustomerBanner({
 // ── Booking recap ────────────────────────────────────────────────────────────
 
 function BookingRecapModal({
-  info, onClose,
+  info, onClose, onEdit,
 }: {
   info: {
+    appointmentId: string;
     clientName: string;
     services: string[];
     date: string;
@@ -1420,6 +1439,7 @@ function BookingRecapModal({
     receptionistName: string;
   };
   onClose: () => void;
+  onEdit: () => void;
 }) {
   function formatDate(iso: string): string {
     const d = new Date(iso + 'T12:00:00');
@@ -1460,7 +1480,14 @@ function BookingRecapModal({
           </div>
           <RecapLine label="Booked by" value={info.receptionistName || '\u2014'} />
         </div>
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="px-4 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 font-mono text-xs font-bold hover:bg-gray-50"
+          >
+            EDIT
+          </button>
           <button
             type="button"
             onClick={onClose}
