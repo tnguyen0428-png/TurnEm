@@ -77,6 +77,35 @@ function pickNextOpenSlot(
   return '08:00';
 }
 
+// Same-minute buddy alignment window. Two non-request walk-ins assigned to
+// different manicurists within this many ms of each other are placed on the
+// same time row in the appt book so the receptionist sees them as a visual
+// group (they typically arrive together — e.g., a mom + daughter splitting
+// to two open techs). 60s matches the "same minute" UX phrasing.
+const WALK_IN_BUDDY_WINDOW_MS = 60_000;
+
+function findBuddyWalkInTime(
+  manicuristId: string,
+  date: string,
+  appts: Appointment[],
+  nowMs: number,
+): string | null {
+  let bestTime: string | null = null;
+  let bestCreatedAt = -Infinity;
+  for (const a of appts) {
+    if (!a.isWalkIn) continue;
+    if (a.date !== date) continue;
+    if (a.manicuristId === manicuristId) continue;
+    if (typeof a.createdAt !== 'number') continue;
+    if (nowMs - a.createdAt > WALK_IN_BUDDY_WINDOW_MS) continue;
+    if (a.createdAt > bestCreatedAt) {
+      bestCreatedAt = a.createdAt;
+      bestTime = a.time;
+    }
+  }
+  return bestTime;
+}
+
 function synthWalkInAppt(
   client: QueueEntry,
   manicuristId: string,
@@ -89,8 +118,20 @@ function synthWalkInAppt(
   // any walk-in added pre-open (or pre-rounded-08:00) lands at e.g. 06:15
   // and is invisible above the book's first visible slot.
   const rounded = roundLATimeToQuarter(now);
-  const start = rounded < '08:00' ? '08:00' : rounded;
+  // Non-request walk-ins prefer to align with a "buddy" walk-in placed on
+  // another manicurist within the last minute, so the receptionist sees the
+  // pair as a single horizontal group in the appt book. Request walk-ins
+  // skip this — those are intentionally individual requests, not a group.
+  const isRequest = !!client.isRequested;
+  const buddyTime =
+    !isRequest ? findBuddyWalkInTime(manicuristId, date, appts, now.getTime()) : null;
+  const preferred = buddyTime ?? rounded;
+  const start = preferred < '08:00' ? '08:00' : preferred;
   const time = pickNextOpenSlot(date, manicuristId, start, appts);
+  // sameTime flags appointments that are intentionally on the same time row
+  // as another appt (visual stacking instead of "conflict?" warnings). Set
+  // it when the buddy alignment actually landed us on the buddy's row.
+  const alignedWithBuddy = buddyTime !== null && time === buddyTime;
   return {
     id: crypto.randomUUID(),
     clientName: client.clientName,
@@ -104,7 +145,7 @@ function synthWalkInAppt(
     notes: '',
     status: 'checked-in',
     createdAt: now.getTime(),
-    sameTime: false,
+    sameTime: alignedWithBuddy,
     partyId: null,
     isWalkIn: true,
   };
