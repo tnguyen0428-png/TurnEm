@@ -2234,6 +2234,73 @@ export async function voidTicket(
  * Skips entries where the queue_entry_id is null or the staff didn't
  * actually change (caller pre-filters).
  */
+/**
+ * Apply a delta (+/-) to a manicurist's total_turns using compare-and-swap so
+ * the read-modify-write can't be silently clobbered by a concurrent writer.
+ *
+ * Implementation: read the current value, compute next, write WITH a guard
+ * filter `total_turns = $expected`. PostgREST returns the updated row(s); an
+ * empty array means the value changed between our read and write, so we
+ * retry with a fresh read. Bounded retries prevent a hot row from looping
+ * forever (5 attempts is generous — the realistic concurrent-write rate per
+ * manicurist row is well under 1/sec).
+ *
+ * Clamps at 0 to match the existing `Math.max(0, …)` invariant used in
+ * CANCEL_SERVICE, voidTicket, and throughout the reducer. Returns true on
+ * success, false if every retry hit a CAS miss or the underlying request
+ * errored. Callers that need to surface failure should check the return
+ * value; callers that only need best-effort can ignore it.
+ *
+ * Without this guard the previous code did SELECT → UPDATE as two
+ * statements, which loses any concurrent write (syncManicurists, voidTicket
+ * rollback, a parallel reallocate call) that lands between them.
+ */
+async function applyTurnDelta(
+  staffId: string,
+  delta: number,
+  maxAttempts = 5,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const { data: row, error: rErr } = await supabase
+      .from('manicurists')
+      .select('total_turns')
+      .eq('id', staffId)
+      .maybeSingle();
+    if (rErr) {
+      console.warn('[tickets] applyTurnDelta read failed:', rErr.message);
+      return false;
+    }
+    if (!row) return false;
+    const cur = Number((row as { total_turns?: number | string }).total_turns) || 0;
+    const next = Math.max(0, cur + delta);
+    // CAS: only write if total_turns hasn't moved. `.select('id')` makes
+    // PostgREST return the affected rows so we can detect a no-op write
+    // (zero-row response = the eq('total_turns', cur) filter excluded the
+    // row, i.e. someone else updated it between our read and write).
+    const { data: updated, error: uErr } = await supabase
+      .from('manicurists')
+      .update({ total_turns: next })
+      .eq('id', staffId)
+      .eq('total_turns', cur)
+      .select('id');
+    if (uErr) {
+      console.warn('[tickets] applyTurnDelta write failed:', uErr.message);
+      return false;
+    }
+    if (updated && updated.length > 0) return true; // CAS succeeded
+    // CAS missed — value changed between read and write. Loop with a fresh
+    // read. No sleep; the next read pulls the just-committed value and we
+    // re-derive `next` against it, so the retry is correct immediately.
+  }
+  console.warn(
+    '[tickets] applyTurnDelta gave up after',
+    maxAttempts,
+    'CAS retries for',
+    staffId,
+  );
+  return false;
+}
+
 export async function reallocateTurnsForStaffChanges(
   changes: Array<{
     queueEntryId: string;
@@ -2255,19 +2322,16 @@ export async function reallocateTurnsForStaffChanges(
       if (cErr || !completed) continue;
       const turn = Number((completed as { turn_value: number }).turn_value) || 0;
 
-      // Decrement the old staff's totalTurns (when known).
-      if (c.oldStaffId) {
-        const { data: oldRow } = await supabase
-          .from('manicurists').select('total_turns').eq('id', c.oldStaffId).maybeSingle();
-        const oldTurns = Math.max(0, Number((oldRow as { total_turns?: number } | null)?.total_turns ?? 0) - turn);
-        await supabase.from('manicurists').update({ total_turns: oldTurns }).eq('id', c.oldStaffId);
+      // Decrement the old staff's totalTurns (when known). Atomic via CAS —
+      // see applyTurnDelta. Best-effort logging only; we still try the
+      // increment and repoint below even if this miss-fires, because the
+      // report attribution is the user-visible bit.
+      if (c.oldStaffId && turn > 0) {
+        await applyTurnDelta(c.oldStaffId, -turn);
       }
-      // Increment the new staff's totalTurns.
-      if (c.newStaffId) {
-        const { data: newRow } = await supabase
-          .from('manicurists').select('total_turns').eq('id', c.newStaffId).maybeSingle();
-        const newTurns = Number((newRow as { total_turns?: number } | null)?.total_turns ?? 0) + turn;
-        await supabase.from('manicurists').update({ total_turns: newTurns }).eq('id', c.newStaffId);
+      // Increment the new staff's totalTurns. Same CAS path.
+      if (c.newStaffId && turn > 0) {
+        await applyTurnDelta(c.newStaffId, turn);
       }
       // Repoint the completed_services row.
       await supabase.from('completed_services').update({
