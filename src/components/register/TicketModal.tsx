@@ -1436,20 +1436,44 @@ export default function TicketModal({
         }, { onConflict: 'id', ignoreDuplicates: true });
         if (csErr) {
           console.error('[ticket modal] completed_services upsert for added line failed:', csErr.message);
-          // Even if the completed_services upsert fails (e.g., schema
-          // mismatch), still credit the turn so the cashier doesn't lose
-          // the count.
+          // The completed_services row is best-effort for reports — fall
+          // through and still attempt the turn credit so the cashier
+          // doesn't lose the count on a schema mismatch / RLS edge case.
         }
         // Write the EXACT post-dispatch value, not (current + turnValue).
-        // syncManicurists may have already uploaded localCurrentTurns + turnValue
-        // by the time this runs, so re-fetching and adding turnValue again
-        // double-credits. The dispatch above and this write must converge on
-        // the same value: localCurrentTurns + turnValue. Idempotent if
-        // syncManicurists fires in between.
-        await supabase
+        // syncManicurists may have already uploaded localCurrentTurns +
+        // turnValue by the time this runs, so re-fetching and adding
+        // turnValue again double-credits. The dispatch above and this
+        // write must converge on the same value: localCurrentTurns +
+        // turnValue. Idempotent if syncManicurists fires in between.
+        //
+        // ERROR HANDLING: if this write fails (network blip, RLS denial,
+        // anything), the local dispatch above already credited the turn so
+        // the UI shows it — but the DB does not. On next reload or realtime
+        // echo the credit would vanish and the cashier would think the app
+        // ate it. We compensate by dispatching a matching subtract back off
+        // localCurrentTurns + turnValue → localCurrentTurns (the value we
+        // captured before the dispatch), and surface a setError so the
+        // cashier knows to retry. The setError is the same mechanism used
+        // by the rest of handleSave for save-level errors.
+        const { error: mUpErr } = await supabase
           .from('manicurists')
           .update({ total_turns: localCurrentTurns + turnValue })
-          .eq('id', l.staff1Id);
+          .eq('id', lStaffId);
+        if (mUpErr) {
+          console.error(
+            '[ticket modal] manicurists turn write for added line failed:',
+            mUpErr.message,
+          );
+          dispatch({
+            type: 'UPDATE_MANICURIST',
+            id: lStaffId,
+            updates: { totalTurns: localCurrentTurns },
+          });
+          setError(
+            `Couldn't credit ${l.staff1Name ?? 'manicurist'}'s turn — check connection and retry.`,
+          );
+        }
       })();
     }
 
