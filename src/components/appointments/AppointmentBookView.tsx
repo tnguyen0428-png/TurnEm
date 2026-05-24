@@ -1314,7 +1314,11 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           // the receptionist has double-clicked this specific R appt to
           // temporarily unlock it for a one-time move.
           const isRequestUnlocked = hasRequest && movableRequestApptId === appt.id;
-          const isLocked = isCheckedOut || (hasRequest && !isRequestUnlocked);
+          // Per user request 2026-05-24: dark-gray (checked-out / completed)
+          // appts are draggable too, so the receptionist can fix a slot
+          // placement after payment. The only lock left is the R-appt
+          // double-click-to-unlock gate for client-requested manicurists.
+          const isLocked = hasRequest && !isRequestUnlocked;
           // Treat the old "isCompleted" semantics (muted look, no action buttons) as
           // "checked out OR currently in a queue lifecycle". Hover action row stays
           // hidden in those states.
