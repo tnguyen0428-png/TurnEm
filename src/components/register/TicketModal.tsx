@@ -461,6 +461,54 @@ export default function TicketModal({
       patch.staff1Id !== null &&
       patch.staff1Id !== before.staff1Id
     ) {
+      // Tear down the OLD staff's add-child first when the cashier swaps
+      // the staff on an unsaved line. Without this step, picking staff A
+      // then changing to B leaves A's add-child queue entry orphaned and
+      // A's card stuck on BUSY pointing at it. removeLine has equivalent
+      // teardown logic for the line-delete path; this mirrors it for the
+      // staff-swap path. Mirrors the same "any remaining lines for this
+      // staff?" check so a multi-line ticket where A still has work
+      // elsewhere keeps A busy on the narrowed services.
+      if (before.staff1Id) {
+        const visitId = ticket.queueEntryId;
+        if (visitId) {
+          const oldStaffId = before.staff1Id;
+          const remainingForOldStaff = lines
+            .filter((l, i) =>
+              i !== idx &&
+              l.kind === 'service' &&
+              l.staff1Id === oldStaffId,
+            )
+            .map((l) => (l.name ?? '').trim())
+            .filter((n) => n.length > 0);
+          const oldAddChildId = `${visitId}-add-${oldStaffId}`;
+          const oldAddChild = state.queue.find((q) => q.id === oldAddChildId);
+          if (remainingForOldStaff.length === 0) {
+            // Old staff has no other work on this ticket. Drop the
+            // add-child and return them to AVAILABLE if they were
+            // pointing at it.
+            if (oldAddChild) {
+              dispatch({ type: 'REMOVE_CLIENT', id: oldAddChildId });
+            }
+            const m = state.manicurists.find((mm) => mm.id === oldStaffId);
+            if (m && m.currentClient === oldAddChildId) {
+              dispatch({
+                type: 'UPDATE_MANICURIST',
+                id: m.id,
+                updates: { status: 'available', currentClient: null },
+              });
+            }
+          } else if (oldAddChild) {
+            // Narrow the old staff's add-child services to what's left
+            // so their card stops advertising the just-swapped service.
+            dispatch({
+              type: 'UPDATE_CLIENT',
+              id: oldAddChildId,
+              updates: { services: remainingForOldStaff as ServiceType[] },
+            });
+          }
+        }
+      }
       ensureManicuristBusyForAddedLine({ ...before, ...patch });
     }
   }
