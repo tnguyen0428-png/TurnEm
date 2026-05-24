@@ -1660,10 +1660,25 @@ export default function TicketModal({
             });
           }
         }
-        // Same add-child sweep as handleProcess — voiding a ticket also
-        // has to wipe the synthetic queue entries it spawned.
+        // Wipe EVERY queue entry tied to this visit so the manicurist's
+        // card can't show a stale "in service" state and pressing DONE
+        // later can't sneak a completed_services row past the void's
+        // turn-refund pass. Three kinds of entries are linked to a visit:
+        //   1. main visit entry: q.id === visitId
+        //   2. SPLIT_AND_ASSIGN children: q.parentQueueId === visitId
+        //   3. ad-hoc "add-line" synth children: q.id starts with
+        //      `${visitId}-add-` (also covered by the addChildPrefix below)
+        // Without this, voiding an open ticket while a service is still
+        // in progress let the manicurist complete the service ~minutes
+        // later, which created a new completed_services row that the
+        // void's earlier rollback pass had already missed - the turn
+        // credit was effectively un-refundable (see Victoria 2026-05-24).
         for (const q of state.queue) {
-          if (q.id.startsWith(addChildPrefix)) {
+          if (
+            q.id === visitId ||
+            q.parentQueueId === visitId ||
+            q.id.startsWith(addChildPrefix)
+          ) {
             dispatch({ type: 'REMOVE_CLIENT', id: q.id });
           }
         }
