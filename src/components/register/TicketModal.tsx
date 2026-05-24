@@ -1543,14 +1543,18 @@ export default function TicketModal({
     //      heuristic used by awaitingPaymentApptIds in AppointmentBookView.
     //      This is what makes self-darken survive page refreshes.
     {
-      let linkedApptId: string | null = null;
+      // Compute the set of appointment ids to flip to 'completed'. Multiple
+      // ids are valid: one closed ticket can cover several same-named
+      // clients (e.g. two Lindas paying together) — every appt whose staff
+      // column appears on this ticket should darken.
+      const apptIdsToComplete = new Set<string>();
       if (ticket.queueEntryId) {
         const completedRow = state.completed.find((c) => c.id === ticket.queueEntryId);
         if (completedRow?.originalAppointmentId) {
-          linkedApptId = completedRow.originalAppointmentId;
+          apptIdsToComplete.add(completedRow.originalAppointmentId);
         }
       }
-      if (!linkedApptId && ticket.clientName) {
+      if (apptIdsToComplete.size === 0 && ticket.clientName) {
         const norm = (v: string | undefined) =>
           (v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
         const ticketName = norm(ticket.clientName);
@@ -1565,13 +1569,34 @@ export default function TicketModal({
           norm(a.clientName) === ticketName
         );
         if (candidates.length === 1) {
-          linkedApptId = candidates[0].id;
+          apptIdsToComplete.add(candidates[0].id);
+        } else if (candidates.length > 1) {
+          // Multiple same-named clients in today's book (e.g. two Lindas,
+          // two Jennifers). Disambiguate by matching the served manicurist:
+          // the ticket's items carry staff1Id/staff2Id, the appt carries
+          // manicuristId. Every candidate whose column appears on the
+          // ticket gets darkened — a single ticket commonly covers all
+          // services across all served staff, so flipping every matching
+          // appt is the right behavior.
+          const staffIds = new Set<string>();
+          for (const it of ticket.items ?? []) {
+            if (it.staff1Id) staffIds.add(it.staff1Id);
+            if (it.staff2Id) staffIds.add(it.staff2Id);
+          }
+          for (const c of candidates) {
+            if (c.manicuristId && staffIds.has(c.manicuristId)) {
+              apptIdsToComplete.add(c.id);
+            }
+          }
+          // If no candidate's manicurist is on the ticket, leave them in
+          // light-gray awaiting-payment rather than darkening the wrong
+          // person's block.
         }
       }
-      if (linkedApptId) {
+      for (const id of apptIdsToComplete) {
         dispatch({
           type: 'UPDATE_APPOINTMENT',
-          id: linkedApptId,
+          id,
           updates: { status: 'completed' },
         });
       }
