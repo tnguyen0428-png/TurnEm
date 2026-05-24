@@ -126,6 +126,121 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // override (staff_schedule_overrides), NOT the recurring blueprint.
   const [editingSchedule, setEditingSchedule] = useState<{ manicuristId: string; weekday: number; date: string } | null>(null);
 
+  // Quick time-nudge popup. Receptionists tap an appt once to open this,
+  // tap +5 / -5 a few times, then tap anywhere else on the appt body (or
+  // outside it) to commit the new time. The popup is anchored to the
+  // appt's bounding rect (viewport coords because we render fixed) and
+  // remembers both the current draft time and the original so the commit
+  // step can short-circuit on no-op.
+  const [nudgePopup, setNudgePopup] = useState<{
+    apptId: string;
+    newTime: string;
+    origTime: string;
+    rect: { top: number; left: number; width: number; height: number };
+  } | null>(null);
+  // dblclick fires AFTER click on the same target — we hold the click for a
+  // short window so a dblclick (which opens the edit modal or unlocks an R
+  // appt) cancels the popup before it ever opens. 220ms is below the usual
+  // dblclick threshold (~500ms) but above the inter-click interval browsers
+  // use, so single-click feels close to instant.
+  const apptClickTimerRef = useRef<number | null>(null);
+
+  function nudgeAddMinutes(hhmm: string, delta: number): string {
+    const parts = hhmm.split(':');
+    const h = parseInt(parts[0] ?? '0', 10);
+    const m = parseInt(parts[1] ?? '0', 10);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+    const total = h * 60 + m + delta;
+    // Clamp to the visible book (08:00-19:55). The receptionist can still
+    // drag outside that window if they really need to; the nudge popup is
+    // for in-day micro-adjustments.
+    const minTotal = START_HOUR * 60;
+    const maxTotal = END_HOUR * 60 - 5;
+    const clamped = Math.max(minTotal, Math.min(maxTotal, total));
+    const hh = Math.floor(clamped / 60);
+    const mm = clamped % 60;
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  }
+
+  function commitNudgeNow() {
+    const p = nudgePopup;
+    if (!p) return;
+    setNudgePopup(null);
+    if (p.newTime === p.origTime) return;
+    const appt = state.appointments.find((a) => a.id === p.apptId);
+    if (!appt) return;
+    // Same-time autoflag: if the new minute already has another live appt
+    // in this manicurist's column, mark this one sameTime so the visual
+    // stacking is intentional and the existing S badge surfaces. The
+    // OVERLAP pill (below) is a separate, more aggressive red indicator
+    // we paint on top whenever an actual collision exists.
+    const collidesAtNewTime = state.appointments.some(
+      (a) =>
+        a.id !== appt.id &&
+        a.manicuristId === appt.manicuristId &&
+        a.date === appt.date &&
+        a.time === p.newTime &&
+        a.status !== 'cancelled' &&
+        a.status !== 'no-show',
+    );
+    dispatch({
+      type: 'UPDATE_APPOINTMENT',
+      id: appt.id,
+      updates: {
+        time: p.newTime,
+        sameTime: collidesAtNewTime ? true : appt.sameTime,
+      },
+    });
+  }
+
+  // Outside-click + Esc: commit on any pointer-down outside the popup AND
+  // outside the appt block being nudged. Clicking on the popup's +/- area
+  // (data-nudge-popup) skips commit so the buttons can keep working.
+  useEffect(() => {
+    if (!nudgePopup) return;
+    const targetApptId = nudgePopup.apptId;
+    const onDown = (e: MouseEvent) => {
+      const el = e.target as Element | null;
+      if (!el) return;
+      if (el.closest('[data-nudge-popup="1"]')) return;
+      if (el.closest(`[data-appt-block="${targetApptId}"]`)) return;
+      commitNudgeNow();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Esc cancels — discard the draft.
+        setNudgePopup(null);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nudgePopup]);
+
+  // Set of appt ids that visually collide with another live appt in the
+  // same manicurist column at the exact same start time. Used to paint
+  // the small OVERLAP pill. Recomputed only when the appointments list
+  // changes (the membership test below is O(1)).
+  const collidingApptIds = useMemo(() => {
+    const out = new Set<string>();
+    const byKey = new Map<string, string[]>();
+    for (const a of state.appointments) {
+      if (a.status === 'cancelled' || a.status === 'no-show') continue;
+      const key = `${a.date}__${a.manicuristId ?? ''}__${a.time}`;
+      const list = byKey.get(key) ?? [];
+      list.push(a.id);
+      byKey.set(key, list);
+    }
+    for (const list of byKey.values()) {
+      if (list.length >= 2) for (const id of list) out.add(id);
+    }
+    return out;
+  }, [state.appointments]);
+
   // Auto-fit dimensions — initial values used for the very first render before
   // the ResizeObserver in useLayoutEffect computes the real fit.
   const [colWidth, setColWidth]     = useState(130);
@@ -1186,8 +1301,20 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
           return (
             <div key={`${appt.id}-${serviceName}-${idx}`}
+              data-appt-block={appt.id}
               draggable={!isLocked}
-              onDragStart={(e) => !isLocked && onDragStart(e, appt, serviceName, occurrence)}
+              onDragStart={(e) => {
+                if (isLocked) return;
+                // Starting a drag must cancel any pending nudge open + close
+                // an open popup; nudging via popup AND dragging are mutually
+                // exclusive gestures.
+                if (apptClickTimerRef.current !== null) {
+                  window.clearTimeout(apptClickTimerRef.current);
+                  apptClickTimerRef.current = null;
+                }
+                if (nudgePopup && nudgePopup.apptId === appt.id) setNudgePopup(null);
+                onDragStart(e, appt, serviceName, occurrence);
+              }}
               onDragEnd={onDragEnd}
               className={`absolute left-1 right-1 rounded-lg overflow-hidden border-l-[3px] select-none group z-10 transition-all ${
                 isDragging ? 'opacity-30 cursor-grabbing' : isLocked ? (isCompleted ? 'shadow-sm' : 'cursor-pointer shadow-sm hover:shadow-md') : 'cursor-grab hover:shadow-md hover:-translate-y-px shadow-sm'
@@ -1201,8 +1328,46 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 // While a drag is in progress, let drop events pass through other blocks to the slot grid underneath
                 pointerEvents: dragInfo && !isDragging ? 'none' : undefined,
               }}
+              onClick={(e) => {
+                if (isDragging || isLocked) return;
+                // If the click landed on the popup or one of the hover
+                // action buttons, those handlers already e.stopPropagation;
+                // this onClick still runs for clicks on the appt body.
+                // Defer to allow dblclick to win.
+                if (apptClickTimerRef.current !== null) {
+                  window.clearTimeout(apptClickTimerRef.current);
+                  apptClickTimerRef.current = null;
+                }
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                apptClickTimerRef.current = window.setTimeout(() => {
+                  apptClickTimerRef.current = null;
+                  // If the popup is open for THIS appt, the body click means
+                  // "I'm done nudging" — commit and close.
+                  if (nudgePopup && nudgePopup.apptId === appt.id) {
+                    commitNudgeNow();
+                    return;
+                  }
+                  // Otherwise open the popup. If a different appt's popup is
+                  // currently open, commit it first so we don't strand a draft.
+                  if (nudgePopup) commitNudgeNow();
+                  setNudgePopup({
+                    apptId: appt.id,
+                    newTime: appt.time,
+                    origTime: appt.time,
+                    rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+                  });
+                }, 220);
+              }}
               onDoubleClick={() => {
                 if (isDragging) return;
+                // Cancel any pending nudge-popup open from the preceding
+                // click of this double-click pair — the user wanted the
+                // dblclick behaviour, not the nudge popup.
+                if (apptClickTimerRef.current !== null) {
+                  window.clearTimeout(apptClickTimerRef.current);
+                  apptClickTimerRef.current = null;
+                }
+                if (nudgePopup && nudgePopup.apptId === appt.id) setNudgePopup(null);
                 // R appts: double-click toggles the one-time-move unlock
                 // instead of opening the edit modal. The receptionist
                 // confirmed they actually want to drag a client-requested
@@ -1278,6 +1443,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   )}
                   {appt.sameTime && (
                     <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white font-bold text-[9px]" title="Same time">S</span>
+                  )}
+                  {collidingApptIds.has(appt.id) && (
+                    <span
+                      className="flex-shrink-0 inline-flex items-center justify-center px-1 h-4 rounded-full bg-red-500 text-white font-bold text-[8px] tracking-wider"
+                      title="Overlaps another appointment at this time in this column"
+                    >!</span>
                   )}
                   {appt.partyId && (
                     <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-500 text-white font-bold text-[9px]" title="Party group">P</span>
@@ -1525,6 +1696,65 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 <button onClick={() => { executeDrop(pendingDrop.info, pendingDrop.mId, pendingDrop.slot); setPendingDrop(null); }} className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white font-mono text-sm font-semibold hover:bg-amber-600 transition-colors">MOVE ANYWAY</button>
               </div>
             </div>
+          </div>
+        );
+      })()}
+
+      {/* Nudge popup — small fixed-position widget anchored to the appt
+          block being adjusted. Receptionist taps +5/-5 to shift the time,
+          taps the appt body or outside to commit. Esc discards. */}
+      {nudgePopup && (() => {
+        const POP_W = 168;
+        const POP_H = 70;
+        const GAP = 6;
+        // Try to render above the appt; if that would clip the viewport
+        // top, drop below instead. Centered horizontally over the block,
+        // clamped to the viewport so it never escapes off-screen.
+        const aboveTop = nudgePopup.rect.top - POP_H - GAP;
+        const belowTop = nudgePopup.rect.top + nudgePopup.rect.height + GAP;
+        const top = aboveTop >= 8 ? aboveTop : belowTop;
+        const desiredLeft = nudgePopup.rect.left + nudgePopup.rect.width / 2 - POP_W / 2;
+        const left = Math.max(8, Math.min(window.innerWidth - POP_W - 8, desiredLeft));
+        const delta =
+          (timeToMins(nudgePopup.newTime) - timeToMins(nudgePopup.origTime)) | 0;
+        const sign = delta > 0 ? '+' : '';
+        return (
+          <div
+            data-nudge-popup="1"
+            className="fixed z-30 bg-white rounded-xl shadow-xl border border-gray-200 flex items-center gap-1.5 px-2 py-1.5 select-none"
+            style={{ top, left, width: POP_W, height: POP_H }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setNudgePopup((p) => p ? { ...p, newTime: nudgeAddMinutes(p.newTime, -5) } : null);
+              }}
+              className="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-700 font-mono text-base font-bold flex items-center justify-center"
+              title="Subtract 5 minutes"
+            >
+              −
+            </button>
+            <div className="flex-1 text-center">
+              <div className="font-mono text-sm font-bold text-gray-900 leading-tight">
+                {formatTimeOfDay(nudgePopup.newTime)}
+              </div>
+              <div className="font-mono text-[9px] tracking-wider text-gray-400 leading-tight">
+                {delta === 0 ? 'no change' : `${sign}${delta} MIN`}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setNudgePopup((p) => p ? { ...p, newTime: nudgeAddMinutes(p.newTime, +5) } : null);
+              }}
+              className="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-700 font-mono text-base font-bold flex items-center justify-center"
+              title="Add 5 minutes"
+            >
+              +
+            </button>
           </div>
         );
       })()}
