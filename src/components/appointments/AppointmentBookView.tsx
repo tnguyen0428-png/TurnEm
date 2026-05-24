@@ -126,16 +126,29 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // override (staff_schedule_overrides), NOT the recurring blueprint.
   const [editingSchedule, setEditingSchedule] = useState<{ manicuristId: string; weekday: number; date: string } | null>(null);
 
-  // Quick time-nudge popup. Receptionists tap an appt once to open this,
-  // tap +5 / -5 a few times, then tap anywhere else on the appt body (or
-  // outside it) to commit the new time. The popup is anchored to the
-  // appt's bounding rect (viewport coords because we render fixed) and
-  // remembers both the current draft time and the original so the commit
-  // step can short-circuit on no-op.
+  // Quick service-duration nudge popup. Receptionists tap a specific
+  // service block in an appt once to open this, tap +5 / -5 a few times to
+  // shrink or grow ONLY that service's slot height (e.g. shorten a 45-min
+  // gel mani to 30 min so it fits between two existing bookings), then tap
+  // anywhere else on the appt body (or outside) to commit. This does NOT
+  // change appt.time — the appointment still starts at the same minute.
+  // The mechanism is a per-(service, occurrence) durationAdjustment delta
+  // on appt.serviceRequests, which is the same field the Appointment
+  // modal's "+/- m" knob writes to.
   const [nudgePopup, setNudgePopup] = useState<{
     apptId: string;
-    newTime: string;
-    origTime: string;
+    serviceName: string;
+    occurrence: number;
+    /** Resolved base duration with staff timeAdjustment factored in but
+     *  without the appt-level durationAdjustment — so the popup can show
+     *  the receptionist their delta relative to the salon default for
+     *  this (service, staff) pair. */
+    baseDuration: number;
+    /** Original durationAdjustment on the ServiceRequest at open time;
+     *  used to no-op commit when the receptionist makes no change. */
+    originalAdjustment: number;
+    /** Current draft durationAdjustment the +/- buttons mutate. */
+    draftAdjustment: number;
     rect: { top: number; left: number; width: number; height: number };
   } | null>(null);
   // dblclick fires AFTER click on the same target — we hold the click for a
@@ -145,51 +158,59 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // use, so single-click feels close to instant.
   const apptClickTimerRef = useRef<number | null>(null);
 
-  function nudgeAddMinutes(hhmm: string, delta: number): string {
-    const parts = hhmm.split(':');
-    const h = parseInt(parts[0] ?? '0', 10);
-    const m = parseInt(parts[1] ?? '0', 10);
-    if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
-    const total = h * 60 + m + delta;
-    // Clamp to the visible book (08:00-19:55). The receptionist can still
-    // drag outside that window if they really need to; the nudge popup is
-    // for in-day micro-adjustments.
-    const minTotal = START_HOUR * 60;
-    const maxTotal = END_HOUR * 60 - 5;
-    const clamped = Math.max(minTotal, Math.min(maxTotal, total));
-    const hh = Math.floor(clamped / 60);
-    const mm = clamped % 60;
-    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  function nudgeClampAdjustment(base: number, adj: number): number {
+    // Effective duration must stay >=5 min (matches svcDuration's floor) and
+    // we cap the upper end at +180 so a stray held-down + button doesn't
+    // produce a 6-hour block. -base+5 is the lower bound: nothing shorter
+    // than 5 minutes total.
+    const lowerAdj = -(base - 5);
+    const upperAdj = 180;
+    return Math.max(lowerAdj, Math.min(upperAdj, adj));
   }
 
   function commitNudgeNow() {
     const p = nudgePopup;
     if (!p) return;
     setNudgePopup(null);
-    if (p.newTime === p.origTime) return;
+    if (p.draftAdjustment === p.originalAdjustment) return;
     const appt = state.appointments.find((a) => a.id === p.apptId);
     if (!appt) return;
-    // Same-time autoflag: if the new minute already has another live appt
-    // in this manicurist's column, mark this one sameTime so the visual
-    // stacking is intentional and the existing S badge surfaces. The
-    // OVERLAP pill (below) is a separate, more aggressive red indicator
-    // we paint on top whenever an actual collision exists.
-    const collidesAtNewTime = state.appointments.some(
-      (a) =>
-        a.id !== appt.id &&
-        a.manicuristId === appt.manicuristId &&
-        a.date === appt.date &&
-        a.time === p.newTime &&
-        a.status !== 'cancelled' &&
-        a.status !== 'no-show',
-    );
+    const existing = appt.serviceRequests ?? [];
+    // Find the specific ServiceRequest entry by (service, occurrence). If
+    // none exists, we synthesize one — manicuristIds=[] keeps the implicit
+    // routing intact (the renderer falls back to appt.manicuristId for
+    // entries with empty manicuristIds), so we change ONLY duration.
+    let matchedCount = 0;
+    let touched = false;
+    const nextRequests = existing.map((r) => {
+      if (r.service !== p.serviceName) return r;
+      const isTarget = matchedCount === p.occurrence;
+      matchedCount += 1;
+      if (!isTarget) return r;
+      touched = true;
+      if (p.draftAdjustment === 0) {
+        // Drop the field entirely when back at the default — keeps the
+        // ServiceRequest serialized form minimal.
+        const next = { ...r };
+        delete (next as { durationAdjustment?: number }).durationAdjustment;
+        return next;
+      }
+      return { ...r, durationAdjustment: p.draftAdjustment };
+    });
+    if (!touched) {
+      // No matching ServiceRequest existed for this (service, occurrence).
+      // Insert one. clientRequest is intentionally left undefined so we
+      // don't false-flag this as a customer-requested manicurist.
+      nextRequests.push({
+        service: p.serviceName as ServiceType,
+        manicuristIds: [],
+        durationAdjustment: p.draftAdjustment === 0 ? undefined : p.draftAdjustment,
+      });
+    }
     dispatch({
       type: 'UPDATE_APPOINTMENT',
       id: appt.id,
-      updates: {
-        time: p.newTime,
-        sameTime: collidesAtNewTime ? true : appt.sameTime,
-      },
+      updates: { serviceRequests: nextRequests },
     });
   }
 
@@ -1332,9 +1353,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 if (isDragging || isCheckedOut) return;
                 // Note: we DON'T skip on isLocked. R (client-requested) appts
                 // are locked-for-drag by default but the nudge popup is a
-                // safe, single-click micro-adjustment that doesn't change
-                // the manicurist — so receptionists shouldn't have to
-                // dblclick-to-unlock just to shift the time by 5 min.
+                // safe, single-click micro-adjustment that changes the
+                // SERVICE DURATION (not staff, not start time), so the R
+                // lock's intent (prevent accidental staff moves) is
+                // preserved.
                 // If the click landed on the popup or one of the hover
                 // action buttons, those handlers already e.stopPropagation;
                 // this onClick still runs for clicks on the appt body.
@@ -1346,19 +1368,42 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 apptClickTimerRef.current = window.setTimeout(() => {
                   apptClickTimerRef.current = null;
-                  // If the popup is open for THIS appt, the body click means
-                  // "I'm done nudging" — commit and close.
-                  if (nudgePopup && nudgePopup.apptId === appt.id) {
+                  // If the popup is already open for THIS specific block
+                  // (same appt + service + occurrence), the body click
+                  // means "I'm done nudging" — commit and close.
+                  if (
+                    nudgePopup
+                    && nudgePopup.apptId === appt.id
+                    && nudgePopup.serviceName === serviceName
+                    && nudgePopup.occurrence === occurrence
+                  ) {
                     commitNudgeNow();
                     return;
                   }
-                  // Otherwise open the popup. If a different appt's popup is
-                  // currently open, commit it first so we don't strand a draft.
+                  // Different block (or no popup yet) — commit any open one
+                  // first so we don't strand a draft, then open a fresh one.
                   if (nudgePopup) commitNudgeNow();
+                  // Resolve the ServiceRequest by (service, occurrence) so
+                  // we know the current adjustment, then compute the base
+                  // duration WITHOUT the appt adjustment so the popup can
+                  // show a meaningful delta. svcDuration with adjustment=0
+                  // gives exactly that.
+                  const allReqs = appt.serviceRequests ?? [];
+                  let occCounter = 0;
+                  let matched: ServiceRequest | null = null;
+                  for (const r of allReqs) {
+                    if (r.service !== serviceName) continue;
+                    if (occCounter === occurrence) { matched = r; break; }
+                    occCounter += 1;
+                  }
+                  const baseDur = svcDuration(serviceName, colManicuristId, 0);
                   setNudgePopup({
                     apptId: appt.id,
-                    newTime: appt.time,
-                    origTime: appt.time,
+                    serviceName,
+                    occurrence,
+                    baseDuration: baseDur,
+                    originalAdjustment: matched?.durationAdjustment ?? 0,
+                    draftAdjustment: matched?.durationAdjustment ?? 0,
                     rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
                   });
                 }, 220);
@@ -1705,12 +1750,15 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         );
       })()}
 
-      {/* Nudge popup — small fixed-position widget anchored to the appt
-          block being adjusted. Receptionist taps +5/-5 to shift the time,
-          taps the appt body or outside to commit. Esc discards. */}
+      {/* Nudge popup — small fixed-position widget anchored to the
+          service block being adjusted. Receptionist taps +5/-5 to grow
+          or shrink THIS SERVICE's duration only (not the appt start time,
+          not any other service in the same appt), then taps the appt
+          body or outside to commit. Esc discards. The widget shows the
+          resolved total duration in minutes plus the running delta. */}
       {nudgePopup && (() => {
-        const POP_W = 168;
-        const POP_H = 70;
+        const POP_W = 188;
+        const POP_H = 78;
         const GAP = 6;
         // Try to render above the appt; if that would clip the viewport
         // top, drop below instead. Centered horizontally over the block,
@@ -1720,8 +1768,8 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         const top = aboveTop >= 8 ? aboveTop : belowTop;
         const desiredLeft = nudgePopup.rect.left + nudgePopup.rect.width / 2 - POP_W / 2;
         const left = Math.max(8, Math.min(window.innerWidth - POP_W - 8, desiredLeft));
-        const delta =
-          (timeToMins(nudgePopup.newTime) - timeToMins(nudgePopup.origTime)) | 0;
+        const effective = Math.max(5, nudgePopup.baseDuration + nudgePopup.draftAdjustment);
+        const delta = nudgePopup.draftAdjustment - nudgePopup.originalAdjustment;
         const sign = delta > 0 ? '+' : '';
         return (
           <div
@@ -1734,29 +1782,35 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                setNudgePopup((p) => p ? { ...p, newTime: nudgeAddMinutes(p.newTime, -5) } : null);
+                setNudgePopup((p) => p ? {
+                  ...p,
+                  draftAdjustment: nudgeClampAdjustment(p.baseDuration, p.draftAdjustment - 5),
+                } : null);
               }}
               className="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-700 font-mono text-base font-bold flex items-center justify-center"
-              title="Subtract 5 minutes"
+              title="Shorten by 5 minutes"
             >
               −
             </button>
             <div className="flex-1 text-center">
               <div className="font-mono text-sm font-bold text-gray-900 leading-tight">
-                {formatTimeOfDay(nudgePopup.newTime)}
+                {effective} min
               </div>
-              <div className="font-mono text-[9px] tracking-wider text-gray-400 leading-tight">
-                {delta === 0 ? 'no change' : `${sign}${delta} MIN`}
+              <div className="font-mono text-[9px] tracking-wider text-gray-400 leading-tight uppercase truncate">
+                {delta === 0 ? 'no change' : `${sign}${delta} from saved`}
               </div>
             </div>
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                setNudgePopup((p) => p ? { ...p, newTime: nudgeAddMinutes(p.newTime, +5) } : null);
+                setNudgePopup((p) => p ? {
+                  ...p,
+                  draftAdjustment: nudgeClampAdjustment(p.baseDuration, p.draftAdjustment + 5),
+                } : null);
               }}
               className="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 active:bg-gray-300 text-gray-700 font-mono text-base font-bold flex items-center justify-center"
-              title="Add 5 minutes"
+              title="Extend by 5 minutes"
             >
               +
             </button>
