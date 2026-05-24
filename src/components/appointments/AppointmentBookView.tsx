@@ -1329,7 +1329,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 pointerEvents: dragInfo && !isDragging ? 'none' : undefined,
               }}
               onClick={(e) => {
-                if (isDragging || isLocked) return;
+                if (isDragging || isCheckedOut) return;
+                // Note: we DON'T skip on isLocked. R (client-requested) appts
+                // are locked-for-drag by default but the nudge popup is a
+                // safe, single-click micro-adjustment that doesn't change
+                // the manicurist — so receptionists shouldn't have to
+                // dblclick-to-unlock just to shift the time by 5 min.
                 // If the click landed on the popup or one of the hover
                 // action buttons, those handlers already e.stopPropagation;
                 // this onClick still runs for clicks on the appt body.
