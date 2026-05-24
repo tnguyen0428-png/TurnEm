@@ -11,6 +11,7 @@ import {
 import type { Customer } from '../../types';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { getTodayLA } from '../../utils/time';
+import { resolveScheduleForDate } from '../../utils/schedule';
 import type { ServiceType, ServiceRequest, Appointment } from '../../types';
 
 interface AppointmentModalProps {
@@ -418,22 +419,22 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
     // Compute the appointment's weekday (0=Sun..6=Sat) from the date
     // string so we can look up each manicurist's recurring schedule.
-    const [yy, mm, dd] = date.split('-').map(Number);
-    const apptWeekday = new Date(yy, mm - 1, dd).getDay();
+    // apptWeekday used to be derived here; the resolver now owns weekday
+    // computation internally so we no longer need it at this layer.
 
     // Inline helper: does this manicurist actually work the requested time
     // window on the appointment date? Skips when they're on time-off for
     // the date, have no schedule for the weekday (= recurring day off),
     // their hours don't cover the window, or the window overlaps lunch.
     function manicuristIsWorking(manicuristId: string, startMin: number, endMin: number): boolean {
-      const inTimeOff = state.staffTimeOff.some(
-        (t) => t.manicuristId === manicuristId && date >= t.startDate && date <= t.endDate,
+      // Resolver layers time-off > per-date override > weekly blueprint.
+      // A null result means the tech is off for the date entirely; otherwise
+      // we still need to verify the requested window fits inside the
+      // resolved hours and doesn't overlap the (possibly overridden) lunch.
+      const sched = resolveScheduleForDate(
+        manicuristId, date, state.staffSchedules, state.staffScheduleOverrides, state.staffTimeOff,
       );
-      if (inTimeOff) return false;
-      const sched = state.staffSchedules.find(
-        (s) => s.manicuristId === manicuristId && s.weekday === apptWeekday,
-      );
-      if (!sched) return false; // no schedule row for that weekday = off
+      if (!sched) return false;
       const toMin = (hhmm: string): number => {
         const [h, m] = hhmm.split(':').map(Number);
         return h * 60 + m;

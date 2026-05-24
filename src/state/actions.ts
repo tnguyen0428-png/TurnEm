@@ -1,4 +1,4 @@
-import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
+import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 
 export type AppAction =
   | { type: 'SET_VIEW'; view: ViewType }
@@ -83,4 +83,10 @@ export type AppAction =
   | { type: 'REMOTE_STAFF_SCHEDULE_UPSERT'; entry: StaffScheduleEntry }
   | { type: 'REMOTE_STAFF_SCHEDULE_DELETE'; id: string }
   | { type: 'REMOTE_STAFF_TIME_OFF_UPSERT'; entry: StaffTimeOff }
-  | { type: 'REMOTE_STAFF_TIME_OFF_DELETE'; id: string };
+  | { type: 'REMOTE_STAFF_TIME_OFF_DELETE'; id: string }
+  // Per-date schedule override (one row per (manicuristId, date)). SET upserts,
+  // CLEAR removes the override so the date falls back to the recurring blueprint.
+  | { type: 'SET_STAFF_SCHEDULE_OVERRIDE'; entry: StaffScheduleOverride }
+  | { type: 'CLEAR_STAFF_SCHEDULE_OVERRIDE'; manicuristId: string; date: string }
+  | { type: 'REMOTE_STAFF_SCHEDULE_OVERRIDE_UPSERT'; entry: StaffScheduleOverride }
+  | { type: 'REMOTE_STAFF_SCHEDULE_OVERRIDE_DELETE'; id: string };

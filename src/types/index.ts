@@ -343,6 +343,26 @@ export interface StaffTimeOff {
   createdAt: number;
 }
 
+// Per-date schedule override. Exists only for dates where the receptionist
+// has tweaked hours away from the recurring blueprint. `working === false`
+// means the tech is off for this date even though the blueprint might have
+// them working. `working === true` with start/end overrides the blueprint
+// hours for this single date only. The lunch window doubles as a "midday
+// block" — receptionists use it to carve out an unavailable chunk midday
+// without changing the start/end. See StaffScheduleResolution in
+// `utils/schedule.ts` for how this is layered with staffSchedules + time off.
+export interface StaffScheduleOverride {
+  id: string;
+  manicuristId: string;
+  date: string;             // YYYY-MM-DD
+  working: boolean;
+  startTime: string;        // HH:MM (unused when working=false but still stored)
+  endTime: string;          // HH:MM
+  lunchStart: string | null;
+  lunchEnd: string | null;
+  createdAt: number;
+}
+
 export interface AppState {
   manicurists: Manicurist[];
   queue: QueueEntry[];
@@ -353,6 +373,7 @@ export interface AppState {
   calendarDays: CalendarDay[];
   dailyHistory: DailyHistory[];
   staffSchedules: StaffScheduleEntry[];
+  staffScheduleOverrides: StaffScheduleOverride[];
   staffTimeOff: StaffTimeOff[];
   view: ViewType;
   modal: ModalType;

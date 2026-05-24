@@ -5,7 +5,8 @@ import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import { formatTimeOfDay } from '../../utils/time';
 import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType } from '../../types';
-import WeeklyEditorModal from '../staff/WeeklyEditorModal';
+import DayScheduleOverrideModal from './DayScheduleOverrideModal';
+import { resolveScheduleForDate } from '../../utils/schedule';
 
 const START_HOUR   = 8;
 const END_HOUR     = 20;
@@ -120,9 +121,10 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   const [cannotParkMsg, setCannotParkMsg] = useState<string | null>(null);
   const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
 
-  // Click-to-edit on off-hours overlay: opens WeeklyEditorModal scoped to the
-  // technician whose grayed band was clicked, with that day highlighted.
-  const [editingSchedule, setEditingSchedule] = useState<{ manicuristId: string; weekday: number } | null>(null);
+  // Click-to-edit on off-hours overlay: opens DayScheduleOverrideModal for
+  // the technician + the specific date that was clicked. Writes a per-date
+  // override (staff_schedule_overrides), NOT the recurring blueprint.
+  const [editingSchedule, setEditingSchedule] = useState<{ manicuristId: string; weekday: number; date: string } | null>(null);
 
   // Auto-fit dimensions — initial values used for the very first render before
   // the ResizeObserver in useLayoutEffect computes the real fit.
@@ -142,10 +144,12 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     const dayStartMin = START_HOUR * 60;
     const dayEndMin = END_HOUR * 60;
     const totalDayMins = dayEndMin - dayStartMin;
-    const weekday = weekdayFromYmd(selectedDate);
 
     for (const m of manicurists) {
-      // Time off range trumps weekly schedule
+      // Resolver layers time-off > per-date override > weekly blueprint.
+      // Tag the OFF band differently when time-off is the reason so the
+      // band can still read "TIME OFF" (the override-off case just shows
+      // a plain "OFF").
       const inTimeOff = state.staffTimeOff.some(
         (t) => t.manicuristId === m.id && selectedDate >= t.startDate && selectedDate <= t.endDate
       );
@@ -153,7 +157,9 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         map.set(m.id, [{ top: 0, height: (totalDayMins / SLOT_MINUTES) * slotHeight, label: 'TIME OFF' }]);
         continue;
       }
-      const sched = state.staffSchedules.find((s) => s.manicuristId === m.id && s.weekday === weekday);
+      const sched = resolveScheduleForDate(
+        m.id, selectedDate, state.staffSchedules, state.staffScheduleOverrides, state.staffTimeOff,
+      );
       if (!sched) {
         map.set(m.id, [{ top: 0, height: (totalDayMins / SLOT_MINUTES) * slotHeight, label: 'OFF' }]);
         continue;
@@ -202,7 +208,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       map.set(m.id, bands);
     }
     return map;
-  }, [manicurists, state.staffSchedules, state.staffTimeOff, selectedDate, slotHeight]);
+  }, [manicurists, state.staffSchedules, state.staffScheduleOverrides, state.staffTimeOff, selectedDate, slotHeight]);
   const totalGridW  = TIME_COL_W + manicurists.length * colWidth;
   const TOTAL_H     = TOTAL_SLOTS * slotHeight;
 
@@ -359,14 +365,9 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // fan-out below skips columns the tech doesn't actually work, which
   // is why a 3-pedicure unassigned appointment used to render one block
   // into Tommy's column on a Monday even though he's off.
-  const _bookWeekday = weekdayFromYmd(selectedDate);
   function columnIsOffOnDate(manId: string, startMin: number, endMin: number): boolean {
-    const inTimeOff = state.staffTimeOff.some(
-      (t) => t.manicuristId === manId && selectedDate >= t.startDate && selectedDate <= t.endDate,
-    );
-    if (inTimeOff) return true;
-    const sched = state.staffSchedules.find(
-      (s) => s.manicuristId === manId && s.weekday === _bookWeekday,
+    const sched = resolveScheduleForDate(
+      manId, selectedDate, state.staffSchedules, state.staffScheduleOverrides, state.staffTimeOff,
     );
     if (!sched) return true;
     const schedStart = timeToMins(sched.startTime);
@@ -1098,9 +1099,13 @@ export default function AppointmentBookView({ selectedDate }: Props) {
             }}
             onDoubleClick={(e) => {
               e.stopPropagation();
-              setEditingSchedule({ manicuristId: mId, weekday: weekdayFromYmd(selectedDate) });
+              setEditingSchedule({
+                manicuristId: mId,
+                weekday: weekdayFromYmd(selectedDate),
+                date: selectedDate,
+              });
             }}
-            title="Double-click to edit this technician's schedule"
+            title="Double-click to edit this technician's hours for this day"
           >
             {band.label && band.height > 24 && (
               <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-[10px] font-bold tracking-wider text-gray-400 gap-0.5">
@@ -1524,41 +1529,52 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         );
       })()}
 
-      {/* Quick schedule editor — opened by clicking a grayed off-hours band. */}
+      {/* Quick schedule editor — opened by clicking a grayed off-hours band.
+          This edits ONLY the selected date (writes a staff_schedule_overrides
+          row), not the recurring weekly blueprint. Permanent recurring
+          changes still live in the Blueprint → Staff → Weekly Hours UI. */}
       {editingSchedule && (() => {
         const mani = state.manicurists.find((m) => m.id === editingSchedule.manicuristId);
         if (!mani) return null;
-        const existing = state.staffSchedules.filter((s) => s.manicuristId === editingSchedule.manicuristId);
+        const targetDate = editingSchedule.date;
+        const blueprintSched = state.staffSchedules.find(
+          (s) => s.manicuristId === editingSchedule.manicuristId && s.weekday === editingSchedule.weekday,
+        ) ?? null;
+        const existingOverride = state.staffScheduleOverrides.find(
+          (o) => o.manicuristId === editingSchedule.manicuristId && o.date === targetDate,
+        ) ?? null;
         return (
-          <WeeklyEditorModal
+          <DayScheduleOverrideModal
             manicurist={mani}
-            existing={existing}
-            highlightDay={editingSchedule.weekday}
+            date={targetDate}
+            blueprint={blueprintSched}
+            existingOverride={existingOverride}
             onClose={() => setEditingSchedule(null)}
-            onSave={(drafts) => {
+            onSave={(draft) => {
               const mid = editingSchedule.manicuristId;
-              for (let wd = 0; wd < 7; wd++) {
-                const d = drafts[wd];
-                const prior = existing.find((s) => s.weekday === wd);
-                if (!d.working) {
-                  if (prior) {
-                    dispatch({ type: 'CLEAR_STAFF_SCHEDULE_DAY', manicuristId: mid, weekday: wd });
-                  }
-                  continue;
-                }
-                dispatch({
-                  type: 'SET_STAFF_SCHEDULE_DAY',
-                  entry: {
-                    id: prior?.id ?? crypto.randomUUID(),
-                    manicuristId: mid,
-                    weekday: wd,
-                    startTime: d.startTime,
-                    endTime: d.endTime,
-                    lunchStart: d.hasLunch ? d.lunchStart : null,
-                    lunchEnd: d.hasLunch ? d.lunchEnd : null,
-                  },
-                });
-              }
+              dispatch({
+                type: 'SET_STAFF_SCHEDULE_OVERRIDE',
+                entry: {
+                  id: existingOverride?.id ?? crypto.randomUUID(),
+                  manicuristId: mid,
+                  date: targetDate,
+                  working: draft.working,
+                  startTime: draft.startTime,
+                  endTime: draft.endTime,
+                  lunchStart: draft.hasLunch ? draft.lunchStart : null,
+                  lunchEnd: draft.hasLunch ? draft.lunchEnd : null,
+                  createdAt: existingOverride?.createdAt ?? Date.now(),
+                },
+              });
+              setEditingSchedule(null);
+            }}
+            onClearOverride={() => {
+              if (!existingOverride) return;
+              dispatch({
+                type: 'CLEAR_STAFF_SCHEDULE_OVERRIDE',
+                manicuristId: editingSchedule.manicuristId,
+                date: targetDate,
+              });
               setEditingSchedule(null);
             }}
           />

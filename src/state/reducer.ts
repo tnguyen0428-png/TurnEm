@@ -162,6 +162,7 @@ export const INITIAL_STATE: AppState = {
   calendarDays: [],
   dailyHistory: [],
   staffSchedules: [],
+  staffScheduleOverrides: [],
   staffTimeOff: [],
   view: 'queue',
   modal: null,
@@ -1373,6 +1374,66 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         staffTimeOff: state.staffTimeOff.filter((t) => t.id !== action.id),
+      };
+
+    // ─── Per-date schedule overrides ──────────────────────────────────────
+    case 'SET_STAFF_SCHEDULE_OVERRIDE': {
+      const e = action.entry;
+      // Upsert keyed by (manicuristId, date). Two paths because the entry
+      // arriving from the local UI uses a freshly-minted id, while a
+      // re-save of an existing override comes through with the prior id —
+      // either way we collapse onto the single per-date row.
+      const byId = state.staffScheduleOverrides.findIndex((o) => o.id === e.id);
+      if (byId >= 0) {
+        const next = state.staffScheduleOverrides.slice();
+        next[byId] = e;
+        return { ...state, staffScheduleOverrides: next };
+      }
+      const byPair = state.staffScheduleOverrides.findIndex(
+        (o) => o.manicuristId === e.manicuristId && o.date === e.date,
+      );
+      if (byPair >= 0) {
+        const next = state.staffScheduleOverrides.slice();
+        next[byPair] = e;
+        return { ...state, staffScheduleOverrides: next };
+      }
+      return { ...state, staffScheduleOverrides: [...state.staffScheduleOverrides, e] };
+    }
+
+    case 'CLEAR_STAFF_SCHEDULE_OVERRIDE':
+      return {
+        ...state,
+        staffScheduleOverrides: state.staffScheduleOverrides.filter(
+          (o) => !(o.manicuristId === action.manicuristId && o.date === action.date),
+        ),
+      };
+
+    case 'REMOTE_STAFF_SCHEDULE_OVERRIDE_UPSERT': {
+      const e = action.entry;
+      const idx = state.staffScheduleOverrides.findIndex((o) => o.id === e.id);
+      if (idx >= 0) {
+        const next = state.staffScheduleOverrides.slice();
+        next[idx] = e;
+        return { ...state, staffScheduleOverrides: next };
+      }
+      // Same dedup-by-(mid,date) as the local SET case so realtime echoes
+      // from another tab don't double-insert when the UNIQUE constraint
+      // assigned a different id than what we minted locally.
+      const dupIdx = state.staffScheduleOverrides.findIndex(
+        (o) => o.manicuristId === e.manicuristId && o.date === e.date,
+      );
+      if (dupIdx >= 0) {
+        const next = state.staffScheduleOverrides.slice();
+        next[dupIdx] = e;
+        return { ...state, staffScheduleOverrides: next };
+      }
+      return { ...state, staffScheduleOverrides: [...state.staffScheduleOverrides, e] };
+    }
+
+    case 'REMOTE_STAFF_SCHEDULE_OVERRIDE_DELETE':
+      return {
+        ...state,
+        staffScheduleOverrides: state.staffScheduleOverrides.filter((o) => o.id !== action.id),
       };
 
     default:

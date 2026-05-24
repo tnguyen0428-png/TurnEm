@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { appendItemsToTicket, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, syncEntryToTicket } from '../lib/tickets';
-import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffTimeOff } from '../types';
+import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
 import { supabase } from '../lib/supabase';
@@ -275,6 +275,20 @@ function mapDbStaffTimeOff(row: Record<string, unknown>): StaffTimeOff {
   };
 }
 
+function mapDbStaffScheduleOverride(row: Record<string, unknown>): StaffScheduleOverride {
+  return {
+    id: row.id as string,
+    manicuristId: row.manicurist_id as string,
+    date: row.date as string,
+    working: row.is_working === false ? false : true,
+    startTime: timeToHHMM(row.start_time),
+    endTime: timeToHHMM(row.end_time),
+    lunchStart: row.lunch_start ? timeToHHMM(row.lunch_start) : null,
+    lunchEnd: row.lunch_end ? timeToHHMM(row.lunch_end) : null,
+    createdAt: row.created_at ? new Date(row.created_at as string).getTime() : Date.now(),
+  };
+}
+
 
 // Module-level guard: prevents loadInitialData from running more than once per page load,
 // even if Vite Fast Refresh re-mounts the component during development.
@@ -427,6 +441,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       { data: dailyHistoryRows },
       { data: scheduleRows },
       { data: timeOffRows },
+      { data: scheduleOverrideRows },
     ] = await Promise.all([
       supabase.from('manicurists').select('*').order('sort_order', { ascending: true }),
       supabase.from('queue_entries').select('*'),
@@ -438,6 +453,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.from('daily_history').select('*').order('date', { ascending: false }),
       supabase.from('staff_schedules').select('*'),
       supabase.from('staff_time_off').select('*'),
+      supabase.from('staff_schedule_overrides').select('*'),
     ]);
 
     const appointments = (appointmentRows || []).map(mapDbAppointment);
@@ -466,6 +482,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const calendarDays = (calendarRows || []).map(mapDbCalendarDay);
     const staffSchedules = (scheduleRows || []).map(mapDbStaffSchedule);
     const staffTimeOff = (timeOffRows || []).map(mapDbStaffTimeOff);
+    const staffScheduleOverrides = (scheduleOverrideRows || []).map(mapDbStaffScheduleOverride);
     const dailyHistory: DailyHistory[] = (dailyHistoryRows || []).map((row: Record<string, unknown>) => ({
       id: row.id as string,
       date: row.date as string,
@@ -612,7 +629,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'LOAD_STATE', state: {
       manicurists, queue, completed, appointments, salonServices,
       turnCriteria, calendarDays, dailyHistory: cleanedHistory,
-      staffSchedules, staffTimeOff,
+      staffSchedules, staffScheduleOverrides, staffTimeOff,
       categoryPriority: initialCatPriority,
       servicePriority: initialSvcPriority,
     } });
@@ -918,6 +935,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (prev.calendarDays !== state.calendarDays) trackSave(() => syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncErrorTracked));
     if (prev.dailyHistory !== state.dailyHistory) trackSave(() => syncDailyHistory(state.dailyHistory, prev.dailyHistory, setSyncErrorTracked));
     if (prev.staffSchedules !== state.staffSchedules) trackSave(() => syncStaffSchedules(state.staffSchedules, prev.staffSchedules, setSyncErrorTracked));
+    if (prev.staffScheduleOverrides !== state.staffScheduleOverrides) trackSave(() => syncStaffScheduleOverrides(state.staffScheduleOverrides, prev.staffScheduleOverrides, setSyncErrorTracked));
     if (prev.staffTimeOff !== state.staffTimeOff) trackSave(() => syncStaffTimeOff(state.staffTimeOff, prev.staffTimeOff, setSyncErrorTracked));
     prevStateRef.current = state;
     completedRef.current = state.completed;
@@ -1064,6 +1082,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .subscribe();
 
+    const staffScheduleOverridesChan = supabase
+      .channel('realtime:staff_schedule_overrides')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_schedule_overrides' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_STAFF_SCHEDULE_OVERRIDE_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_STAFF_SCHEDULE_OVERRIDE_UPSERT', entry: mapDbStaffScheduleOverride(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
     // system_state is a singleton and the reducer's REMOTE_SYSTEM_STATE_UPDATE case
     // returns state unchanged (no local field tracks it — the startup check reads from DB
     // directly). We therefore DO NOT set isApplyingRemoteRef here: if we did, the reducer
@@ -1107,6 +1139,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(calendarDaysChan);
       supabase.removeChannel(staffSchedulesChan);
       supabase.removeChannel(staffTimeOffChan);
+      supabase.removeChannel(staffScheduleOverridesChan);
       supabase.removeChannel(systemStateChan);
     };
   }, [state.loaded]);
@@ -2093,6 +2126,61 @@ async function syncStaffTimeOff(current: StaffTimeOff[], prev: StaffTimeOff[], o
   if (changed.length === 0) return;
   const { error } = await withRetry(() => supabase.from('staff_time_off').upsert(changed, { onConflict: 'id' }));
   if (error) { console.error('[syncStaffTimeOff] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+// ─── Staff schedule overrides sync ────────────────────────────────────────
+// Per-date overrides; mirrors syncStaffSchedules in structure (diff against
+// prev to compute removed + changed, upsert by id). Realtime echoes are
+// suppressed by isApplyingRemoteRef in the parent effect.
+
+function staffScheduleOverrideToRow(o: StaffScheduleOverride) {
+  return {
+    id: o.id,
+    manicurist_id: o.manicuristId,
+    date: o.date,
+    is_working: o.working,
+    start_time: o.startTime,
+    end_time: o.endTime,
+    lunch_start: o.lunchStart,
+    lunch_end: o.lunchEnd,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function staffScheduleOverrideUnchanged(a: StaffScheduleOverride, b: StaffScheduleOverride): boolean {
+  if (a === b) return true;
+  return (
+    a.manicuristId === b.manicuristId &&
+    a.date === b.date &&
+    a.working === b.working &&
+    a.startTime === b.startTime &&
+    a.endTime === b.endTime &&
+    a.lunchStart === b.lunchStart &&
+    a.lunchEnd === b.lunchEnd
+  );
+}
+
+async function syncStaffScheduleOverrides(
+  current: StaffScheduleOverride[],
+  prev: StaffScheduleOverride[],
+  onError: (msg: string) => void,
+) {
+  const currentIds = new Set(current.map((o) => o.id));
+  const removed = prev.filter((o) => !currentIds.has(o.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('staff_schedule_overrides').delete().in('id', removed.map((o) => o.id)));
+    if (error) { console.error('[syncStaffScheduleOverrides] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((o) => [o.id, o]));
+  const changed: ReturnType<typeof staffScheduleOverrideToRow>[] = [];
+  for (const o of current) {
+    const previous = prevById.get(o.id);
+    if (previous && staffScheduleOverrideUnchanged(previous, o)) continue;
+    changed.push(staffScheduleOverrideToRow(o));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('staff_schedule_overrides').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncStaffScheduleOverrides] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 }
 
 export function useApp() {
