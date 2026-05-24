@@ -1347,16 +1347,16 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 top: top + 1, height, backgroundColor: bg, borderLeftColor: border,
                 borderTop: `1px solid ${border}60`, borderRight: `1px solid ${border}40`, borderBottom: `1px solid ${border}40`,
                 // While a drag is in progress, let drop events pass through
-                // EVERY appt block — including the source block being dragged.
-                // Without "including the source", a small shift (e.g. nudging
-                // a 30-min appt down by 15 min) drops onto the source's own
-                // footprint; the source block intercepts dragover, the slot
-                // beneath never registers, and the drop silently fails. The
-                // drag itself (and the dragend on the source) still fires
-                // correctly because the browser tracks the source element
-                // identity at dragstart and is unaffected by mid-drag
-                // pointer-events changes.
-                pointerEvents: dragInfo ? 'none' : undefined,
+                // OTHER appt blocks to the slot grid underneath. The source
+                // block keeps normal pointer-events because changing them
+                // mid-drag was observed (in Chrome) to abort the drag —
+                // light gray (in-service / awaiting-payment) appts stopped
+                // moving at all. If we ever need to support drops onto the
+                // source's own footprint (e.g. nudging a 30-min appt down
+                // by 15 min within its current span), do it via an explicit
+                // onDragOver + onDrop on the source block, NOT by yanking
+                // pointer-events.
+                pointerEvents: dragInfo && !isDragging ? 'none' : undefined,
               }}
               onClick={(e) => {
                 if (isDragging || isCheckedOut) return;
