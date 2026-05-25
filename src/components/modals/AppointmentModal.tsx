@@ -134,10 +134,13 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     receptionistName: string;
     // Standing-appointment series outcome. `seriesDates` is every additional
     // booked date (excluding the primary one shown above). `skippedDates`
-    // are dates that fell on a Blocked calendar day and were left unbooked
-    // so the receptionist can review them.
+    // are dates that fell on a Blocked calendar day; `conflictDates` are
+    // dates where the assigned staff already has another appointment at
+    // this time. Both kinds are surfaced separately in the recap so the
+    // receptionist knows whether to unblock the calendar or shift the time.
     seriesDates?: string[];
     skippedDates?: string[];
+    conflictDates?: string[];
     // Pending payload — committed by the DONE handler so the booking only
     // hits state.appointments (and via the sync pipeline, Supabase) when the
     // receptionist confirms. Without this the appointment was being saved
@@ -388,11 +391,13 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // Build a per-column list of busy intervals across all OTHER appointments
   // on the same date. Used to detect overlap when the receptionist tries to
   // save a new (or moved/edited) appointment.
-  function computeOtherAppointmentOccupancy(): Map<string, Array<{ apptId: string; clientName: string; startMin: number; endMin: number; timeLabel: string }>> {
+  function computeOtherAppointmentOccupancy(
+    targetDate: string = date,
+  ): Map<string, Array<{ apptId: string; clientName: string; startMin: number; endMin: number; timeLabel: string }>> {
     const map = new Map<string, Array<{ apptId: string; clientName: string; startMin: number; endMin: number; timeLabel: string }>>();
     for (const a of state.appointments) {
       if (mode === 'edit' && editing && a.id === editing.id) continue;
-      if (a.date !== date) continue;
+      if (a.date !== targetDate) continue;
       if (a.status === 'cancelled' || a.status === 'no-show') continue;
       const svcs = (a.services?.length ? a.services : [a.service as string]).filter(Boolean);
       const allReqs = a.serviceRequests || [];
@@ -799,9 +804,13 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       // is fully independent (no series link / partyId) so editing or
       // cancelling one doesn't touch the others — matches the user's
       // decision on 2026-05-25. Blocked calendar days are skipped and
-      // surfaced in the recap below.
+      // surfaced in the recap below. Time-slot conflicts (the staff already
+      // has another appointment in this slot on that date) are also
+      // skipped, into a separate "conflict" bucket so the receptionist can
+      // see which dates need a different time.
       const seriesDates: string[] = [];
       const skippedDates: string[] = [];
+      const conflictDates: string[] = [];
       const intervalDays = parseInt(standingIntervalDays, 10);
       if (
         isStandingAppt &&
@@ -813,6 +822,45 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         const blockedSet = new Set(
           state.calendarDays.filter((d) => d.status === 'blocked').map((d) => d.date),
         );
+        // Compute the primary appt's per-manicurist time intervals once —
+        // every series date reuses the same shape (same time, same staff,
+        // same services), so we just check this footprint against each
+        // future date's existing appts.
+        const primaryIntervals = new Map<string, Array<{ startMin: number; endMin: number }>>();
+        {
+          const svcs = appt.services;
+          const allReqs = appt.serviceRequests || [];
+          const [sh, sm] = appt.time.split(':').map(Number);
+          const apptStartMin = sh * 60 + sm;
+          let elapsed = 0;
+          const occCount: Record<string, number> = {};
+          for (let i = 0; i < svcs.length; i++) {
+            const svcName = svcs[i];
+            const occ = occCount[svcName] ?? 0;
+            occCount[svcName] = occ + 1;
+            const reqsForSvc = allReqs.filter((r) => r.service === svcName);
+            const req = reqsForSvc[occ] ?? null;
+            const manId = (req && req.manicuristIds.length > 0)
+              ? req.manicuristIds[0]
+              : (appt.manicuristId ?? null);
+            const dur = durOf(svcName, manId, req?.durationAdjustment);
+            let startMin: number;
+            if (req?.startTime) {
+              const [h, m] = req.startTime.split(':').map(Number);
+              startMin = h * 60 + m;
+            } else if (appt.sameTime) {
+              startMin = apptStartMin;
+            } else {
+              startMin = apptStartMin + elapsed;
+            }
+            if (manId) {
+              const arr = primaryIntervals.get(manId) ?? [];
+              arr.push({ startMin, endMin: startMin + dur });
+              primaryIntervals.set(manId, arr);
+            }
+            if (!appt.sameTime) elapsed += dur;
+          }
+        }
         // Iterate in local time (parse YYYY-MM-DD as a local date by
         // appending T00:00:00) so we never roll the date forward/backward
         // via UTC arithmetic.
@@ -827,17 +875,38 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           if (blockedSet.has(dateStr)) {
             skippedDates.push(dateStr);
           } else {
-            const seriesAppt: Appointment = {
-              ...appt,
-              id: crypto.randomUUID(),
-              date: dateStr,
-              createdAt: Date.now(),
-              // Standalone — don't inherit the original's party grouping or
-              // any one-off conflict-confirm partyId we minted above.
-              partyId: null,
-            };
-            pendingAppts.push(seriesAppt);
-            seriesDates.push(dateStr);
+            // Slot-conflict check: any existing appt on this date whose
+            // staff and time window overlap one of the primary's intervals
+            // means this date can't be auto-booked. Surfaced to the
+            // receptionist below — not auto-skipped silently.
+            const occupancyOnDate = computeOtherAppointmentOccupancy(dateStr);
+            let hasConflict = false;
+            outer: for (const [manId, intervals] of primaryIntervals) {
+              const otherIntervals = occupancyOnDate.get(manId) ?? [];
+              for (const myIv of intervals) {
+                for (const otherIv of otherIntervals) {
+                  if (otherIv.startMin < myIv.endMin && otherIv.endMin > myIv.startMin) {
+                    hasConflict = true;
+                    break outer;
+                  }
+                }
+              }
+            }
+            if (hasConflict) {
+              conflictDates.push(dateStr);
+            } else {
+              const seriesAppt: Appointment = {
+                ...appt,
+                id: crypto.randomUUID(),
+                date: dateStr,
+                createdAt: Date.now(),
+                // Standalone — don't inherit the original's party grouping or
+                // any one-off conflict-confirm partyId we minted above.
+                partyId: null,
+              };
+              pendingAppts.push(seriesAppt);
+              seriesDates.push(dateStr);
+            }
           }
           cursor.setDate(cursor.getDate() + intervalDays);
         }
@@ -868,6 +937,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         receptionistName: receptionist?.name ?? '',
         seriesDates: seriesDates.length > 0 ? seriesDates : undefined,
         skippedDates: skippedDates.length > 0 ? skippedDates : undefined,
+        conflictDates: conflictDates.length > 0 ? conflictDates : undefined,
         pendingAppts,
         pendingCustomer: {
           firstName: clientFirstName,
@@ -1704,6 +1774,7 @@ function BookingRecapModal({
     receptionistName: string;
     seriesDates?: string[];
     skippedDates?: string[];
+    conflictDates?: string[];
     pendingAppts: Appointment[];
     pendingCustomer: {
       firstName: string;
@@ -1779,6 +1850,21 @@ function BookingRecapModal({
             </ul>
             <p className="font-mono text-[10px] text-red-500 mt-1">
               These weren't booked. Open the Calendar tab to unblock the day or pick a new date manually.
+            </p>
+          </div>
+        )}
+        {info.conflictDates && info.conflictDates.length > 0 && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50/60 p-4 flex flex-col gap-2">
+            <p className="font-mono text-[10px] uppercase tracking-wider text-amber-800 font-bold">
+              {info.conflictDates.length} date{info.conflictDates.length === 1 ? '' : 's'} unavailable \u2014 slot already booked
+            </p>
+            <ul className="flex flex-col gap-0.5">
+              {info.conflictDates.map((d) => (
+                <li key={d} className="font-mono text-xs text-amber-800">{formatDate(d)}</li>
+              ))}
+            </ul>
+            <p className="font-mono text-[10px] text-amber-700 mt-1">
+              The assigned staff already has an appointment at this time on these dates. Rebook them manually for a different time, or move the conflicting appt.
             </p>
           </div>
         )}
