@@ -87,7 +87,7 @@ export default function CalendarScreen() {
     .slice(0, 5);
 
   return (
-    <div className="max-w-4xl mx-auto p-4 sm:p-6">
+    <div className="max-w-7xl mx-auto p-4 sm:p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="font-bebas text-2xl tracking-[3px] text-gray-900">CALENDAR</h2>
         <div className="flex items-center gap-3">
@@ -102,8 +102,8 @@ export default function CalendarScreen() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="lg:col-span-3 bg-white rounded-2xl border border-gray-100 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <button
               onClick={handlePrevMonth}
@@ -120,18 +120,18 @@ export default function CalendarScreen() {
             </button>
           </div>
 
-          <div className="px-3 py-3">
-            <div className="grid grid-cols-7 mb-2">
+          <div className="px-4 py-4 sm:px-5 sm:py-5">
+            <div className="grid grid-cols-7 mb-3">
               {WEEKDAYS.map((wd) => (
                 <div key={wd} className="text-center py-2">
-                  <span className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider">
+                  <span className="font-mono text-xs text-gray-400 font-semibold tracking-wider">
                     {wd.toUpperCase()}
                   </span>
                 </div>
               ))}
             </div>
 
-            <div className="grid grid-cols-7 gap-1">
+            <div className="grid grid-cols-7 gap-2">
               {Array.from({ length: firstDayOfWeek }).map((_, i) => (
                 <div key={`empty-${i}`} className="aspect-square" />
               ))}
@@ -162,7 +162,7 @@ export default function CalendarScreen() {
                     }`}
                   >
                     <span
-                      className={`font-mono text-xs font-semibold ${
+                      className={`font-mono text-lg sm:text-xl font-semibold ${
                         isBlocked
                           ? 'text-red-600'
                           : isToday
@@ -175,10 +175,10 @@ export default function CalendarScreen() {
                       {day.getDate()}
                     </span>
                     {isBlocked && (
-                      <Lock size={8} className="text-red-400 mt-0.5" />
+                      <Lock size={12} className="text-red-400 mt-1" />
                     )}
                     {isToday && !isBlocked && (
-                      <span className="w-1 h-1 rounded-full bg-pink-500 mt-0.5" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-pink-500 mt-1" />
                     )}
                   </button>
                 );

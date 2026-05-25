@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
+import DatePickerPopover from '../shared/DatePickerPopover';
 import {
   Plus, Calendar, CalendarCheck, Phone, Pencil, Trash2, UserCheck,
   XCircle, AlertTriangle, ChevronLeft, ChevronRight, LayoutGrid, List, Maximize2, Minimize2,
@@ -43,20 +44,13 @@ export default function AppointmentsScreen() {
 
   const [bookMode, setBookMode] = useState<'book' | 'list'>('book');
   const [selectedDate, setSelectedDate] = useState(today);
-  // Ref to the hidden date input — the visible Calendar icon button triggers
-  // showPicker() on this so receptionists can jump to dates further out
-  // without spamming the ChevronRight arrow.
+  // Custom popover replaces the browser's tiny native date picker. We keep a
+  // hidden <input type="date"> mounted purely as a screen-reader / form fallback,
+  // but the visible Calendar buttons now toggle our DatePickerPopover instead.
   const datePickerRef = useRef<HTMLInputElement>(null);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   function openDatePicker() {
-    const el = datePickerRef.current;
-    if (!el) return;
-    // showPicker is the modern way; fall back to .click() / focus on older
-    // browsers that don't support it.
-    if (typeof el.showPicker === 'function') {
-      try { el.showPicker(); return; } catch { /* fall through */ }
-    }
-    el.focus();
-    el.click();
+    setDatePickerOpen((v) => !v);
   }
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -184,7 +178,17 @@ export default function AppointmentsScreen() {
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={18} /></button>
             <button onClick={() => setSelectedDate(today)} className={`px-3 py-1.5 rounded-lg font-mono text-sm font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronRight size={18} /></button>
-            <button onClick={openDatePicker} title="Pick a date" className="p-2 rounded-lg hover:bg-white text-pink-500 transition-all"><Calendar size={18} /></button>
+            <div className="relative">
+              <button onClick={openDatePicker} title="Pick a date" className="p-2 rounded-lg hover:bg-white text-pink-500 transition-all"><Calendar size={18} /></button>
+              {datePickerOpen && (
+                <DatePickerPopover
+                  value={selectedDate}
+                  today={today}
+                  onChange={setSelectedDate}
+                  onClose={() => setDatePickerOpen(false)}
+                />
+              )}
+            </div>
           </div>
           <span className="font-bebas text-xl tracking-[2px] text-gray-700 flex-1 truncate">{formatDateFull(selectedDate)}</span>
           {dayTotal > 0 && <span className="font-mono text-xs text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
@@ -203,7 +207,17 @@ export default function AppointmentsScreen() {
               <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronLeft size={22} /></button>
               <button onClick={() => setSelectedDate(today)} className={`px-4 py-2 rounded-xl font-mono text-base font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:shadow-sm'}`}>TODAY</button>
               <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronRight size={22} /></button>
-              <button onClick={openDatePicker} title="Pick a date" className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-pink-500 transition-all"><Calendar size={22} /></button>
+              <div className="relative">
+                <button onClick={openDatePicker} title="Pick a date" className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-pink-500 transition-all"><Calendar size={22} /></button>
+                {datePickerOpen && (
+                  <DatePickerPopover
+                    value={selectedDate}
+                    today={today}
+                    onChange={setSelectedDate}
+                    onClose={() => setDatePickerOpen(false)}
+                  />
+                )}
+              </div>
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="font-bebas text-3xl tracking-[3px] text-gray-900 truncate">{formatDateFull(selectedDate)}</h2>

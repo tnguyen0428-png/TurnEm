@@ -185,8 +185,34 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_MODAL':
       return { ...state, modal: action.modal };
 
-    case 'LOAD_STATE':
-      return { ...state, ...action.state, loaded: true };
+    case 'LOAD_STATE': {
+      // Reconcile manicurists whose currentClient pointer references a queue
+      // entry that no longer exists (or never did, after a server-side prune).
+      // This catches phantom pointers carried over from prior sessions that
+      // exited an open TicketModal without the add-child sweep running, or
+      // any other historical bug that left a manicurist stuck "busy" on a
+      // dead client. New REMOVE_CLIENT logic prevents future occurrences, but
+      // this pass cleans up legacy state on every boot.
+      const incoming = action.state;
+      const manicuristsIn = incoming.manicurists ?? state.manicurists;
+      const queueIn = incoming.queue ?? state.queue;
+      const queueIds = new Set(queueIn.map((q) => q.id));
+      const reconciledManicurists = manicuristsIn.some(
+        (m) => m.currentClient && !queueIds.has(m.currentClient),
+      )
+        ? manicuristsIn.map((m) =>
+            m.currentClient && !queueIds.has(m.currentClient)
+              ? { ...m, status: 'available' as const, currentClient: null }
+              : m,
+          )
+        : manicuristsIn;
+      return {
+        ...state,
+        ...incoming,
+        manicurists: reconciledManicurists,
+        loaded: true,
+      };
+    }
 
     case 'ADD_MANICURIST':
       return { ...state, manicurists: [...state.manicurists, action.manicurist] };
@@ -366,12 +392,30 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ? state.appointments.find((a) => a.id === linkedApptId)
         : null;
       const shouldDeleteAppt = !!(linkedAppt && linkedAppt.isWalkIn);
+      // Phantom-pointer prevention: any manicurist whose currentClient was
+      // pointing at this entry must be freed up. Without this, removing a
+      // queue entry via REMOVE_CLIENT (e.g. TicketModal's add-child sweep
+      // after a modal close, or QueueCard's manual remove) can leave the
+      // manicurist stuck "busy" forever with no client — surfaced as the
+      // Z-TEST 4 phantom on 2026-05-25. We do NOT touch totalTurns here:
+      // - add-children carry turnValue=0, so no refund is owed
+      // - real entries should be retired via CANCEL_SERVICE (refunds turns)
+      //   or COMPLETE_SERVICE (keeps the earned credit) — REMOVE_CLIENT is
+      //   the cleanup-only path
+      const manicurists = state.manicurists.some((m) => m.currentClient === action.id)
+        ? state.manicurists.map((m) =>
+            m.currentClient === action.id
+              ? { ...m, status: 'available' as const, currentClient: null }
+              : m,
+          )
+        : state.manicurists;
       return {
         ...state,
         queue: state.queue.filter((c) => c.id !== action.id),
         appointments: shouldDeleteAppt
           ? state.appointments.filter((a) => a.id !== linkedApptId)
           : state.appointments,
+        manicurists,
       };
     }
 
@@ -424,7 +468,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const existingAppt = client.originalAppointment
         ? state.appointments.find((a) => a.id === client.originalAppointment!.id)
         : null;
-      const synthAppt = !client.originalAppointment
+      // Re-synth case: after CANCEL_SERVICE on a walk-in the synth appt is
+      // dropped from state.appointments but the queue entry still carries an
+      // originalAppointment pointer to the deleted id. Without this branch,
+      // reassigning from the waiting panel would skip both synth AND
+      // appointments.map (existingAppt is undefined), leaving the new
+      // assignee's column empty — the "test reassigned Ztest1 → Ztest3,
+      // disappears" symptom from 2026-05-25.
+      const needsReSynth = !!client.originalAppointment && !existingAppt;
+      const synthAppt = !client.originalAppointment || needsReSynth
         ? synthWalkInAppt(client, action.manicuristId, state.appointments)
         : null;
       const nextAppointments = synthAppt

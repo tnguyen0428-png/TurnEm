@@ -808,7 +808,9 @@ export default function TicketModal({
   const canProcess =
     isOpen &&
     lines.length > 0 &&
-    pending.length > 0 &&
+    // Zero-balance tickets process without a payment row; non-zero requires
+    // at least one pending payment that fully covers the total.
+    (totalCents === 0 || pending.length > 0) &&
     Math.abs(pendingPaidCents - totalCents) === 0;
 
   // True if any discount (line-level OR ticket-level) is currently applied.
@@ -1493,7 +1495,10 @@ export default function TicketModal({
       setError(`Assign a manicurist to: ${names}`);
       return;
     }
-    if (pending.length === 0) { setError('Add a payment first.'); return; }
+    // Zero-balance tickets (fully discounted / comped) can be processed
+    // without a payment row — skip the "add a payment" guard when the total
+    // is $0. The amount-match check below naturally passes (0 === 0).
+    if (totalCents > 0 && pending.length === 0) { setError('Add a payment first.'); return; }
     if (Math.abs(pendingPaidCents - totalCents) > 0) {
       setError(`Payments ${formatMoneyCents(pendingPaidCents)} ≠ total ${formatMoneyCents(totalCents)}.`);
       return;

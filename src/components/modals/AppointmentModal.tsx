@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Trash2, Printer } from 'lucide-react';
 import Modal from '../shared/Modal';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
@@ -112,12 +112,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // or phone. Clicking one fills the form and pins the matched profile.
   const [matches, setMatches] = useState<Customer[]>([]);
   const [matchedCustomer, setMatchedCustomer] = useState<Customer | null>(null);
+  // Pending delete for one of the matched-customer's upcoming appointments.
+  // Holds the appt id while the ConfirmDialog is shown; cleared on confirm
+  // (after dispatch) or cancel. Lets the receptionist scrub stale future
+  // bookings without leaving the new-appointment flow.
+  const [pendingDeleteApptId, setPendingDeleteApptId] = useState<string | null>(null);
   // Recap shown after a successful new booking — receptionist taps DONE
   // to dismiss. Edits skip this.
   const [recap, setRecap] = useState<null | {
-    // Id of the just-saved appointment. Lets the EDIT button on the recap
-    // re-open this same record in edit mode (without re-typing anything)
-    // if the receptionist notices a wrong field after pressing SAVE.
+    // Id of the primary appointment row that will be created if DONE is
+    // pressed. The booking is NOT yet saved at this point — pressing EDIT
+    // discards the recap and keeps the user on the form. Pressing DONE is
+    // what actually dispatches ADD_APPOINTMENT.
     appointmentId: string;
     clientName: string;
     services: string[];
@@ -126,6 +132,25 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     staffName: string;
     serviceLines: Array<{ service: string; staffName: string }>;
     receptionistName: string;
+    // Standing-appointment series outcome. `seriesDates` is every additional
+    // booked date (excluding the primary one shown above). `skippedDates`
+    // are dates that fell on a Blocked calendar day and were left unbooked
+    // so the receptionist can review them.
+    seriesDates?: string[];
+    skippedDates?: string[];
+    // Pending payload — committed by the DONE handler so the booking only
+    // hits state.appointments (and via the sync pipeline, Supabase) when the
+    // receptionist confirms. Without this the appointment was being saved
+    // the moment BOOK was clicked, even if the receptionist then hit EDIT
+    // to fix a typo — surfaced by Kayla Nguyen 2026-05-25.
+    pendingAppts: Appointment[];
+    pendingCustomer: {
+      firstName: string;
+      lastName: string;
+      phone: string;
+      notes: string;
+      permanentNote: boolean;
+    };
   }>(null);
   // Pre-fill name + phone from the appointment draft. Used when the
   // BOOK APPT button on the ticket modal opens this flow — the customer's
@@ -208,6 +233,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     setPermanentNote(true);
   }, [mode, matchedCustomer, notes]);
   const [sameTime, setSameTime] = useState(false);
+  // Standing-appointment series. When `isStandingAppt` is checked the cashier
+  // also picks an interval (in days) and an end date; on save we book the
+  // primary appt PLUS one extra row for each interval up through the end
+  // date. Blocked calendar days are skipped and surfaced in the recap so the
+  // receptionist can rebook them manually. The series itself isn't tracked
+  // beyond the per-row appts (chose this over a series-id link to keep the
+  // first ship simple — each row edits/cancels independently).
+  const [isStandingAppt, setIsStandingAppt] = useState(false);
+  const [standingIntervalDays, setStandingIntervalDays] = useState('21');
+  const [standingEndDate, setStandingEndDate] = useState('');
   // Receptionist-confirmation when booking would overlap an existing
   // appointment in the same column. Holds the new-booking summary + the
   // list of conflicting existing appointments until the user confirms
@@ -753,28 +788,60 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         caution,
         bookedByReceptionistId: receptionistId,
       };
-      dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
-      void (async () => {
-        // Only persist a Blueprint customer profile when the receptionist
-        // entered first name, last name, AND phone. Half-filled intakes
-        // (walk-ins typed in a hurry, single-name jot-downs) were creating
-        // junk rows in the customers table; we now drop those silently.
-        const _first = (clientFirstName ?? '').trim();
-        const _last = (clientLastName ?? '').trim();
-        const _phone = (clientPhone ?? '').trim();
-        if (!_first || !_last || !_phone) return;
-        const cid = await upsertCustomerFromIntake({
-          firstName: clientFirstName,
-          lastName: clientLastName,
-          phone: clientPhone,
-        });
-        if (cid && permanentNote) {
-          await supabase
-            .from('customers')
-            .update({ notes: notes.trim(), updated_at: new Date().toISOString() })
-            .eq('id', cid);
+      // BOOK is now a preview action — we stage the primary + any standing
+      // series appts on the recap and only dispatch on DONE (see
+      // commitRecap below). This way pressing EDIT on the recap doesn't
+      // leave a saved row behind.
+      const pendingAppts: Appointment[] = [appt];
+
+      // Standing-appointment series: generate one extra row per interval
+      // step from (date + intervalDays) through standingEndDate. Each row
+      // is fully independent (no series link / partyId) so editing or
+      // cancelling one doesn't touch the others — matches the user's
+      // decision on 2026-05-25. Blocked calendar days are skipped and
+      // surfaced in the recap below.
+      const seriesDates: string[] = [];
+      const skippedDates: string[] = [];
+      const intervalDays = parseInt(standingIntervalDays, 10);
+      if (
+        isStandingAppt &&
+        Number.isFinite(intervalDays) &&
+        intervalDays > 0 &&
+        standingEndDate &&
+        standingEndDate > date
+      ) {
+        const blockedSet = new Set(
+          state.calendarDays.filter((d) => d.status === 'blocked').map((d) => d.date),
+        );
+        // Iterate in local time (parse YYYY-MM-DD as a local date by
+        // appending T00:00:00) so we never roll the date forward/backward
+        // via UTC arithmetic.
+        const cursor = new Date(date + 'T00:00:00');
+        const endStop = new Date(standingEndDate + 'T00:00:00');
+        cursor.setDate(cursor.getDate() + intervalDays);
+        while (cursor <= endStop) {
+          const yyyy = cursor.getFullYear();
+          const mm = String(cursor.getMonth() + 1).padStart(2, '0');
+          const dd = String(cursor.getDate()).padStart(2, '0');
+          const dateStr = `${yyyy}-${mm}-${dd}`;
+          if (blockedSet.has(dateStr)) {
+            skippedDates.push(dateStr);
+          } else {
+            const seriesAppt: Appointment = {
+              ...appt,
+              id: crypto.randomUUID(),
+              date: dateStr,
+              createdAt: Date.now(),
+              // Standalone — don't inherit the original's party grouping or
+              // any one-off conflict-confirm partyId we minted above.
+              partyId: null,
+            };
+            pendingAppts.push(seriesAppt);
+            seriesDates.push(dateStr);
+          }
+          cursor.setDate(cursor.getDate() + intervalDays);
         }
-      })();
+      }
       const receptionist = receptionistId
         ? state.manicurists.find((m) => m.id === receptionistId)
         : null;
@@ -799,6 +866,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         staffName: staff,
         serviceLines,
         receptionistName: receptionist?.name ?? '',
+        seriesDates: seriesDates.length > 0 ? seriesDates : undefined,
+        skippedDates: skippedDates.length > 0 ? skippedDates : undefined,
+        pendingAppts,
+        pendingCustomer: {
+          firstName: clientFirstName,
+          lastName: clientLastName,
+          phone: clientPhone,
+          notes: notes.trim(),
+          permanentNote,
+        },
       });
       return;
     }
@@ -888,6 +965,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               new Map(state.manicurists.map((m) => [m.id, m.name]))
             }
             onClear={() => { setMatchedCustomer(null); }}
+            onDelete={(apptId) => { setPendingDeleteApptId(apptId); }}
           />
         ) : matches.length > 0 && mode !== 'edit' ? (
           <div className="rounded-xl border border-pink-200 bg-pink-50/40 p-3">
@@ -1188,6 +1266,47 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           </label>
         </div>
 
+        {/* Standing appointment — recurring booking on a fixed cadence. */}
+        {mode === 'add' && (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isStandingAppt}
+                onChange={(e) => setIsStandingAppt(e.target.checked)}
+                className="w-4 h-4 accent-indigo-500"
+              />
+              <span className="font-mono text-xs font-semibold text-indigo-800">Standing appointment</span>
+              <span className="font-mono text-[10px] text-indigo-500">Repeat this booking on a fixed cadence</span>
+            </label>
+            {isStandingAppt && (
+              <div className="grid grid-cols-2 gap-3 pl-6">
+                <div>
+                  <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">EVERY (DAYS)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={standingIntervalDays}
+                    onChange={(e) => setStandingIntervalDays(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">BOOK THROUGH</label>
+                  <input
+                    type="date"
+                    value={standingEndDate}
+                    min={date}
+                    onChange={(e) => setStandingEndDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 transition-all"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Notes */}
         <div>
           <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">NOTES</label>
@@ -1248,6 +1367,41 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           onCancel={() => setShowCancelConfirm(false)}
         />
       )}
+
+      {pendingDeleteApptId && (() => {
+        // Build a one-line description so the receptionist confirms the right
+        // row, not just "an appointment". Pulls date / time / services from
+        // state.appointments because the banner list is rebuilt on each
+        // render and the row may be stale in a closure.
+        const a = state.appointments.find((x) => x.id === pendingDeleteApptId);
+        const dateLabel = a ? new Date(a.date + 'T12:00:00').toLocaleDateString('en-US', {
+          weekday: 'short', month: 'short', day: 'numeric',
+        }) : '';
+        const timeLabel = (() => {
+          if (!a) return '';
+          const [hh, mm] = (a.time || '').split(':').map((s) => parseInt(s, 10));
+          if (!Number.isFinite(hh)) return a.time;
+          const ampm = hh >= 12 ? 'PM' : 'AM';
+          const h12 = ((hh + 11) % 12) + 1;
+          return `${h12}:${String(mm ?? 0).padStart(2, '0')} ${ampm}`;
+        })();
+        const services = a ? (a.services?.length ? a.services : [a.service]).join(', ') : '';
+        const msg = a
+          ? `Delete this appointment?\n${dateLabel} · ${timeLabel} · ${services}`
+          : 'Delete this appointment?';
+        return (
+          <ConfirmDialog
+            message={msg}
+            confirmLabel="Delete"
+            danger
+            onConfirm={() => {
+              dispatch({ type: 'DELETE_APPOINTMENT', id: pendingDeleteApptId });
+              setPendingDeleteApptId(null);
+            }}
+            onCancel={() => setPendingDeleteApptId(null)}
+          />
+        );
+      })()}
 
       {pendingConflicts !== null && pendingConflicts.conflicts.length > 0 && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setPendingConflicts(null)}>
@@ -1323,19 +1477,42 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     {recap && (
       <BookingRecapModal
         info={recap}
-        onClose={() => { setRecap(null); handleClose(); }}
-        onEdit={() => {
-          // "Wait, that's wrong" path: dismiss the recap and re-open this
-          // same modal in edit mode for the just-saved record. The add-mode
-          // instance unmounts and the edit-mode instance mounts with the
-          // record's data pre-populated — no fields to retype. We clear the
-          // appointmentDraft so edit mode reads from state.appointments
-          // (not the stale add-mode draft).
-          const apptId = recap.appointmentId;
+        onClose={() => {
+          // DONE: commit the staged booking. Dispatch every pending appt
+          // (primary + any standing-series rows), then run the customer
+          // upsert (Blueprint profile + permanent-note write), then close
+          // the modal. Nothing was written to state before this point so
+          // backing out via EDIT leaves no orphan rows.
+          const r = recap;
+          for (const appt of r.pendingAppts) {
+            dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
+          }
+          void (async () => {
+            const c = r.pendingCustomer;
+            const _first = (c.firstName ?? '').trim();
+            const _last = (c.lastName ?? '').trim();
+            const _phone = (c.phone ?? '').trim();
+            if (!_first || !_last || !_phone) return;
+            const cid = await upsertCustomerFromIntake({
+              firstName: c.firstName,
+              lastName: c.lastName,
+              phone: c.phone,
+            });
+            if (cid && c.permanentNote) {
+              await supabase
+                .from('customers')
+                .update({ notes: c.notes, updated_at: new Date().toISOString() })
+                .eq('id', cid);
+            }
+          })();
           setRecap(null);
-          dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: null });
-          dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: apptId });
-          dispatch({ type: 'SET_MODAL', modal: 'editAppointment' });
+          handleClose();
+        }}
+        onEdit={() => {
+          // EDIT: discard the staged booking and return to the form. The
+          // form is still mounted with all the receptionist's inputs intact
+          // — they can fix whatever was wrong and press BOOK again.
+          setRecap(null);
         }}
       />
     )}
@@ -1347,13 +1524,78 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 // ── Matched-customer banner ──────────────────────────────────────────────────
 
 function MatchedCustomerBanner({
-  customer, openAppointments, manicuristNameById, onClear,
+  customer, openAppointments, manicuristNameById, onClear, onDelete,
 }: {
   customer: Customer;
   openAppointments: import('../../types').Appointment[];
   manicuristNameById: Map<string, string>;
   onClear: () => void;
+  onDelete: (apptId: string) => void;
 }) {
+  // Build a self-contained printable HTML page and open it in a new window
+  // so the salon can hand the client a paper schedule of their upcoming
+  // visits. window.print() runs onload; nothing in the parent tab is
+  // affected. If the popup is blocked, fall back to opening the same page
+  // in the current tab via data: URL — the receptionist can ⌘P from there.
+  function handlePrint() {
+    const fmtDate = (iso: string) =>
+      new Date(iso + 'T12:00:00').toLocaleDateString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+      });
+    const fmtTime = (t: string) => {
+      const [hh, mm] = (t || '').split(':').map((s) => parseInt(s, 10));
+      if (!Number.isFinite(hh)) return t;
+      const ampm = hh >= 12 ? 'PM' : 'AM';
+      const h12 = ((hh + 11) % 12) + 1;
+      return `${h12}:${String(mm ?? 0).padStart(2, '0')} ${ampm}`;
+    };
+    const esc = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const rows = openAppointments
+      .map((a) => {
+        const services = (a.services?.length ? a.services : [a.service]).join(', ');
+        const staffId = a.manicuristId ?? a.serviceRequests?.[0]?.manicuristIds?.[0] ?? null;
+        const staff = staffId ? manicuristNameById.get(staffId) ?? '—' : '—';
+        return `<tr>
+          <td>${esc(fmtDate(a.date))}</td>
+          <td>${esc(fmtTime(a.time))}</td>
+          <td>${esc(services || '—')}</td>
+          <td>${esc(staff)}</td>
+        </tr>`;
+      })
+      .join('');
+    const html = `<!doctype html>
+<html><head><meta charset="utf-8"/>
+<title>Upcoming Appointments — ${esc(displayCustomerName(customer))}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 32px; color: #111827; }
+  h1 { font-size: 22px; margin: 0 0 4px 0; }
+  .meta { color: #6b7280; font-size: 13px; margin-bottom: 24px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6b7280; border-bottom: 2px solid #111827; padding: 8px 6px; }
+  td { padding: 10px 6px; border-bottom: 1px solid #e5e7eb; }
+  tr:last-child td { border-bottom: 0; }
+  .empty { color: #9ca3af; font-style: italic; padding: 24px 0; }
+  @media print { body { padding: 16px; } }
+</style></head>
+<body>
+<h1>${esc(displayCustomerName(customer))}</h1>
+<div class="meta">${esc(customer.phone || 'no phone on file')} · ${openAppointments.length} upcoming appointment${openAppointments.length === 1 ? '' : 's'}</div>
+${rows
+  ? `<table><thead><tr><th>Date</th><th>Time</th><th>Services</th><th>Staff</th></tr></thead><tbody>${rows}</tbody></table>`
+  : '<div class="empty">No upcoming appointments.</div>'}
+<script>window.addEventListener('load', () => { setTimeout(() => window.print(), 100); });</script>
+</body></html>`;
+    const win = window.open('', '_blank', 'noopener,noreferrer,width=720,height=900');
+    if (!win) {
+      // Popup blocked — fall back to a data URL the user can print from.
+      window.open('data:text/html;charset=utf-8,' + encodeURIComponent(html), '_blank');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }
   function formatDate(iso: string): string {
     const d = new Date(iso + 'T12:00:00');
     return new Intl.DateTimeFormat('en-US', {
@@ -1381,21 +1623,34 @@ function MatchedCustomerBanner({
             {customer.phone || 'no phone'} · {openAppointments.length} open appointment{openAppointments.length === 1 ? '' : 's'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onClear}
-          className="font-mono text-[10px] tracking-wider font-bold text-gray-500 hover:text-gray-800 uppercase"
-        >
-          Clear
-        </button>
+        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+          <button
+            type="button"
+            onClick={onClear}
+            className="font-mono text-[10px] tracking-wider font-bold text-gray-500 hover:text-gray-800 uppercase"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={handlePrint}
+            disabled={openAppointments.length === 0}
+            title={openAppointments.length === 0 ? 'No upcoming appointments to print' : 'Print upcoming appointments'}
+            aria-label="Print upcoming appointments"
+            className="flex items-center justify-center w-7 h-7 rounded-md text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 disabled:text-gray-300 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+          >
+            <Printer size={14} />
+          </button>
+        </div>
       </div>
       {openAppointments.length > 0 && (
         <div className="rounded-lg bg-white border border-emerald-100 overflow-hidden">
-          <div className="grid grid-cols-[100px_70px_1fr_1fr] gap-2 px-3 py-1.5 bg-emerald-50/60 border-b border-emerald-100 font-mono text-[10px] tracking-wider font-semibold text-emerald-700 uppercase">
+          <div className="grid grid-cols-[100px_70px_1fr_1fr_28px] gap-2 px-3 py-1.5 bg-emerald-50/60 border-b border-emerald-100 font-mono text-[10px] tracking-wider font-semibold text-emerald-700 uppercase">
             <span>Date</span>
             <span>Time</span>
             <span>Services</span>
             <span>Staff</span>
+            <span aria-hidden="true" />
           </div>
           {openAppointments.slice(0, 5).map((a) => {
             const services = (a.services?.length ? a.services : [a.service]).join(', ');
@@ -1404,12 +1659,21 @@ function MatchedCustomerBanner({
             return (
               <div
                 key={a.id}
-                className="grid grid-cols-[100px_70px_1fr_1fr] gap-2 px-3 py-2 border-b border-emerald-50 last:border-b-0 items-center"
+                className="grid grid-cols-[100px_70px_1fr_1fr_28px] gap-2 px-3 py-2 border-b border-emerald-50 last:border-b-0 items-center"
               >
                 <span className="font-mono text-xs text-gray-800">{formatDate(a.date)}</span>
                 <span className="font-mono text-xs text-gray-700">{formatTime(a.time)}</span>
                 <span className="font-mono text-xs text-gray-700 truncate">{services || '—'}</span>
                 <span className="font-mono text-xs text-gray-700 truncate">{staff}</span>
+                <button
+                  type="button"
+                  onClick={() => onDelete(a.id)}
+                  title="Delete this appointment"
+                  aria-label="Delete appointment"
+                  className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
             );
           })}
@@ -1438,6 +1702,16 @@ function BookingRecapModal({
     staffName: string;
     serviceLines: Array<{ service: string; staffName: string }>;
     receptionistName: string;
+    seriesDates?: string[];
+    skippedDates?: string[];
+    pendingAppts: Appointment[];
+    pendingCustomer: {
+      firstName: string;
+      lastName: string;
+      phone: string;
+      notes: string;
+      permanentNote: boolean;
+    };
   };
   onClose: () => void;
   onEdit: () => void;
@@ -1481,6 +1755,33 @@ function BookingRecapModal({
           </div>
           <RecapLine label="Booked by" value={info.receptionistName || '\u2014'} />
         </div>
+        {info.seriesDates && info.seriesDates.length > 0 && (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 flex flex-col gap-2">
+            <p className="font-mono text-[10px] uppercase tracking-wider text-indigo-700 font-bold">
+              Standing series \u2014 {info.seriesDates.length} extra visit{info.seriesDates.length === 1 ? '' : 's'} booked
+            </p>
+            <ul className="flex flex-col gap-0.5">
+              {info.seriesDates.map((d) => (
+                <li key={d} className="font-mono text-xs text-indigo-900">{formatDate(d)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {info.skippedDates && info.skippedDates.length > 0 && (
+          <div className="rounded-xl border border-red-200 bg-red-50/50 p-4 flex flex-col gap-2">
+            <p className="font-mono text-[10px] uppercase tracking-wider text-red-700 font-bold">
+              {info.skippedDates.length} date{info.skippedDates.length === 1 ? '' : 's'} skipped \u2014 calendar blocked
+            </p>
+            <ul className="flex flex-col gap-0.5">
+              {info.skippedDates.map((d) => (
+                <li key={d} className="font-mono text-xs text-red-700">{formatDate(d)}</li>
+              ))}
+            </ul>
+            <p className="font-mono text-[10px] text-red-500 mt-1">
+              These weren't booked. Open the Calendar tab to unblock the day or pick a new date manually.
+            </p>
+          </div>
+        )}
         <div className="flex justify-end gap-2">
           <button
             type="button"

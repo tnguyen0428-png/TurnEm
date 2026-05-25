@@ -1930,33 +1930,35 @@ export interface CloseTicketInput {
  * for edits after this returns successfully.
  */
 export async function closeTicket(input: CloseTicketInput): Promise<Ticket | null> {
-  if (input.payments.length === 0) {
-    console.error('[tickets] closeTicket: no payments provided');
-    return null;
-  }
+  // Zero-balance close (e.g. fully-discounted / comped ticket) is allowed —
+  // we still flip the ticket to closed so it leaves the open-tickets list,
+  // we just skip the payment-row insert since there's nothing to record.
 
   // 1. Insert payment rows. Capture the returned ids so we can roll them back
   //    if step 2 fails or matches zero rows — otherwise the payments end up
   //    stranded on a ticket we didn't actually close, and a retry inserts
   //    them again (the close-shift / sales-report sums then double-count).
-  const paymentRows = input.payments.map((p) => ({
-    ticket_id: input.ticketId,
-    shift_id: input.shiftId,
-    method: p.method,
-    amount_cents: p.amountCents,
-    tendered_cents: p.tenderedCents ?? null,
-    change_cents: p.changeCents ?? null,
-    gift_card_code: p.giftCardCode ?? '',
-  }));
-  const { data: insertedPayments, error: pErr } = await supabase
-    .from('payments')
-    .insert(paymentRows)
-    .select('id');
-  if (pErr) {
-    console.error('[tickets] closeTicket payments insert:', pErr.message);
-    return null;
+  let insertedPaymentIds: string[] = [];
+  if (input.payments.length > 0) {
+    const paymentRows = input.payments.map((p) => ({
+      ticket_id: input.ticketId,
+      shift_id: input.shiftId,
+      method: p.method,
+      amount_cents: p.amountCents,
+      tendered_cents: p.tenderedCents ?? null,
+      change_cents: p.changeCents ?? null,
+      gift_card_code: p.giftCardCode ?? '',
+    }));
+    const { data: insertedPayments, error: pErr } = await supabase
+      .from('payments')
+      .insert(paymentRows)
+      .select('id');
+    if (pErr) {
+      console.error('[tickets] closeTicket payments insert:', pErr.message);
+      return null;
+    }
+    insertedPaymentIds = (insertedPayments ?? []).map((r) => r.id as string);
   }
-  const insertedPaymentIds = (insertedPayments ?? []).map((r) => r.id as string);
 
   // 2. Compute paid_cents and flip status to closed. We .select() so we can
   //    detect the "matched zero rows" case — when the ticket has already been
