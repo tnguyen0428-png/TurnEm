@@ -159,7 +159,7 @@ export async function sendPushNotification(
   clientName: string,
   service: string,
   customBody?: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; debug?: string }> {
   try {
     const title = 'TurnEM - Aqua Team';
     const defaultBody = `Hi ${manicuristName}, it's your turn! Client: ${clientName} | Service: ${service}. Please head to your station.`;
@@ -195,7 +195,7 @@ export async function sendPushNotification(
       ...(data.results?.[0] || {}),
       serverVapidPrefix: data.debug?.vapidPublicKeyPrefix,
     };
-    return { success: true, error: JSON.stringify(debugInfo) };
+    return { success: true, debug: JSON.stringify(debugInfo) };
   } catch {
     return { success: false, error: 'Network error sending push notification' };
   }

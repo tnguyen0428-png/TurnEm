@@ -390,7 +390,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // race entirely.
   const appointmentWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const chainAppointmentWrite = useCallback((fn: () => Promise<void>): Promise<void> => {
-    const next = appointmentWriteChainRef.current.then(fn, fn).catch((err) => {
+    // The trailing .catch absorbs rejections so the chain promise always resolves —
+    // a failed write is logged but does not deadlock the queue. fn runs only as
+    // the success handler of the previous link; we deliberately do NOT pass fn in
+    // the rejection slot of .then() so that a future maintainer who removes the
+    // .catch doesn't accidentally start invoking fn on rejection (which would be
+    // very surprising behavior). Serialization is preserved either way.
+    const next = appointmentWriteChainRef.current.then(fn).catch((err) => {
       console.error('[appointmentWriteChain] error:', err);
     });
     appointmentWriteChainRef.current = next;
@@ -411,8 +417,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (typeof document === 'undefined') return;
     async function reconcileAppts() {
       if (document.visibilityState !== 'visible') return;
-      const { data, error } = await supabase.from('appointments').select('*');
-      if (error || !data) return;
+      // Retry on transient failures: tab-wake hits often catch a half-reconnected
+      // WebSocket / DNS resolve race. If retries are exhausted, surface a banner
+      // instead of silently leaving the tab stale until the next focus event.
+      const { data, error } = await withRetry(() => supabase.from('appointments').select('*'));
+      if (error) {
+        setSyncErrorTracked('Sync failed — could not refresh appointments after focus. Check connection.');
+        return;
+      }
+      if (!data) return;
       // Filter out tombstoned IDs - their DELETE may still be in flight; we don't want
       // to resurrect them by fetching the pre-delete server snapshot.
       const fresh = data
@@ -889,7 +902,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
             if (error) {
               console.error('[sync deleteAppt] error:', error);
-              setSyncErrorTracked('Sync failed - data may not be saved. Check connection.');
+              setSyncErrorTracked('Sync failed — data may not be saved. Check connection.');
             }
           }
         }));
@@ -1208,6 +1221,39 @@ export function useAppDispatch() {
   return dispatch;
 }
 
+/**
+ * Decide whether an error from a Supabase call is worth retrying. Transient =
+ * yes (network blip, server overload, deadlock). Permanent = no (auth failure,
+ * RLS denial, validation error) — retrying just wastes ~6 seconds and three
+ * round-trips before giving the user the same failure toast we'd have given on
+ * the first try.
+ *
+ * Heuristic: explicit error code wins; otherwise fall back to HTTP status; if
+ * neither is present (e.g., a thrown TypeError from fetch), assume transient
+ * to preserve the previous retry-everything behavior on unknown shapes.
+ */
+function isTransientError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return true;
+  const e = error as { code?: string; status?: number };
+  if (typeof e.code === 'string' && e.code.length > 0) {
+    // Postgres connection-class errors and serialization/deadlock retries.
+    if (e.code.startsWith('08')) return true;
+    if (e.code === '40001' || e.code === '40P01') return true;
+    // PostgREST errors (auth, RLS, not-found, parse) are permanent.
+    if (e.code.startsWith('PGRST')) return false;
+    // Data exception, integrity violation, syntax/access — all permanent.
+    if (e.code.startsWith('22') || e.code.startsWith('23') || e.code.startsWith('42')) return false;
+    // Unknown code: be conservative and retry.
+    return true;
+  }
+  if (typeof e.status === 'number') {
+    if (e.status >= 500) return true;
+    if (e.status === 408 || e.status === 425 || e.status === 429) return true;
+    if (e.status >= 400) return false;
+  }
+  return true;
+}
+
 async function withRetry<T>(
   fn: () => PromiseLike<{ data?: T; error: unknown }>,
   retries = 3,
@@ -1216,6 +1262,8 @@ async function withRetry<T>(
   for (let attempt = 1; attempt <= retries; attempt++) {
     const result = await fn();
     if (!result.error) return result;
+    // Permanent errors: don't waste retries — return the failure immediately.
+    if (!isTransientError(result.error)) return result;
     if (attempt < retries) await new Promise(res => setTimeout(res, delayMs * attempt));
   }
   return fn();
@@ -1413,7 +1461,7 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
   if (removedIds.length > 0) {
     const { error } = await withRetry(() => supabase.from('queue_entries').delete().in('id', removedIds));
-    if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 
   // Upserts: only rows that are new or whose tracked fields changed. Batched into
@@ -1434,7 +1482,7 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // costs one Supabase round-trip per assigned entry but avoids drift.
   if (changed.length > 0) {
     const { error: upsertErr } = await withRetry(() => supabase.from('queue_entries').upsert(changed, { onConflict: 'id' }));
-    if (upsertErr) { console.error('[syncQueue] upsert error:', upsertErr); onError('Sync failed - data may not be saved. Check connection.'); return; }
+    if (upsertErr) { console.error('[syncQueue] upsert error:', upsertErr); onError('Sync failed — data may not be saved. Check connection.'); return; }
   }
 
   // For existing entries whose assignedManicuristId just transitioned from
@@ -1682,7 +1730,6 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     }
   }
 }
-//ZZZTRASH â
 
 async function syncCompleted(
   completed: AppState['completed'],
@@ -1697,7 +1744,7 @@ async function syncCompleted(
   const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
   if (removedIds.length > 0) {
     const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', removedIds));
-    if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 
   // Handle inserts (new entries) and updates (entries that changed)
@@ -1743,7 +1790,7 @@ async function syncCompleted(
       edited: !!c.edited,
       voided: !!c.voided,
     }, { onConflict: 'id' }));
-    if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 
     // Backfill the ticket's staff fields when this is the first time we've
     // seen this completed entry (i.e. previous is undefined). The ticket was
@@ -1850,7 +1897,7 @@ async function syncDailyHistory(current: DailyHistory[], prev: DailyHistory[], o
     const { error } = await supabase
       .from('daily_history')
       .upsert({ id: day.id, date: day.date, entries: day.entries }, { onConflict: 'date' });
-    if (error) { console.error('[syncDailyHistory] upsert error:', error); onError('Sync failed â data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncDailyHistory] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 }
 
@@ -1905,7 +1952,7 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
   const deleted = prev.filter((a) => !currentIds.has(a.id));
   for (const a of deleted) {
     const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
-    if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed - data may not be saved. Check connection.'); }
+    if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
   }
 
   // Per-row diff: only upsert appts whose data actually changed. Stops stale tabs from
@@ -1920,7 +1967,7 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
   }
   if (changed.length === 0) return;
   const { error } = await withRetry(() => supabase.from('appointments').upsert(changed, { onConflict: 'id' }));
-  if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed - data may not be saved. Check connection.'); }
+  if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 }
 
 function salonServiceUnchanged(a: SalonService, b: SalonService): boolean {

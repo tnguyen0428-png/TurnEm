@@ -122,7 +122,7 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
       manicurist.notificationBody
     );
     if (result.success) {
-      showSmsToast('sent', `Push OK: ${result.error || 'no details'}`);
+      showSmsToast('sent', `Push OK: ${result.debug || 'no details'}`);
     } else {
       showSmsToast('failed', `Push FAIL: ${result.error}`);
     }

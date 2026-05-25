@@ -1935,7 +1935,10 @@ export async function closeTicket(input: CloseTicketInput): Promise<Ticket | nul
     return null;
   }
 
-  // 1. Insert payment rows.
+  // 1. Insert payment rows. Capture the returned ids so we can roll them back
+  //    if step 2 fails or matches zero rows — otherwise the payments end up
+  //    stranded on a ticket we didn't actually close, and a retry inserts
+  //    them again (the close-shift / sales-report sums then double-count).
   const paymentRows = input.payments.map((p) => ({
     ticket_id: input.ticketId,
     shift_id: input.shiftId,
@@ -1945,15 +1948,23 @@ export async function closeTicket(input: CloseTicketInput): Promise<Ticket | nul
     change_cents: p.changeCents ?? null,
     gift_card_code: p.giftCardCode ?? '',
   }));
-  const { error: pErr } = await supabase.from('payments').insert(paymentRows);
+  const { data: insertedPayments, error: pErr } = await supabase
+    .from('payments')
+    .insert(paymentRows)
+    .select('id');
   if (pErr) {
     console.error('[tickets] closeTicket payments insert:', pErr.message);
     return null;
   }
+  const insertedPaymentIds = (insertedPayments ?? []).map((r) => r.id as string);
 
-  // 2. Compute paid_cents and flip status to closed.
+  // 2. Compute paid_cents and flip status to closed. We .select() so we can
+  //    detect the "matched zero rows" case — when the ticket has already been
+  //    closed by another tab / a stuck retry / a realtime echo, Supabase
+  //    reports error: null but updates nothing. Without this check we'd
+  //    silently insert payments against a ticket we didn't actually close.
   const paidCents = input.payments.reduce((s, p) => s + p.amountCents, 0);
-  const { error: tErr } = await supabase
+  const { data: updatedTickets, error: tErr } = await supabase
     .from('tickets')
     .update({
       status: 'closed',
@@ -1963,9 +1974,37 @@ export async function closeTicket(input: CloseTicketInput): Promise<Ticket | nul
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.ticketId)
-    .eq('status', 'open');
-  if (tErr) {
-    console.error('[tickets] closeTicket ticket update:', tErr.message);
+    .eq('status', 'open')
+    .select('id');
+
+  const updateFailed = !!tErr;
+  const matchedZeroRows = !tErr && (!updatedTickets || updatedTickets.length === 0);
+  if (updateFailed || matchedZeroRows) {
+    // Roll back the payments we just inserted. If the rollback itself fails
+    // we log the orphan ids so they can be manually cleaned up — there's no
+    // safe way to retry from here without risking a second insert.
+    if (insertedPaymentIds.length > 0) {
+      const { error: rollbackErr } = await supabase
+        .from('payments')
+        .delete()
+        .in('id', insertedPaymentIds);
+      if (rollbackErr) {
+        console.error(
+          '[tickets] closeTicket payment rollback failed:',
+          rollbackErr.message,
+          'orphan payment ids:',
+          insertedPaymentIds,
+        );
+      }
+    }
+    if (updateFailed) {
+      console.error('[tickets] closeTicket ticket update:', tErr.message);
+    } else {
+      console.error(
+        '[tickets] closeTicket: ticket', input.ticketId,
+        'was not open at close time (concurrent close?); payments rolled back',
+      );
+    }
     return null;
   }
 

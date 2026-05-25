@@ -201,10 +201,14 @@ Deno.serve(async (_req: Request) => {
     }));
 
     // Upsert one row per date — onConflict matches the UNIQUE(date) constraint.
+    // Note: we deliberately do NOT include `id` here. Supabase's upsert UPDATE
+    // sets every column in the payload; including a fresh UUID would churn the
+    // primary key value of the existing row on every nightly run. The id is
+    // assigned by the column default (see 20260525000000_daily_history_id_default.sql).
     const { error: upsertError } = await supabase
       .from("daily_history")
       .upsert(
-        { id: crypto.randomUUID(), date: todayLA, entries },
+        { date: todayLA, entries },
         { onConflict: "date" },
       );
 
