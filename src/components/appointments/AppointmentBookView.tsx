@@ -3,7 +3,7 @@ import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { Plus, Trash2, GripVertical, XCircle } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
-import { formatTimeOfDay } from '../../utils/time';
+import { formatTimeOfDay, getTodayLA } from '../../utils/time';
 import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType } from '../../types';
 import DayScheduleOverrideModal from './DayScheduleOverrideModal';
 import { resolveScheduleForDate } from '../../utils/schedule';
@@ -400,12 +400,29 @@ export default function AppointmentBookView({ selectedDate }: Props) {
   // palette right after refresh, which is what you saw with Sarah/Joney/Danny.
   const awaitingPaymentApptIds = useMemo(() => {
     const ids = new Set<string>();
+    // "Awaiting payment" means the client's service from TODAY hasn't had its
+    // ticket closed yet. Only today's appts can be in that state — a future
+    // appt booked from the checkout flow for a just-completed client must NOT
+    // inherit the light-gray awaiting-payment color. (Bug 2026-05-25: future
+    // appts created via BOOK APPT from the ticket modal rendered gray because
+    // the name-match fallback below didn't gate on today's date.)
+    const todayKey = getTodayLA();
+    if (selectedDate !== todayKey) return ids;
     const norm = (v: string | undefined) =>
       (v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
     // 1) Direct id link — covers the same-session case before refresh.
+    //    Still gated to today's appts only: the originalAppointmentId could
+    //    in principle point at a non-today appt (it never does today, but
+    //    we don't want to start coloring future blocks if that ever changes).
+    const todayApptIds = new Set<string>();
+    for (const a of state.appointments) {
+      if (a.date === todayKey) todayApptIds.add(a.id);
+    }
     for (const c of state.completed) {
       if (c.voided) continue;
-      if (c.originalAppointmentId) ids.add(c.originalAppointmentId);
+      if (c.originalAppointmentId && todayApptIds.has(c.originalAppointmentId)) {
+        ids.add(c.originalAppointmentId);
+      }
     }
     // 2) Refresh-safe fallback: name-match today's completed entries to today's
     //    appts. Only count an appt as awaiting payment if it isn't already
@@ -418,7 +435,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       if (k) completedNamesToday.add(k);
     }
     for (const a of state.appointments) {
-      if (a.date !== selectedDate) continue;
+      if (a.date !== todayKey) continue;
       if (a.status === 'completed' || a.status === 'cancelled' || a.status === 'no-show') continue;
       const k = norm(a.clientName);
       if (k && completedNamesToday.has(k)) ids.add(a.id);
