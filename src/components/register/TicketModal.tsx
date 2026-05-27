@@ -24,6 +24,7 @@ import {
   computeLineExt,
   formatMoneyCents,
   getVisitId,
+  linkClosedTicketToVisit,
   nextGiftCardSerial,
   parseDollarsToCents,
   updateOpenTicket,
@@ -1630,6 +1631,69 @@ export default function TicketModal({
       for (const q of state.queue) {
         if (q.id.startsWith(addChildPrefix)) {
           dispatch({ type: 'REMOVE_CLIENT', id: q.id });
+        }
+      }
+    } else {
+      // No queueEntryId — this is a manual "+ NEW TICKET" ticket the cashier
+      // created at the register without a queue linkage. Find any BUSY
+      // manicurist whose currentClient is a queue entry matching THIS
+      // ticket's client name AND whose own id matches one of the ticket's
+      // service-line staff, then:
+      //
+      //   1. Stamp the closed ticket's queue_entry_id with that visit's id
+      //      (parentQueueId if split, else the entry id). This is what
+      //      lets a subsequent reconcileMissingTicketsForDate pass see the
+      //      linkage and skip creating a phantom open duplicate — the
+      //      Taylor #35→#36 / Addison #6→#27 bug, 2026-05-27.
+      //
+      //   2. Dispatch COMPLETE_SERVICE for each matching manicurist so
+      //      they finalize like they would have on a manual DONE press:
+      //      turn credit recorded, removed from queue, card back to
+      //      AVAILABLE. The salon's "safety net for manicurists who
+      //      forget to press DONE before checkout."
+      //
+      // Match conditions are intentionally narrow to avoid finalizing an
+      // unrelated visit: the manicurist must currently be BUSY with a
+      // queue entry whose clientName equals the ticket's clientName AND
+      // whose manicurist appears as one of the staff on the ticket. A
+      // BUSY manicurist on a different client is left alone.
+      const normName = (v: string | null | undefined) =>
+        (v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const ticketClient = normName(ticket.clientName);
+      if (ticketClient) {
+        const ticketStaffIds = new Set<string>();
+        for (const it of ticket.items ?? []) {
+          if (it.staff1Id) ticketStaffIds.add(it.staff1Id);
+          if (it.staff2Id) ticketStaffIds.add(it.staff2Id);
+        }
+        // Walk the manicurist roster; for each BUSY one whose
+        // currentClient is a queue entry matching the ticket's client,
+        // gather them up so we can backfill once and dispatch once per
+        // manicurist below.
+        const matchedManicuristIds = new Set<string>();
+        let backfillVisitId: string | null = null;
+        let backfillStaff: { id: string; name: string; color: string } | null = null;
+        for (const m of state.manicurists) {
+          if (m.status !== 'busy' || !m.currentClient) continue;
+          if (ticketStaffIds.size > 0 && !ticketStaffIds.has(m.id)) continue;
+          const qe = state.queue.find((q) => q.id === m.currentClient);
+          if (!qe) continue;
+          if (normName(qe.clientName) !== ticketClient) continue;
+          matchedManicuristIds.add(m.id);
+          if (!backfillVisitId) {
+            backfillVisitId = qe.parentQueueId ?? qe.id;
+            backfillStaff = { id: m.id, name: m.name, color: m.color };
+          }
+        }
+        if (backfillVisitId && backfillStaff) {
+          // Fire-and-await the DB update so the next reconcile pass sees
+          // the linkage. We don't bail on failure — the COMPLETE_SERVICE
+          // dispatches still need to run so the manicurist's card resets
+          // even if the DB link races with something else.
+          await linkClosedTicketToVisit(ticket.id, backfillVisitId, backfillStaff);
+        }
+        for (const mid of matchedManicuristIds) {
+          dispatch({ type: 'COMPLETE_SERVICE', manicuristId: mid });
         }
       }
     }

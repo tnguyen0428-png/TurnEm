@@ -437,14 +437,79 @@ export async function findOpenTicketForClient(
 }
 
 /**
+ * Stamp a `visitId` onto a closed ticket whose `queue_entry_id` is currently
+ * NULL. Used by `reconcileMissingTicketsForDate` (and `TicketModal.handleProcess`)
+ * to retroactively link a manual "+ NEW TICKET" ticket to the manicurist's
+ * completed visit so subsequent reconcile passes can see the linkage and
+ * don't spawn a phantom duplicate open ticket.
+ *
+ * Guarded by `.is('queue_entry_id', null)` so we never overwrite an existing
+ * link (protects the legitimate "two visits same day, same client" case —
+ * the second visit gets its own row). Optionally backfills primary manicurist
+ * fields if they're also null. Returns true if any column changed.
+ *
+ * Safe to call against tickets in any status; only the queue_entry_id-null
+ * condition gates the write.
+ */
+export async function linkClosedTicketToVisit(
+  ticketId: string,
+  visitId: string,
+  staff?: { id: string; name: string; color: string },
+): Promise<boolean> {
+  if (!ticketId || !visitId) return false;
+
+  // Fetch current state so we know whether to also backfill staff.
+  const { data: tRow, error: tErr } = await supabase
+    .from('tickets')
+    .select('id, queue_entry_id, primary_manicurist_id, status')
+    .eq('id', ticketId)
+    .maybeSingle();
+  if (tErr) {
+    console.warn('[tickets] linkClosedTicketToVisit fetch:', tErr.message);
+    return false;
+  }
+  if (!tRow) return false;
+  const row = tRow as {
+    id: string;
+    queue_entry_id: string | null;
+    primary_manicurist_id: string | null;
+    status: string;
+  };
+  if (row.queue_entry_id) return false; // already linked, never overwrite
+
+  const patch: Record<string, unknown> = { queue_entry_id: visitId };
+  if (!row.primary_manicurist_id && staff?.id) {
+    patch.primary_manicurist_id = staff.id;
+    patch.primary_manicurist_name = staff.name;
+    patch.primary_manicurist_color = staff.color;
+  }
+  patch.updated_at = new Date().toISOString();
+
+  const { error: uErr } = await supabase
+    .from('tickets')
+    .update(patch)
+    .eq('id', ticketId)
+    .is('queue_entry_id', null); // re-check at write time to avoid TOCTOU
+  if (uErr) {
+    console.warn('[tickets] linkClosedTicketToVisit update:', uErr.message);
+    return false;
+  }
+  return true;
+}
+
+/**
  * Reconcile: for each completed entry on `dateLA` that has no matching
  * ticket, either:
  *   - append its services to an existing OPEN ticket for the same client
  *     (so a customer who got a manicure + pedicure ends up on one ticket
  *     for checkout), or
- *   - create a new ticket if no open ticket for that client exists.
+ *   - retroactively link a CLOSED manual "+ NEW TICKET" ticket for the same
+ *     client whose queue_entry_id is still null (the cashier closed the
+ *     visit at the register before the manicurist pressed DONE), or
+ *   - create a new ticket if neither of the above matches.
  *
- * Returns { created, appendedTo } counts so callers can log.
+ * Returns { created, appendedTo } counts so callers can log. The closed-ticket
+ * link path doesn't increment either counter — it's a silent repair.
  *
  * Matching priority for "same client":
  *   1. Phone match (when both sides have a phone)
@@ -516,14 +581,32 @@ export async function reconcileMissingTicketsForDate(
   type OpenLookup = { id: string; primaryManicuristId: string | null };
   const openByPhone = new Map<string, OpenLookup>();
   const openByName = new Map<string, OpenLookup>();
+  // Parallel lookup maps for CLOSED tickets whose queue_entry_id is still
+  // null. These are manual "+ NEW TICKET" tickets the cashier created and
+  // closed at the register WITHOUT a queue linkage. When a manicurist later
+  // presses DONE on the queue card for the same visit, we want to stamp the
+  // visit_id onto the existing closed ticket — NOT create a phantom new one.
+  // (Closed tickets that already have a queue_entry_id are excluded: they
+  //  represent a different, already-linked visit. Voided tickets are also
+  //  excluded — voiding means "this didn't happen, retry the visit fresh".)
+  type ClosedLookup = { id: string };
+  const closedNoQidByPhone = new Map<string, ClosedLookup>();
+  const closedNoQidByName = new Map<string, ClosedLookup>();
   for (const r of existingRows) {
-    if (r.status !== 'open') continue;
-    const lookup: OpenLookup = { id: r.id, primaryManicuristId: r.primary_manicurist_id };
-    const phone = (r.client_phone ?? '').trim();
-    if (phone) openByPhone.set(phone, lookup);
-    const lname = (r.client_name ?? '').trim().toLowerCase();
-    // 'walk-in' is the generic name — never merge two anonymous walk-ins.
-    if (lname && lname !== 'walk-in') openByName.set(lname, lookup);
+    if (r.status === 'open') {
+      const lookup: OpenLookup = { id: r.id, primaryManicuristId: r.primary_manicurist_id };
+      const phone = (r.client_phone ?? '').trim();
+      if (phone) openByPhone.set(phone, lookup);
+      const lname = (r.client_name ?? '').trim().toLowerCase();
+      // 'walk-in' is the generic name — never merge two anonymous walk-ins.
+      if (lname && lname !== 'walk-in') openByName.set(lname, lookup);
+    } else if (r.status === 'closed' && !r.queue_entry_id) {
+      const lookup: ClosedLookup = { id: r.id };
+      const phone = (r.client_phone ?? '').trim();
+      if (phone) closedNoQidByPhone.set(phone, lookup);
+      const lname = (r.client_name ?? '').trim().toLowerCase();
+      if (lname && lname !== 'walk-in') closedNoQidByName.set(lname, lookup);
+    }
   }
 
   // Sort by completion time so the first service for a given client wins
@@ -582,6 +665,40 @@ export async function reconcileMissingTicketsForDate(
       existingByVisitId.add(visitId);
       appendedTo += 1;
       continue;
+    }
+
+    // No open ticket for this client — but check whether the cashier
+    // already created and CLOSED a manual "+ NEW TICKET" ticket for the
+    // same client today that's still missing its queue_entry_id link.
+    // If so, stamp this visit's id onto it instead of spawning a phantom
+    // duplicate open ticket. Use the canonical phone-then-name priority.
+    // We pick a closed match only if it's still unlinked — never overwrite
+    // an existing queue_entry_id (that protects the legitimate "two visits
+    // same day, same client" case, where the second visit gets its own row).
+    const closedMatch =
+      (phone && closedNoQidByPhone.get(phone)) ||
+      (lname && lname !== 'walk-in' ? closedNoQidByName.get(lname) : undefined);
+    if (closedMatch) {
+      const linked = await linkClosedTicketToVisit(closedMatch.id, visitId, {
+        id: c.manicuristId,
+        name: c.manicuristName,
+        color: c.manicuristColor,
+      });
+      if (linked) {
+        console.info(
+          '[tickets] reconcile: linked closed manual ticket', closedMatch.id,
+          'to visit', visitId, 'for client', c.clientName,
+        );
+        // Remove from the lookup so a later iteration in this same pass
+        // can't re-link the same closed ticket to a different visit.
+        if (phone) closedNoQidByPhone.delete(phone);
+        if (lname) closedNoQidByName.delete(lname);
+        existingByVisitId.add(visitId);
+        continue;
+      }
+      // Link failed (race: someone else stamped queue_entry_id between
+      // the fetch and the update). Fall through to the create path; the
+      // worst case is a phantom we can mop up via the dedupe query.
     }
 
     const ticket = await createTicketAtCheckin({
