@@ -17,6 +17,7 @@ import {
   updatePayment,
 } from '../../lib/tickets';
 import type { Manicurist, Payment, PaymentMethod, Shift, Ticket } from '../../types';
+import TicketModal from './TicketModal';
 import MoneyCountTable, {
   totalFromCount,
   type DenominationCount,
@@ -352,7 +353,7 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
               onUpdated={() => setRefreshKey((k) => k + 1)}
             />
           ) : (
-            <TicketListTab tickets={tickets} />
+            <TicketListTab tickets={tickets} onRefresh={refresh} />
           )}
         </div>
 
@@ -954,12 +955,31 @@ function MethodPill({ method }: { method: PaymentMethod }) {
   );
 }
 
-function TicketListTab({ tickets }: { tickets: Ticket[] }) {
+// Payments collapsed to a short label: "Cash", "Credit", "Gift", or any
+// combination like "Cash + Credit" for split tender. Canonical order so the
+// list reads the same regardless of which method the cashier captured first.
+function formatPaymentMethods(payments: Payment[]): string {
+  if (!payments || payments.length === 0) return 'Unpaid';
+  const labels: Record<PaymentMethod, string> = {
+    cash: 'Cash',
+    visa_mc: 'Credit',
+    gift: 'Gift',
+  };
+  const order: PaymentMethod[] = ['cash', 'visa_mc', 'gift'];
+  const seen = new Set(payments.map((p) => p.method));
+  return order.filter((m) => seen.has(m)).map((m) => labels[m]).join(' + ');
+}
+
+function TicketListTab({ tickets, onRefresh }: { tickets: Ticket[]; onRefresh?: () => Promise<void> | void }) {
   const totalCents = tickets.reduce((s, t) => s + t.totalCents, 0);
   const sorted = useMemo(
     () => [...tickets].sort((a, b) => a.ticketNumber - b.ticketNumber),
     [tickets],
   );
+  // Double-clicking a row opens the full TicketModal for that ticket. The
+  // modal handles its own read-only / edit-via-PIN flow, so we don't gate
+  // it here — the cashier sees the same view they'd get from the register.
+  const [openTicket, setOpenTicket] = useState<Ticket | null>(null);
 
   return (
     <div className="space-y-3">
@@ -986,16 +1006,25 @@ function TicketListTab({ tickets }: { tickets: Ticket[] }) {
           </div>
         ) : (
           sorted.map((t) => (
-            <div key={t.id}
-              className="grid grid-cols-[60px_1fr_140px_1fr_100px_100px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center">
+            <div
+              key={t.id}
+              onDoubleClick={() => setOpenTicket(t)}
+              title="Double-click to view ticket"
+              className="grid grid-cols-[60px_1fr_140px_1fr_100px_100px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center cursor-pointer hover:bg-gray-50/60 select-none"
+            >
               <span className="font-mono text-base font-bold text-gray-900">#{t.ticketNumber}</span>
               <span className="font-mono text-base text-gray-900 truncate">{t.clientName || 'Walk-in'}</span>
               <span className="font-mono text-base text-gray-700 truncate">
                 {t.primaryManicuristName || '—'}
               </span>
-              <span className="font-mono text-base text-gray-500 truncate">
-                {t.items.length > 0 ? t.items.map((i) => i.name).join(', ') : '—'}
-              </span>
+              <div className="flex flex-col min-w-0">
+                <span className="font-mono text-base text-gray-500 truncate">
+                  {t.items.length > 0 ? t.items.map((i) => i.name).join(', ') : '—'}
+                </span>
+                <span className="font-mono text-xs text-gray-400 truncate">
+                  {formatPaymentMethods(t.payments)}
+                </span>
+              </div>
               <span className="font-mono text-base text-gray-700 text-right">
                 {t.tipCents > 0 ? formatMoneyCents(t.tipCents) : '—'}
               </span>
@@ -1006,6 +1035,14 @@ function TicketListTab({ tickets }: { tickets: Ticket[] }) {
           ))
         )}
       </div>
+
+      {openTicket && (
+        <TicketModal
+          ticket={openTicket}
+          onClose={() => { setOpenTicket(null); void onRefresh?.(); }}
+          onChanged={(saved) => setOpenTicket(saved)}
+        />
+      )}
     </div>
   );
 }
