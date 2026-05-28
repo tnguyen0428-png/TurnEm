@@ -244,11 +244,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'CLOCK_OUT': {
       const clockingOut = state.manicurists.find((m) => m.id === action.id);
       const clientToReturn = clockingOut?.currentClient ?? null;
+      // Preserve clockInTime across CLOCK_OUT so the History "Turns per
+      // manicurist" line-up keeps its row order when someone clocks out
+      // mid-day. The `clockedIn` boolean is the source of truth for "is
+      // this person currently here" — clockInTime is just "when did they
+      // clock in today" and is reset to null by the daily end-of-day
+      // reset, so it can't leak across days.
       return {
         ...state,
         manicurists: state.manicurists.map((m) =>
           m.id === action.id
-            ? { ...m, clockedIn: false, clockInTime: null, status: 'available' as const, currentClient: null }
+            ? { ...m, clockedIn: false, status: 'available' as const, currentClient: null }
             : m
         ),
         queue: clientToReturn

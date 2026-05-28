@@ -446,15 +446,25 @@ export default function HistoryScreen() {
       type Row = TurnsRowEntry & { sortTime: number };
       const byId = new Map<string, Row>();
 
-      // 1. Clocked-in manicurists — live totalTurns + clockInTime as sort key.
-      for (const m of state.manicurists.filter((mm) => mm.clockedIn)) {
+      // 1. Every manicurist who clocked in today (whether currently clocked
+      //    in or already clocked out) — clockInTime is the stable sort key.
+      //    Keeping clocked-out staff in this pass with their original
+      //    clockInTime as sortTime stops the row from reshuffling later in
+      //    the day when someone clocks out (the prior fallback was earliest
+      //    `startedAt` from entries, which is a different value).
+      //    The displayed clockInTime string is only set for currently
+      //    clocked-in rows; clocked-out rows show no time chip, and the
+      //    empty-string sentinel below also tells step 2 to sum entry turns
+      //    into their row (clocked-in rows already have live totalTurns).
+      for (const m of state.manicurists) {
+        if (m.clockInTime === null) continue;
         byId.set(m.id, {
           id: m.id,
           name: m.name,
-          turns: m.totalTurns,
+          turns: m.clockedIn ? m.totalTurns : 0,
           color: m.color,
-          clockInTime: m.clockInTime ? formatTime(m.clockInTime) : '',
-          sortTime: m.clockInTime ?? Number.POSITIVE_INFINITY,
+          clockInTime: m.clockedIn ? formatTime(m.clockInTime) : '',
+          sortTime: m.clockInTime,
         });
       }
 
