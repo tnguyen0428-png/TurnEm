@@ -1237,7 +1237,17 @@ export default function AppointmentBookView({ selectedDate }: Props) {
         {/* Off-hours overlay — clickable to quick-edit the schedule for this
             technician/day. Pointer events are skipped while a drag is in
             progress so drops still pass through to the slot grid underneath. */}
-        {mId && offBandsByManicurist.get(mId)?.map((band, idx) => (
+        {mId && offBandsByManicurist.get(mId)?.map((band, idx) => {
+          // Lunch bands get a distinct warm amber/yellow look so they stand
+          // apart from the gray off-hours bands above/below. Off-hours stay
+          // gray (the technician isn't here); lunch is the technician's
+          // scheduled break in the middle of the day — visually different
+          // signals different schedule semantics.
+          const isLunch = band.label === 'LUNCH';
+          const bandBg = isLunch ? 'rgba(251, 191, 36, 0.10)' : 'rgba(75, 85, 99, 0.15)';
+          const bandStripeRgba = isLunch ? 'rgba(180, 83, 9, 0.06)' : 'rgba(75, 85, 99, 0.08)';
+          const bandLabelColor = isLunch ? 'text-amber-600' : 'text-gray-400';
+          return (
           <div
             key={`offband-${idx}`}
             className={`absolute left-0 right-0 group/off transition-colors ${
@@ -1246,8 +1256,8 @@ export default function AppointmentBookView({ selectedDate }: Props) {
             style={{
               top: band.top,
               height: band.height,
-              backgroundColor: 'rgba(75, 85, 99, 0.15)',
-              backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(75, 85, 99, 0.08) 6px, rgba(75, 85, 99, 0.08) 12px)',
+              backgroundColor: bandBg,
+              backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 6px, ${bandStripeRgba} 6px, ${bandStripeRgba} 12px)`,
               zIndex: 1,
             }}
             onDoubleClick={(e) => {
@@ -1261,7 +1271,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
             title="Double-click to edit this technician's hours for this day"
           >
             {band.label && band.height > 24 && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-[10px] font-bold tracking-wider text-gray-400 gap-0.5">
+              <div className={`absolute inset-0 flex flex-col items-center justify-center font-mono text-[10px] font-bold tracking-wider gap-0.5 ${bandLabelColor}`}>
                 <span>{band.label}</span>
                 <span className="opacity-0 group-hover/off:opacity-100 transition-opacity text-pink-500 text-[9px] font-semibold">DOUBLE-CLICK TO EDIT</span>
               </div>
@@ -1272,7 +1282,8 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
 
         {blocks.map((blk, idx) => {
           const { appt, serviceName, occurrence, top, height, isFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;
