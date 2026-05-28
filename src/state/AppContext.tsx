@@ -1303,6 +1303,22 @@ function manicuristUnchanged(a: Manicurist, b: Manicurist, aIdx: number, bIdx: n
 }
 
 function manicuristToRow(m: Manicurist, idx: number) {
+  // total_turns is intentionally OMITTED from the sync payload.
+  //
+  // The DB has a sync_manicurist_total_turns_from_completed trigger that
+  // recomputes manicurists.total_turns = SUM(completed_services.turn_value
+  // WHERE voided = false) on every completed_services change. The trigger
+  // is the source of truth. If we include total_turns in this upsert, the
+  // local React state (which is briefly stale after each trigger fire)
+  // overwrites the correct DB value — manually-set turn counts and even
+  // freshly-finalized rows can drift back down within seconds of the next
+  // local state churn. Observed in production 2026-05-27: Macy bounced
+  // 6 → 5.5 → 6 every time something nudged state.manicurists.
+  //
+  // On upsert with onConflict: 'id', Postgres only updates the columns
+  // present in the payload — so omitting total_turns leaves the trigger's
+  // value untouched. Brand-new manicurist inserts get total_turns = 0 from
+  // the column default, which is correct for new staff.
   return {
     id: m.id,
     name: m.name,
@@ -1311,7 +1327,6 @@ function manicuristToRow(m: Manicurist, idx: number) {
     skills: m.skills,
     clocked_in: m.clockedIn,
     clock_in_time: m.clockInTime ? new Date(m.clockInTime).toISOString() : null,
-    total_turns: m.totalTurns,
     current_client_id: m.currentClient,
     status: m.status,
     has_fourth_position_special: m.hasFourthPositionSpecial,

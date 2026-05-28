@@ -15,6 +15,32 @@ import type { QueueEntry, ServiceType } from '../../types';
 import { isWaxService, isAcrylicService, getSamPreferenceForServices, waxRotationCompare } from '../../utils/salonRules';
 import { getClientDurationMs, formatServiceList, ServiceHistory, getMinsToNextAppt } from './assignHelpers';
 
+// Compute the turn_value a queue entry should carry once it's been marked
+// as a customer request for a specific manicurist. Mirrors the convention
+// in MultiServiceAssign.handleConfirm (lines 181-187): flat 0.5 per
+// non-Combo service, flat 1.0 per Combo service.
+//
+// SingleServiceAssign previously only stamped isRequested=true without
+// touching turnValue, which meant the queue entry kept the higher
+// non-request base value (e.g. 1.0 for Pedicure, 1.5 for Gel Pedicure).
+// When the manicurist finished, COMPLETE_SERVICE transcribed that
+// inflated turn_value to completed_services — observed 2026-05-27 on
+// Joe / Sue Keeney / Dip Only (written as turn=1.0 / is_requested=false
+// when it should have been turn=0.5 / is_requested=true).
+function computeRequestTurnValue(
+  services: readonly string[],
+  salonServices: { name: string; category?: string | null; turnValue?: number | null }[],
+): number {
+  let total = 0;
+  for (const svcName of services) {
+    const svc = salonServices.find((s) => s.name === svcName);
+    const baseTurn = svc?.turnValue ?? 0;
+    if (baseTurn <= 0) continue; // zero-turn services (e.g. Lip & Brows) stay zero
+    total += svc?.category === 'Combo' ? 1 : 0.5;
+  }
+  return total;
+}
+
 export function SingleServiceAssign({ client }: { client: QueueEntry }) {
   const { state, dispatch } = useApp();
   const [confirmAssignment, setConfirmAssignment] = useState<{
@@ -95,10 +121,16 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
         }
       }
     }
+    const newTurnValue = computeRequestTurnValue(client.services, state.salonServices);
     dispatch({
       type: 'UPDATE_CLIENT',
       id: client.id,
-      updates: { serviceRequests: updatedRequests, requestedManicuristId: sam.id, isRequested: true },
+      updates: {
+        serviceRequests: updatedRequests,
+        requestedManicuristId: sam.id,
+        isRequested: true,
+        turnValue: newTurnValue,
+      },
     });
     dispatch({ type: 'SET_SELECTED_CLIENT', clientId: null });
     dispatch({ type: 'SET_MODAL', modal: null });
@@ -120,10 +152,16 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
         updatedRequests.push({ service: svcName as ServiceType, manicuristIds: [manicuristId], clientRequest: true });
       }
     }
+    const newTurnValue = computeRequestTurnValue(client.services, state.salonServices);
     dispatch({
       type: 'UPDATE_CLIENT',
       id: client.id,
-      updates: { serviceRequests: updatedRequests, requestedManicuristId: manicuristId, isRequested: true },
+      updates: {
+        serviceRequests: updatedRequests,
+        requestedManicuristId: manicuristId,
+        isRequested: true,
+        turnValue: newTurnValue,
+      },
     });
     dispatch({ type: 'SET_SELECTED_CLIENT', clientId: null });
     dispatch({ type: 'SET_MODAL', modal: null });
