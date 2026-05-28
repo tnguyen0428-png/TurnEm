@@ -51,7 +51,7 @@ function UpcomingApptWarning({ manicuristId }: { manicuristId: string }) {
   // case so the manicurist sees the customer waiting; the pill only
   // disappears when the busy block itself does (i.e. current service
   // is completed and the manicurist leaves status === 'busy').
-  const mins = getMinsToNextAppt(manicuristId, state.appointments, true);
+  const mins = getMinsToNextAppt(manicuristId, state.appointments, true, state.queue, state.completed);
   if (mins === null) return null;
   if (mins >= 30) return null;
   const label = mins >= 0 ? `Appt in ${mins}m` : `Appt ${Math.abs(mins)}m late`;

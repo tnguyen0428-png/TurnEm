@@ -1,6 +1,6 @@
 import { CheckCircle } from 'lucide-react';
 import { isWaxService, waxRotationCompare, WAX } from '../../utils/salonRules';
-import type { QueueEntry, SalonService, ServiceType, Manicurist, Appointment } from '../../types';
+import type { QueueEntry, SalonService, ServiceType, Manicurist, Appointment, CompletedEntry } from '../../types';
 import { getTodayLA } from '../../utils/time';
 
 export function ServiceHistory({ m }: { m: Manicurist }) {
@@ -183,6 +183,8 @@ export function getMinsToNextAppt(
   manicuristId: string,
   appointments: Appointment[],
   includePast = false,
+  queue: QueueEntry[] = [],
+  completed: CompletedEntry[] = [],
 ): number | null {
   const todayLA = getTodayLA();
   // Current time as minutes-since-midnight in LA.
@@ -194,10 +196,31 @@ export function getMinsToNextAppt(
   const nm = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10);
   const nowMins = nh * 60 + nm;
 
+  // Suppress the warning for appointments that are already in motion or
+  // already finished — the manicurist is on it or done with it, no point
+  // flashing "Appt N late" at them. "In motion" = a queue entry that links
+  // back to this appointment (status waiting or inProgress, by way of the
+  // originalAppointment snapshot taken at promote-to-queue time). "Done" =
+  // a non-voided completed_services row whose originalAppointmentId matches.
+  // Mia and Katelyn observed flashing while mid-service / post-DONE on
+  // 2026-05-27 and 2026-05-28; this filter closes both cases.
+  const handledApptIds = new Set<string>();
+  for (const q of queue) {
+    if ((q.status === 'inProgress' || q.status === 'waiting') && q.originalAppointment?.id) {
+      handledApptIds.add(q.originalAppointment.id);
+    }
+  }
+  for (const c of completed) {
+    if (!c.voided && c.originalAppointmentId) {
+      handledApptIds.add(c.originalAppointmentId);
+    }
+  }
+
   let minDelta: number | null = null;
   for (const a of appointments) {
     if (a.date !== todayLA) continue;
     if (a.status !== 'scheduled' && a.status !== 'checked-in') continue;
+    if (handledApptIds.has(a.id)) continue;
     // Only honor REQUESTED appointments: ones where the client explicitly
     // asked for this manicurist. Column placements (a.manicuristId, or a
     // serviceRequest without clientRequest=true) are bookings parked under

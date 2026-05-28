@@ -574,7 +574,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                 {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && !rowIs4thSpecial && !requestedId && <Badge label="RECOMMENDED" variant="green" />}
                                 {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
                                 {(() => {
-                                  const apptIn = getMinsToNextAppt(m.id, state.appointments);
+                                  const apptIn = getMinsToNextAppt(m.id, state.appointments, false, state.queue, state.completed);
                                   if (apptIn === null || apptIn >= 30) return null;
                                   return (
                                     <span className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 bg-yellow-100 text-yellow-700 border border-yellow-400 animate-pulse">
