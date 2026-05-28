@@ -1607,25 +1607,50 @@ export default function TicketModal({
         });
       }
     }
-    // Auto-clear: any manicurist still pointing at this visit drops back
-    // to available, and any synthetic `${visitId}-add-${staffId}` queue
-    // entry created by ensureManicuristBusyForAddedLine is swept out.
-    // Without the latter, the add-child sits in state.queue indefinitely
-    // and the manicurist panel keeps drawing a phantom BUSY card after
-    // the ticket has been settled.
+    // Auto-finalize: any manicurist still pointing at this visit needs to be
+    // FINALIZED (turn credit + completed_services row), not just cleared.
+    //
+    // Pre-2026-05-27 this branch only flipped state.manicurists to
+    // available, which is why every closed ticket where the manicurist
+    // never pressed DONE silently lost its history row + turn credit when
+    // the auto-sync trigger recomputed total_turns from a history that was
+    // missing the entry. That bug ate Brian/Christina/Joe/Katelyn/Macy/
+    // Tammy/Tommy's numbers on 2026-05-27.
+    //
+    // Three cases on m.currentClient:
+    //   - `${visitId}` (bare primary) or a split-and-assign child
+    //     (`${visitId}-mani-…` / `${visitId}-waiting-…`): dispatch
+    //     COMPLETE_SERVICE so the reducer writes a proper history row
+    //     using the queue entry's deterministic id + real turnValue.
+    //     COMPLETE_SERVICE is idempotent at the PK layer, so if the
+    //     manicurist later presses DONE manually the second write is a
+    //     no-op instead of a duplicate.
+    //   - `${visitId}-add-…` (cashier-added synthetic add-child): the
+    //     ticket_items are owned by the cashier's TicketModal save and
+    //     the synthetic queue entry carries turnValue=0, so a
+    //     COMPLETE_SERVICE would just emit a turn=0 noise row. Keep the
+    //     lightweight UPDATE_MANICURIST + REMOVE_CLIENT cleanup —
+    //     without it the add-child sits in state.queue forever and the
+    //     manicurist panel keeps drawing a phantom BUSY card.
+    //   - anything else: leave the manicurist alone.
     if (ticket.queueEntryId) {
       const visitId = ticket.queueEntryId;
       const addChildPrefix = `${visitId}-add-`;
+      const splitPrefixes = [`${visitId}-mani-`, `${visitId}-waiting-`];
       for (const m of state.manicurists) {
-        if (
-          m.currentClient === visitId ||
-          (m.currentClient && m.currentClient.startsWith(addChildPrefix))
-        ) {
+        if (!m.currentClient) continue;
+        const cc = m.currentClient;
+        if (cc.startsWith(addChildPrefix)) {
           dispatch({
             type: 'UPDATE_MANICURIST',
             id: m.id,
             updates: { status: 'available', currentClient: null },
           });
+        } else if (
+          cc === visitId ||
+          splitPrefixes.some((p) => cc.startsWith(p))
+        ) {
+          dispatch({ type: 'COMPLETE_SERVICE', manicuristId: m.id });
         }
       }
       for (const q of state.queue) {
