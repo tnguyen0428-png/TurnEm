@@ -949,9 +949,10 @@ function MethodPill({ method }: { method: PaymentMethod }) {
   );
 }
 
-// Payments collapsed to a short label: "Cash", "Credit", "Gift", or any
-// combination like "Cash + Credit" for split tender. Canonical order so the
-// list reads the same regardless of which method the cashier captured first.
+// Payments rendered with the per-method total: "Cash-$50.00", or for split
+// tender "Cash-$176.00 + Credit-$663.00". Canonical order so the list reads
+// the same regardless of which method the cashier captured first. Multiple
+// payments of the same method (e.g. two cash drops) are summed.
 function formatPaymentMethods(payments: Payment[]): string {
   if (!payments || payments.length === 0) return 'Unpaid';
   const labels: Record<PaymentMethod, string> = {
@@ -960,8 +961,14 @@ function formatPaymentMethods(payments: Payment[]): string {
     gift: 'Gift',
   };
   const order: PaymentMethod[] = ['cash', 'visa_mc', 'gift'];
-  const seen = new Set(payments.map((p) => p.method));
-  return order.filter((m) => seen.has(m)).map((m) => labels[m]).join(' + ');
+  const totals: Record<PaymentMethod, number> = { cash: 0, visa_mc: 0, gift: 0 };
+  for (const p of payments) {
+    totals[p.method] = (totals[p.method] ?? 0) + p.amountCents;
+  }
+  return order
+    .filter((m) => totals[m] > 0)
+    .map((m) => `${labels[m]}-${formatMoneyCents(totals[m])}`)
+    .join(' + ');
 }
 
 function TicketListTab({ tickets, onRefresh }: { tickets: Ticket[]; onRefresh?: () => Promise<void> | void }) {
