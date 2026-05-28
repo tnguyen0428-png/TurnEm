@@ -1253,8 +1253,28 @@ export default function TicketModal({
       const lineVisit = visitIdOf(l.queueEntryId);
       if (lineVisit && bucketByEntry.has(lineVisit)) {
         target = bucketByEntry.get(lineVisit);
-      } else if (candidateEntries.length === 1) {
-        // Single-visit ticket: every line belongs to the one visit.
+      } else if (
+        candidateEntries.length === 1 &&
+        (!l.staff1Id || candidateEntries[0].manicuristId === l.staff1Id)
+      ) {
+        // Single-visit ticket AND this line's staff matches the only
+        // completed entry's manicurist (or the line has no staff — legacy /
+        // manual-add path): safe to attribute every line to that one bucket.
+        //
+        // CRITICAL: the staff-match guard is what keeps a multi-staff visit
+        // from welding sibling staff's services into the first manicurist's
+        // history row. Pre-2026-05-28 this branch attributed EVERY ticket
+        // line to the single candidate regardless of staff. When a multi-
+        // staff visit had only ONE staff DONE'd so far (very common — staff
+        // finish at different times), candidateEntries.length was still 1,
+        // every ticket line — including the other staff's lines — got
+        // pushed into the first staff's bucket, and the UPDATE below wrote
+        // `services = [all staff's services]` and `turn_value = sum of all
+        // base turns` to that one row. Hit Rebecca/Macy (turn=5), Janice/
+        // Kimberly (turn=3, services welded), Tiffany 3/Macy (turn=2)
+        // 2026-05-27. Now lines whose staff differs from the single
+        // candidate fall through to the staff-match branch below (or end
+        // up handled as a new-staff auto-credit later in doSave).
         target = bucketByEntry.get(candidateEntries[0].id);
       } else if (l.staff1Id) {
         // Multi-visit ticket with a line that lacks its own visit binding —
