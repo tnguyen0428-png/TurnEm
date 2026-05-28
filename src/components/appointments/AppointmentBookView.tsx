@@ -1333,9 +1333,15 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           const isRequestUnlocked = hasRequest && movableRequestApptId === appt.id;
           // Per user request 2026-05-24: dark-gray (checked-out / completed)
           // appts are draggable too, so the receptionist can fix a slot
-          // placement after payment. The only lock left is the R-appt
+          // placement after payment. The only lock left was the R-appt
           // double-click-to-unlock gate for client-requested manicurists.
-          const isLocked = hasRequest && !isRequestUnlocked;
+          //
+          // Per user request 2026-05-27: once an R-appt is checked-out
+          // (darkened), the double-click gate is unnecessary too — payment
+          // is already processed so a drag can't shift a future request,
+          // it just corrects a past slot placement. Treat checked-out R
+          // appts like any other dark-gray block: grab-and-move directly.
+          const isLocked = hasRequest && !isRequestUnlocked && !isCheckedOut;
           // Treat the old "isCompleted" semantics (muted look, no action buttons) as
           // "checked out OR currently in a queue lifecycle". Hover action row stays
           // hidden in those states.
@@ -1380,13 +1386,20 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                 pointerEvents: dragInfo && !isDragging ? 'none' : undefined,
               }}
               onClick={(e) => {
-                if (isDragging || isCheckedOut) return;
+                if (isDragging) return;
                 // Note: we DON'T skip on isLocked. R (client-requested) appts
                 // are locked-for-drag by default but the nudge popup is a
                 // safe, single-click micro-adjustment that changes the
                 // SERVICE DURATION (not staff, not start time), so the R
                 // lock's intent (prevent accidental staff moves) is
                 // preserved.
+                //
+                // Per user request 2026-05-27: we also DON'T skip on
+                // isCheckedOut. Same reasoning as the drag-unlock on
+                // checked-out R-appts above — payment is already
+                // processed, so adjusting service duration on a dark-gray
+                // block only corrects the record after the fact and can't
+                // shift any future booking.
                 // If the click landed on the popup or one of the hover
                 // action buttons, those handlers already e.stopPropagation;
                 // this onClick still runs for clicks on the appt body.
@@ -1518,7 +1531,13 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                       className={`flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]${
                         isRequestUnlocked ? ' animate-pulse ring-2 ring-red-300' : ''
                       }`}
-                      title={isRequestUnlocked ? 'Manicurist requested — UNLOCKED, drag to move' : 'Manicurist requested (double-click to unlock for move)'}
+                      title={
+                        isCheckedOut
+                          ? 'Manicurist requested — checked out, drag to move'
+                          : isRequestUnlocked
+                            ? 'Manicurist requested — UNLOCKED, drag to move'
+                            : 'Manicurist requested (double-click to unlock for move)'
+                      }
                     >R</span>
                   )}
                   {appt.sameTime && (
