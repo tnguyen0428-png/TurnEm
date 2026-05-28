@@ -426,13 +426,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (!data) return;
-      // Filter out tombstoned IDs - their DELETE may still be in flight; we don't want
-      // to resurrect them by fetching the pre-delete server snapshot.
-      const fresh = data
-        .map((row) => mapDbAppointment(row as Record<string, unknown>))
-        .filter((a) => !isTombstoned(a.id));
-      isApplyingRemoteRef.current = true;
-      dispatch({ type: 'LOAD_STATE', state: { appointments: fresh } });
+      // Dispatch each fresh appointment via REMOTE_APPOINTMENT_UPSERT — same
+      // path the realtime channel uses. The UPSERT reducer inserts new IDs and
+      // updates existing ones, but NEVER drops appointments from state.
+      //
+      // Previously this dispatched LOAD_STATE with the filtered fresh list,
+      // wholesale-replacing state.appointments. Any id missing from `fresh`
+      // (tombstoned-but-still-valid, or an in-flight race) was treated by the
+      // sync effect's delete-detection as a local delete and propagated as a
+      // SQL DELETE to DB — silently destroying live appointments while their
+      // staff were still mid-service (Christina 2026-05-27, Megan 2026-05-28).
+      //
+      // Tombstoned IDs are skipped — their DELETE may still be in flight; we
+      // don't want to re-add a row the user just deleted.
+      for (const row of data) {
+        const appt = mapDbAppointment(row as Record<string, unknown>);
+        if (isTombstoned(appt.id)) continue;
+        isApplyingRemoteRef.current = true;
+        dispatch({ type: 'REMOTE_APPOINTMENT_UPSERT', appointment: appt });
+      }
     }
     document.addEventListener('visibilitychange', reconcileAppts);
     window.addEventListener('focus', reconcileAppts);
@@ -894,7 +906,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // echo loops, so we always run them regardless of wasRemote.
     if (prev.loaded && !isStaffMode && prev.appointments !== state.appointments) {
       const currentApptIds = new Set(state.appointments.map((a) => a.id));
-      const deletedAppts = prev.appointments.filter((a) => !currentApptIds.has(a.id));
+      // Skip propagation for ids that are already tombstoned. Those are remote
+      // deletes that have already happened in DB (the realtime channel handler
+      // tombstones on REMOTE_APPOINTMENT_DELETE). Issuing a duplicate SQL
+      // DELETE is at best a no-op, but combined with the prior reconcileAppts
+      // wholesale-replace it was the trapdoor that silently destroyed live
+      // appointments while their staff were still mid-service.
+      const deletedAppts = prev.appointments.filter(
+        (a) => !currentApptIds.has(a.id) && !isTombstoned(a.id),
+      );
       if (deletedAppts.length > 0) {
         for (const a of deletedAppts) tombstone(a.id);
         trackSave(() => chainAppointmentWrite(async () => {
