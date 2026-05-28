@@ -157,6 +157,12 @@ function ServiceRow({
 }) {
   const isVoided = !!entry.voided;
   const isEdited = !!entry.edited;
+  // In-service rows are synthesized from the active queue so the history list
+  // visibly reconciles with the per-manicurist turn totals (which already
+  // count in-flight credits via m.totalTurns). Pencil/edit is suppressed —
+  // editing an in-flight visit happens at the queue card / ticket modal, not
+  // in history.
+  const isInService = entry.completedAt === null;
 
   return (
     <tr
@@ -167,12 +173,17 @@ function ServiceRow({
       <td className={`px-4 py-3 font-mono text-xs font-semibold ${isVoided ? 'text-gray-400' : 'text-gray-900'}`}>
         <div className="flex items-center gap-2 flex-wrap">
           <span>{entry.clientName}</span>
+          {isInService && (
+            <span className="font-mono text-[9px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 rounded-full px-1.5 py-0.5 tracking-wider">
+              IN SERVICE
+            </span>
+          )}
           {isVoided && (
             <span className="font-mono text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200 rounded-full px-1.5 py-0.5 tracking-wider">
               VOID
             </span>
           )}
-          {isEdited && !isVoided && (
+          {isEdited && !isVoided && !isInService && (
             <span className="font-mono text-[9px] font-bold text-sky-700 bg-sky-100 border border-sky-200 rounded-full px-1.5 py-0.5 tracking-wider">
               EDIT
             </span>
@@ -217,7 +228,7 @@ function ServiceRow({
         </span>
       </td>
       <td className="pr-3 pl-1 py-3 w-10 text-right">
-        {onEdit && (
+        {onEdit && !isInService && (
           <button
             onClick={() => onEdit(entry)}
             type="button"
@@ -369,11 +380,49 @@ export default function HistoryScreen() {
     return state.dailyHistory.find((d) => d.date === today)?.entries ?? null;
   }, [state.completed, state.dailyHistory, today]);
 
+  // Synthesize "in service" rows from currently-assigned queue entries so the
+  // history list visibly reconciles with the manicurist cards and the per-
+  // manicurist turn bars on top. Each in-flight visit shows up as a synthetic
+  // CompletedEntry with completedAt=null (ServiceRow renders an IN SERVICE
+  // pill and hides the edit pencil). Only meaningful for today's view — past
+  // days have no live queue.
+  const inServiceEntries = useMemo<CompletedEntry[]>(() => {
+    if (viewingPastDay) return [];
+    const manicuristById = new Map(state.manicurists.map((m) => [m.id, m]));
+    const rows: CompletedEntry[] = [];
+    for (const q of state.queue) {
+      if (q.status !== 'inProgress') continue;
+      if (!q.assignedManicuristId) continue;
+      const m = manicuristById.get(q.assignedManicuristId);
+      if (!m) continue;
+      rows.push({
+        id: q.id,
+        clientName: q.clientName,
+        services: q.services,
+        turnValue: q.turnValue,
+        manicuristId: m.id,
+        manicuristName: m.name,
+        manicuristColor: m.color,
+        startedAt: q.startedAt ?? q.arrivedAt,
+        completedAt: null,
+        requestedServices: (q.serviceRequests ?? [])
+          .filter((sr) => sr.clientRequest === true)
+          .map((sr) => sr.service),
+        isAppointment: q.isAppointment,
+        isRequested: q.isRequested,
+        edited: false,
+        voided: false,
+      });
+    }
+    return rows;
+  }, [viewingPastDay, state.queue, state.manicurists]);
+
   const displayedEntries = viewingPastDay && pastDayEntries !== null
     ? pastDayEntries
-    : state.completed.length > 0
-      ? state.completed
-      : (todayArchivedEntries ?? []);
+    : [
+        ...inServiceEntries,
+        ...(state.completed.length > 0 ? state.completed : (todayArchivedEntries ?? [])),
+      ];
 
   // Per-manicurist turn totals.
   //
