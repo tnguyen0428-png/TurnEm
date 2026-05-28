@@ -237,7 +237,21 @@ export async function computeShiftBalance(shiftId: string): Promise<{
       paymentAmountCents,
       changeOutCents,
       drawerEntriesCents,
-      youHaveCents: startingBalanceCents + paymentAmountCents - changeOutCents + drawerEntriesCents,
+      // paymentAmountCents (sum of payments.amount_cents) is ALREADY net of
+      // change — that's the rule the register enforces at PROCESS time
+      // (amount = tendered - change). Subtracting changeOutCents here would
+      // double-count the change handed back, producing a phantom positive
+      // variance equal to total change-back. Observed 2026-05-28 on
+      // Rhiannon Walker's $824-tendered / $648-change split-tender ticket:
+      // shift declared $1014, app expected $366, variance "+$648" — the
+      // drawer was actually balanced. The correct flow is:
+      //   net drawer = opening + amount (net) + pay-in/out
+      //   gross drawer = opening + tendered - change + pay-in/out
+      // Both produce the same number; we use the net form because the
+      // payments table stores amount_cents directly. changeOutCents stays on
+      // the line for audit/display (e.g. SalesValidation breakdown) but is
+      // not part of the math.
+      youHaveCents: startingBalanceCents + paymentAmountCents + drawerEntriesCents,
     };
   }
 

@@ -319,7 +319,6 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
             <ReconcileCash
               startingCashCents={lines.find((l) => l.method === 'cash')?.startingBalanceCents ?? 0}
               cashIntakeCents={lines.find((l) => l.method === 'cash')?.paymentAmountCents ?? 0}
-              changeOutCents={lines.find((l) => l.method === 'cash')?.changeOutCents ?? 0}
               drawerEntriesCents={lines.find((l) => l.method === 'cash')?.drawerEntriesCents ?? 0}
               count={closingCount}
               setCount={setClosingCount}
@@ -633,14 +632,13 @@ function PaymentsSummary({
 const REGISTER_FLOAT_CENTS = 40000;
 
 function ReconcileCash({
-  startingCashCents, cashIntakeCents, changeOutCents, drawerEntriesCents,
+  startingCashCents, cashIntakeCents, drawerEntriesCents,
   count, setCount, declaredCents, varianceCents,
   varianceNote, setVarianceNote, readOnly = false,
   onSaveDraft, draftStatus = 'idle',
 }: {
   startingCashCents: number;
   cashIntakeCents: number;
-  changeOutCents: number;
   drawerEntriesCents: number;
   count: DenominationCount;
   setCount: (next: DenominationCount) => void;
@@ -688,10 +686,6 @@ function ReconcileCash({
           <div className="flex items-center justify-between">
             <span className="font-mono text-base text-gray-700">Cash Intake</span>
             <span className="font-mono text-base font-bold text-gray-900 tabular-nums">+{formatMoneyCents(cashIntakeCents)}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-base text-gray-700">Change Given</span>
-            <span className="font-mono text-base font-bold text-gray-900 tabular-nums">−{formatMoneyCents(changeOutCents)}</span>
           </div>
           {drawerEntriesCents !== 0 && (
             <div className="flex items-center justify-between">
@@ -1096,13 +1090,14 @@ function SalesValidationPopup({
 
   const cashLine = lines.find((l) => l.method === 'cash');
   const startingPlusDrawer = (cashLine?.startingBalanceCents ?? 0) + (cashLine?.drawerEntriesCents ?? 0);
-  const totalYouHave = totalPayments + startingPlusDrawer - (cashLine?.changeOutCents ?? 0);
+  // No -changeOutCents: amount_cents is already net of change.
+  // See note on youHaveCents in lib/shifts.ts.
+  const totalYouHave = totalPayments + startingPlusDrawer;
   // Cash that physically goes in the bank envelope = cash collected during
   // the day minus the starting bank that stays in the drawer for tomorrow.
   // Equivalent to: (drawer cash at close) - starting balance.
   const envelopeCashCents =
     payByMethod.cash
-    - (cashLine?.changeOutCents ?? 0)
     + (cashLine?.drawerEntriesCents ?? 0);
   // Validation error: Total Payments should equal Total Receipts (cash math
   // matches sales math). Non-zero flags a missing payment or a mis-entered
