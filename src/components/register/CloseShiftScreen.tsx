@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle2, ChevronLeft, RefreshCw, X } from 'lucide-r
 import {
   closeShift,
   computeShiftBalance,
+  saveShiftDraft,
   type ShiftBalanceLine,
 } from '../../lib/shifts';
 import {
@@ -63,14 +64,42 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
 
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
 
+  // Initialize from the shift's persisted closing_count + variance_note —
+  // for closed shifts this is the final close-out values; for OPEN shifts
+  // it's whatever draft the cashier saved via the SAVE button below. The
+  // draft survives across screen changes because RegisterScreen re-fetches
+  // shifts on mount and passes the refreshed row in as the `shift` prop,
+  // so a fresh remount initializes state from the saved draft instead of
+  // an empty form.
   const [closingCount, setClosingCount] = useState<DenominationCount>(
-    isClosedShift ? (shift.closingCount ?? {}) : {},
+    shift.closingCount ?? {},
   );
   const declaredCents = totalFromCount(closingCount);
   const varianceCents = declaredCents - expectedCashCents;
-  const [varianceNote, setVarianceNote] = useState(
-    isClosedShift ? (shift.varianceNote ?? '') : '',
-  );
+  const [varianceNote, setVarianceNote] = useState(shift.varianceNote ?? '');
+
+  // Draft-save state — drives the SAVE button label / disabled / toast.
+  // 'idle' before any save, 'saving' during the network call, 'saved' for
+  // a brief confirmation window after success, 'error' on failure.
+  const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  // Reset the "saved" badge back to idle after a couple seconds so the
+  // button reads SAVE again and the cashier can re-save later edits.
+  useEffect(() => {
+    if (draftStatus !== 'saved') return;
+    const t = setTimeout(() => setDraftStatus('idle'), 2000);
+    return () => clearTimeout(t);
+  }, [draftStatus]);
+
+  const handleSaveDraft = useCallback(async () => {
+    if (isReadOnly) return;
+    setDraftStatus('saving');
+    const saved = await saveShiftDraft({
+      shiftId: shift.id,
+      closingCount,
+      varianceNote,
+    });
+    setDraftStatus(saved ? 'saved' : 'error');
+  }, [isReadOnly, shift.id, closingCount, varianceNote]);
 
   const [busy, setBusy] = useState(false);
   const [receptionistId, setReceptionistId] = useState<string>('');
@@ -298,6 +327,8 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
               varianceNote={varianceNote}
               setVarianceNote={setVarianceNote}
               readOnly={isReadOnly}
+              onSaveDraft={handleSaveDraft}
+              draftStatus={draftStatus}
             />
           ) : tab === 'cash' ? (
             <PaymentTransactionsTab
@@ -604,6 +635,7 @@ function ReconcileCash({
   startingCashCents, cashIntakeCents, changeOutCents, drawerEntriesCents,
   count, setCount, declaredCents, varianceCents,
   varianceNote, setVarianceNote, readOnly = false,
+  onSaveDraft, draftStatus = 'idle',
 }: {
   startingCashCents: number;
   cashIntakeCents: number;
@@ -616,6 +648,8 @@ function ReconcileCash({
   varianceNote: string;
   setVarianceNote: (v: string) => void;
   readOnly?: boolean;
+  onSaveDraft?: () => void | Promise<void>;
+  draftStatus?: 'idle' | 'saving' | 'saved' | 'error';
 }) {
   const isOver = varianceCents > 0;
   const isShort = varianceCents < 0;
@@ -715,6 +749,35 @@ function ReconcileCash({
           />
         )}
       </div>
+
+      {/* SAVE button — persists the in-progress count + variance note to the
+          shift row without closing. Lets the cashier leave this screen (e.g.
+          answer the phone, check the queue) and come back to the same
+          numbers instead of starting over. State init at the top of
+          CloseShiftScreen reads shift.closingCount + shift.varianceNote on
+          every mount, so once saved the form re-hydrates from the DB. */}
+      {!readOnly && onSaveDraft && (
+        <div className="flex items-center justify-end gap-3 pt-1">
+          {draftStatus === 'saved' && (
+            <span className="font-mono text-base text-emerald-600 tracking-wider">
+              ✓ Saved
+            </span>
+          )}
+          {draftStatus === 'error' && (
+            <span className="font-mono text-base text-red-500 tracking-wider">
+              Save failed — try again
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => { void onSaveDraft(); }}
+            disabled={draftStatus === 'saving'}
+            className="px-5 py-2 rounded-lg bg-gray-900 text-white font-mono text-base font-bold tracking-widest hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {draftStatus === 'saving' ? 'SAVING…' : 'SAVE'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

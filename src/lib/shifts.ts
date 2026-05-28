@@ -246,6 +246,35 @@ export async function computeShiftBalance(shiftId: string): Promise<{
   return { lines, expectedCashCents };
 }
 
+/**
+ * Persist the receptionist's in-progress reconcile work without closing the
+ * shift. Lets them navigate away from CloseShiftScreen (e.g. answer a
+ * question on the Register or check the appt book) and come back without
+ * losing their denomination count + variance note.
+ *
+ * Writes `closing_count` and `variance_note` only; status, closed_at,
+ * declared/expected/variance cents and closed_by_receptionist_id are all
+ * left untouched. The official close path (closeShift below) still owns
+ * the status transition and the final money fields.
+ */
+export async function saveShiftDraft(input: {
+  shiftId: string;
+  closingCount: Record<string, number>;
+  varianceNote: string;
+}): Promise<Shift | null> {
+  const { data, error } = await supabase
+    .from('shifts')
+    .update({
+      closing_count: input.closingCount,
+      variance_note: input.varianceNote,
+    })
+    .eq('id', input.shiftId)
+    .select('*')
+    .single();
+  if (error) { console.error('[shifts] saveShiftDraft:', error.message); return null; }
+  return fromDbShift(data as DbShift);
+}
+
 export async function closeShift(input: {
   shiftId: string;
   declaredCashCents: number;
