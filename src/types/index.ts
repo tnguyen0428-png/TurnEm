@@ -104,6 +104,14 @@ export interface CompletedEntry {
    *  flip the appt to 'completed' only when the ticket is closed (not when the
    *  service itself completes). Undefined for walk-ins / non-appt visits. */
   originalAppointmentId?: string;
+  /** Actual checkout price in cents, written by the
+   *  `trg_sync_completed_service_prices` DB trigger when a ticket closes
+   *  (copied from `ticket_items.ext_price_cents`). Null/undefined while the
+   *  ticket is still open or for legacy rows from before the column existed —
+   *  in that case render code falls back to the salon_services catalog price.
+   *  Always trust this over the catalog when present, since it reflects any
+   *  cashier price overrides or discounts applied at checkout. */
+  priceCents?: number | null;
 }
 
 // ── POS / Register ───────────────────────────────────────────────────────────

@@ -143,6 +143,9 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 completedAt: new Date(r.completed_at).getTime(),
                 turnValue: Number(r.turn_value) || 0,
                 requestedServices: r.requested_services || [],
+                // Real checkout price written by trg_sync_completed_service_prices
+                // on ticket close. Preferred over catalog price in entryTotalDollars.
+                priceCents: r.price_cents == null ? null : Number(r.price_cents),
               })),
               // Service catalog — prices live here. Pulled into state.salonServices
               // so entryTotalDollars()'s fallback and any other catalog-reading
@@ -410,10 +413,19 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   }
 
   function entryTotalDollars(entry: CompletedEntry): number {
+    // Preferred: the trg_sync_completed_service_prices DB trigger snapshots
+    // the actual checkout price (with any cashier override / discount applied)
+    // into completed_services.price_cents on ticket close, and that value is
+    // also archived into daily_history.entries[].priceCents. Trust it
+    // whenever it's present — it survives both realtime push to the staff
+    // mobile and the nightly archive into daily_history.
+    if (entry.priceCents != null) return entry.priceCents / 100;
+    // Fallback for today's still-open tickets: aggregate live ticket_items.
     const visitId = getVisitId(entry.id);
     const fromTicket = ticketAmountMap.get(`${visitId}|${entry.manicuristId}`);
     if (typeof fromTicket === 'number') return fromTicket / 100;
-    // Fallback: catalog price sum.
+    // Last-resort fallback: catalog price sum. Used for in-progress entries
+    // and legacy rows from before the price_cents column existed.
     return (entry.services ?? []).reduce((sum, name) => sum + (priceByService.get(name) ?? 0), 0);
   }
 

@@ -173,6 +173,9 @@ function mapDbCompleted(row: Record<string, unknown>): CompletedEntry {
     isRequested: (row.is_requested as boolean) || false,
     edited: (row.edited as boolean) || false,
     voided: (row.voided as boolean) || false,
+    // Set by the trg_sync_completed_service_prices DB trigger on ticket close.
+    // Null while the ticket is still open or for pre-trigger legacy rows.
+    priceCents: row.price_cents == null ? null : Number(row.price_cents),
   };
 }
 
@@ -575,6 +578,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         requestedServices: isBadPattern ? undefined : (rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined),
         isAppointment: (row.is_appointment as boolean) || false,
         isRequested: (row.is_requested as boolean) || false,
+        priceCents: row.price_cents == null ? null : Number(row.price_cents),
       };
     });
 
