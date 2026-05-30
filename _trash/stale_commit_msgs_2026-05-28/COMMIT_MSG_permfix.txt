@@ -1,0 +1,39 @@
+fix(turns): permanent fixes for the 2026-05-27 turn-drift bugs
+
+Three independent failure modes today caused turn counts to drift up
+and down all afternoon. Each is now closed.
+
+Bug A — multi-staff split leaks services into one child's queue entry.
+First manicurist in a SPLIT_AND_ASSIGN ended up with services=[their
+service + a sibling's service] and turn_value=sum of all base turns.
+Observed on Rebecca/Macy (turn=5), Janice/Kimberly (turn=3), and
+Tiffany 3/Macy (turn=2). Root cause in the queue-entry creation path
+is still being chased; in the meantime a DB-side guard caps any
+turn_value insert/update to SUM(salon_services.turn_value) for the
+services array, with RAISE NOTICE to Supabase logs so the offending
+client write surfaces. Migration name:
+guard_completed_services_turn_value_ceiling.
+
+Bug B — manicurists.total_turns clobbered by stale React state.
+AppContext.syncManicurists pushed m.totalTurns from local state on
+every sync, overwriting the DB sync_manicurist_total_turns_from_completed
+trigger's recomputation. Manually-set totals (and even freshly-
+finalized rows) drifted back down within seconds of the next state
+churn. Observed Macy bouncing 6 → 5.5 → 6 → 5.5. Fix: drop
+total_turns from manicuristToRow. On upsert with onConflict:'id'
+Postgres only updates the columns present in the payload, so the
+trigger's value is never overwritten. Brand-new manicurist inserts
+get total_turns=0 from the column default.
+
+Bug C — SingleServiceAssign stamps isRequested without recomputing
+turn_value. handleWaitForSam and handleWaitForManicurist marked the
+queue entry as a request but kept the higher non-request base value.
+COMPLETE_SERVICE then wrote completed_services with the inflated
+turn — observed on Joe/Sue Keeney/Dip Only (turn=1.0 / is_requested
+=false, should have been turn=0.5 / is_requested=true). Fix: added
+computeRequestTurnValue helper that mirrors MultiServiceAssign's
+flat-0.5-or-1.0-for-Combo convention, called from both wait-for
+handlers.
+
+Typecheck clean. No schema changes (DB trigger applied via
+Supabase migration). No UI changes.

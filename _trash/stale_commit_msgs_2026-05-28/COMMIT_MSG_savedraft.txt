@@ -1,0 +1,28 @@
+feat(close-shift): add SAVE button on RECONCILE tab to persist draft
+
+Cashier had to re-input the entire denomination count + variance note if
+they left CloseShiftScreen and came back — state was component-local and
+lost on unmount.
+
+Adds saveShiftDraft(shiftId, closingCount, varianceNote) in lib/shifts.ts
+that writes only closing_count + variance_note to the shift row, leaving
+status / closed_at / declared/expected/variance cents / closed_by alone.
+Official close path (closeShift) still owns the status transition and
+final money fields.
+
+CloseShiftScreen:
+- State init for closingCount + varianceNote now reads shift.closingCount /
+  shift.varianceNote unconditionally (was gated on isClosedShift). On a
+  fresh mount, the form re-hydrates from whatever's persisted — which is
+  either the saved draft (open shift) or the final close-out (closed
+  shift). RegisterScreen re-fetches shifts on mount, so a navigate-away-
+  and-back cycle picks up the latest DB state.
+- New handleSaveDraft + draftStatus state ('idle' | 'saving' | 'saved' |
+  'error') drives the button label and a small ✓ Saved badge that auto-
+  clears after 2s.
+- ReconcileCash gains optional onSaveDraft + draftStatus props. SAVE
+  button only renders when !readOnly && onSaveDraft is provided, so the
+  view-shift / closed-shift paths stay unchanged.
+
+Typecheck clean. No schema changes, no migrations — closing_count and
+variance_note columns already exist.

@@ -1,0 +1,23 @@
+fix(register): auto-finalize queue on PROCESS for non-manual tickets
+
+handleProcess's queueEntryId branch only flipped the manicurist to
+available — it never dispatched COMPLETE_SERVICE, so closed tickets
+where the manicurist never pressed DONE silently lost their history
+row and the auto-sync trigger drifted total_turns low when it
+recomputed against the incomplete history. 45fedd0 covered the
+inverse case (queueEntryId=null manual + NEW TICKETs); this covers
+the common case where the ticket came from the queue.
+
+Production symptom 2026-05-27 (Aqua Team): closed tickets for
+Brian/Christina/Joe/Katelyn/Macy/Tammy/Tommy were missing from
+each manicurist's history; total_turns drifted up to 3 turns low
+per staff. Data was backfilled separately in the same session; this
+commit stops the bleed.
+
+The branch now dispatches COMPLETE_SERVICE for any manicurist whose
+currentClient is the visit id or a -mani-/-waiting- split-and-assign
+child. Add-children (-add- suffix, cashier-created with turnValue=0)
+keep the existing UPDATE_MANICURIST + REMOVE_CLIENT cleanup so we
+don't emit turn=0 noise rows.
+
+Typecheck clean. No schema changes, no migrations.

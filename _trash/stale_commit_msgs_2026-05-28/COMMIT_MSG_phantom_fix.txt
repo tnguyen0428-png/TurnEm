@@ -1,0 +1,49 @@
+fix(register): phantom open ticket auto-spawns after closing a manual "+ NEW TICKET"
+
+When the cashier created a ticket via "+ NEW TICKET" (handleNewBlank sets
+queueEntryId=null), closed it at the register via PROCESS, and the manicurist
+later pressed DONE on their queue card, reconcileMissingTicketsForDate would
+spawn a phantom OPEN duplicate. The reconcile lookup checks two keys —
+queue_entry_id on tickets (always null on the closed manual ticket) and
+client name/phone against OPEN tickets only — so the just-closed ticket was
+invisible, and a brand-new ticket got created from queue-side state.
+
+Production evidence (Aqua Team salon, 2026-05-27):
+  Taylor      #35 closed / #36 phantom — same JOE / Gel Pedicure / $50 / +3min
+  Addison V.  #6  closed / #27 phantom — same BRIAN / Gel Builder+Pedi /
+                                          $110 → $100 / +1h31m
+
+The $110 → $100 gap on Addison was the diagnostic clue: the duplicate was
+sourcing its total from queue-side service-catalog defaults, not from the
+register ticket the cashier had just closed.
+
+Fix has two prongs:
+
+1. Proactive (TicketModal.handleProcess): when the closed ticket has
+   queueEntryId=null, find any BUSY manicurist whose currentClient is a
+   queue entry matching the ticket's client name AND whose id is on the
+   ticket's staff list. Backfill queue_entry_id onto the closed ticket
+   (via the new linkClosedTicketToVisit helper) and dispatch COMPLETE_SERVICE
+   for each matched manicurist so their queue card auto-finalizes — the
+   "register is source of truth" safety net the salon asked for. Match
+   conditions are intentionally narrow (client name AND staff overlap)
+   so an unrelated BUSY manicurist is never finalized.
+
+2. Defense-in-depth (reconcileMissingTicketsForDate): build parallel
+   closedNoQidByPhone / closedNoQidByName lookup maps for closed manual
+   tickets whose queue_entry_id is still null. If a completed entry can't
+   find an open-ticket match, fall back to linking the closed ticket
+   instead of creating a phantom. Lookup entries are deleted on use so two
+   visits in one reconcile pass can't claim the same closed ticket.
+
+The new linkClosedTicketToVisit helper is guarded by .is('queue_entry_id',
+null) at both the lookup and the write, so an existing legitimate link can
+never be overwritten. That protects the "two visits same day, same client"
+case — the second visit gets its own row.
+
+phantom_duplicate_tickets_2026-05-27.sql in repo root: audit query for
+existing phantoms today, plus an idempotent UPDATE to retroactively link
+any other closed manual tickets that match. Phantoms found in production
+(#36, #27) were voided manually via the UI for audit trail.
+
+Typecheck + lint clean. No schema changes, no migrations, no UI changes.

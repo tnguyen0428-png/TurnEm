@@ -1,0 +1,48 @@
+fix(register): doSave bucket-recompute welds sibling staff services
+into the first manicurist's completed_services row on multi-staff visits
+
+Root cause of the "first manicurist in a multi-staff split gets extra
+services + summed turns in history" bug observed 2026-05-27 on
+Rebecca/Macy (turn=5), Janice/Kimberly (turn=3, services welded),
+and Tiffany 3/Macy (turn=2).
+
+handleProcess → doSave runs a bucket recompute that takes every
+service line on the ticket and attributes it to a `completed_services`
+entry's bucket. The attribution waterfall was:
+
+  1. Match by line.queueEntryId → bucket whose entry.id matches
+  2. ELSE IF candidateEntries.length === 1: every line → that one
+     bucket  ← BUG
+  3. ELSE IF line.staff1Id: first matching bucket by staff
+  4. ELSE: skip the line
+
+In a multi-staff visit (Rebecca had 4 staff on one ticket), the
+manicurists tap DONE at different times. Between the first DONE and
+the others, candidateEntries.length === 1 — exactly one completed_
+services row exists for the visit, but ticket_items already has lines
+for ALL the staff. The waterfall fell into step 2 and pushed every
+line — including OTHER staff's lines — into the first manicurist's
+bucket. The UPDATE at the end of the recompute then wrote:
+
+  services    = [every line's name]
+  turn_value  = SUM of every line's base turn value
+
+to the first manicurist's history row. So Rebecca/Macy ended up with
+turn=5 (1.5+1.0+1.5+1.0+0.5 for the four services on the ticket),
+Janice/Kimberly with services=[Gel Pedi, Gel Pedi & Gel Mani] /
+turn=3, Tiffany 3/Macy with services=[Gel Pedi, Manicure] / turn=2.
+
+Fix: add a staff-match guard to step 2. The "single visit means every
+line belongs to the one bucket" assumption is only valid when the
+line either has no staff (legacy / manual-add path) or its staff
+matches the one candidate's manicurist. Lines whose staff differs
+fall through to step 3 (staff-match) or step 4 (skipped — auto-credit
+later in doSave will pick them up as new-staff additions).
+
+Defense in depth: the DB guard trigger guard_completed_services_turn_
+ceiling (applied via Supabase migration earlier today) already caps
+the runaway turn_value at write time. This commit closes the
+services-array side of the same bug, which the DB guard cannot
+detect (the welded services array looks legitimate on paper).
+
+Typecheck clean. No schema changes, no migrations.

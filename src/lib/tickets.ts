@@ -794,6 +794,19 @@ export async function mergeOpenTicketsByClient(dateLA: string): Promise<number> 
         continue;
       }
       const items = (itemRows ?? []) as DbTicketItem[];
+      // Preserve queue_entry_id when forwarding to appendItemsToTicket.
+      // Without this, every merged line landed on the primary with
+      // queue_entry_id = NULL, which (a) disabled the dedupe filter inside
+      // appendItemsToTicket (it short-circuits on `if (it.queueEntryId && …)`)
+      // and (b) bypassed the partial unique index `uniq_ticket_items_per_entry`
+      // (WHERE queue_entry_id IS NOT NULL). The RegisterScreen reconcile
+      // effect fires on every state.completed change, so as soon as a fresh
+      // secondary ticket was created for the same client, its items
+      // re-appended on the primary as new NULL-qid rows on every cycle —
+      // 13+ phantom Gel Pedicure lines on ticket #29 (Rebecca, 2026-05-29)
+      // in under 5 minutes. With the qid preserved, appendItemsToTicket's
+      // seenEntryIds filter skips items whose qids are already on the
+      // primary, and any new qids land under the partial unique index.
       const toAppend = items.map((it) => ({
         name: it.name,
         serviceId: it.service_id,
@@ -802,6 +815,7 @@ export async function mergeOpenTicketsByClient(dateLA: string): Promise<number> 
         staff1Color: it.staff1_color,
         unitPriceCents: it.unit_price_cents,
         quantity: it.quantity,
+        queueEntryId: it.queue_entry_id ?? null,
       }));
       if (toAppend.length > 0) {
         const r = await appendItemsToTicket(primary.id, toAppend, { allowDuplicates: true });

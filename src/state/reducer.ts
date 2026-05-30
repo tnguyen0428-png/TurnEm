@@ -1,8 +1,94 @@
-import type { AppState, Appointment, Manicurist, QueueEntry } from '../types';
+import type { AppState, Appointment, CompletedEntry, Manicurist, QueueEntry } from '../types';
 import type { AppAction } from './actions';
 import { clientHasAnyWaxService } from '../utils/salonRules';
 import { isFourthPositionSpecialService } from '../utils/priority';
 import { getLocalDateStr } from '../utils/time';
+
+// ─── totalTurns convergence ──────────────────────────────────────────────
+//
+// `totalTurns` on a manicurist is a DERIVED value: the sum of today's non-
+// voided completed_services credit, plus the in-progress queue entry credit
+// for the staff. It is NOT independent state.
+//
+// Before this wrapper landed, every action that touched a queue entry or a
+// completed_services row also tried to update `totalTurns` directly via a
+// delta computation (ASSIGN_CLIENT adds turns, UPDATE_COMPLETED applies a
+// delta, TOGGLE_VOID_COMPLETED subtracts, etc.). That worked when the
+// editing tab owned the change end-to-end, but two seams kept producing
+// silent drift:
+//
+//   1. **Closure-captured `state` in TicketModal.doSave.** When the cashier
+//      edits a completed-service line (toggle R, swap service), the bucket
+//      recompute reads `localCur = state.manicurists.find(...).totalTurns`
+//      from the closure state captured at doSave start, computes
+//      `localCur + turnDelta`, and dispatches `UPDATE_MANICURIST`. If any
+//      other action mutated `totalTurns` between the closure capture and the
+//      dispatch (another tab's edit echoed in, a fresh ASSIGN, a CANCEL),
+//      the dispatch overwrites the newer value with `oldSnapshot + delta`.
+//      Macy 2.5/2.0 (2026-05-29 AM) and 8.5/7.5 (PM) were two instances.
+//
+//   2. **REMOTE_COMPLETED_UPSERT doesn't recompute.** When tab A edits a
+//      completed row and updates its own `totalTurns` via UPDATE_MANICURIST,
+//      tab B only sees the row update via realtime — its
+//      `manicurists.totalTurns` stays at the pre-edit value forever (until
+//      a refresh or a manual DB write).
+//
+// Both seams disappear if we derive `totalTurns` from the source-of-truth
+// arrays (state.completed + state.queue) after every action, regardless of
+// what the case body did. The convergence is a single O(N) pass that costs
+// nothing on the salon's scale (~30 staff, dozens of clients) and only
+// allocates a fresh manicurists array when at least one value actually
+// changed (cheap reference-equality short-circuit for unaffected manicurists).
+//
+// Per-staff formula:
+//   totalTurns = SUM(c.turnValue for c in state.completed if c.manicuristId == staff.id and !c.voided)
+//              + SUM(q.turnValue for q in state.queue
+//                                if q.assignedManicuristId == staff.id
+//                                AND q.status == 'inProgress'
+//                                AND q.id NOT IN {c.id for c in state.completed})
+//
+// The dedup-by-id clause handles a transient race: when REMOTE_COMPLETED_UPSERT
+// echoes before the matching REMOTE_QUEUE_DELETE, the same logical visit
+// would otherwise double-count (queue.turnValue + completed.turnValue). The
+// completed row wins; the queue entry is treated as already-completed for
+// crediting purposes until it's actually removed.
+function recomputeTotalTurns(
+  manicurists: Manicurist[],
+  completed: CompletedEntry[],
+  queue: QueueEntry[],
+): Manicurist[] {
+  const credits = new Map<string, number>();
+  const completedIds = new Set<string>();
+  for (const c of completed) {
+    completedIds.add(c.id);
+    if (c.voided) continue;
+    if (!c.manicuristId) continue;
+    const v = Number(c.turnValue);
+    if (!Number.isFinite(v) || v === 0) continue;
+    credits.set(c.manicuristId, (credits.get(c.manicuristId) ?? 0) + v);
+  }
+  for (const q of queue) {
+    if (!q.assignedManicuristId) continue;
+    if (q.status !== 'inProgress') continue;
+    if (completedIds.has(q.id)) continue;
+    const v = Number(q.turnValue);
+    if (!Number.isFinite(v) || v === 0) continue;
+    credits.set(q.assignedManicuristId, (credits.get(q.assignedManicuristId) ?? 0) + v);
+  }
+  let changed = false;
+  const next = manicurists.map((m) => {
+    const expected = credits.get(m.id) ?? 0;
+    if (Math.abs((m.totalTurns ?? 0) - expected) < 0.0001) return m;
+    changed = true;
+    return { ...m, totalTurns: expected };
+  });
+  return changed ? next : manicurists;
+}
+
+function convergeTotalTurns(state: AppState): AppState {
+  const next = recomputeTotalTurns(state.manicurists, state.completed, state.queue);
+  return next === state.manicurists ? state : { ...state, manicurists: next };
+}
 
 function nextWaxSlot(m: Manicurist): 'hasWax' | 'hasWax2' | 'hasWax3' | null {
   if (!m.hasWax)  return 'hasWax';
@@ -178,6 +264,14 @@ export const INITIAL_STATE: AppState = {
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {
+  // Run the per-action case, then converge totalTurns from the source-of-
+  // truth arrays. The wrapper means individual cases no longer have to be
+  // perfect about delta math — drift just cleans itself up on the next
+  // action. See the recomputeTotalTurns header for the rationale.
+  return convergeTotalTurns(coreAppReducer(state, action));
+}
+
+function coreAppReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'SET_VIEW':
       return { ...state, view: action.view };
