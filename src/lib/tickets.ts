@@ -2305,6 +2305,29 @@ export async function voidTicket(
     }
   }
 
+  // Voiding means the transaction did not happen — no money taken. Delete
+  // any payment rows that were attached to the ticket (typically the cashier
+  // ran the card or accepted cash, then realized the ticket was wrong and
+  // voided it). Without this, the close-shift Sales Validation popup
+  // surfaces a non-zero Error equal to SUM(payments) over voided tickets,
+  // because breakdown.totalReceipts iterates `tickets.status != 'voided'`
+  // while totalPayments iterates every payments row in the shift regardless
+  // of ticket status. Observed 2026-05-29 close-shift: tickets #29 ($107
+  // visa) and #102 ($40 visa) both voided with payment rows intact -> Sales
+  // Validation Error +$147. The cashier intentionally voided both (e.g.
+  // ticket #29 was Rebecca's phantom-line ticket from the merge bug) so the
+  // payments should never have stayed on the books.
+  //
+  // Idempotent: a second void call on an already-voided ticket re-runs this
+  // delete and finds nothing to remove, so it's safe to call repeatedly.
+  const { error: payDelErr } = await supabase
+    .from('payments')
+    .delete()
+    .eq('ticket_id', ticketId);
+  if (payDelErr) {
+    console.warn('[tickets] voidTicket payments delete:', payDelErr.message);
+  }
+
   // Roll back the turn credit + remove the completed_services rows that
   // belonged to this visit. We do BOTH steps based on the visit id (NOT
   // ticket_items.queue_entry_id) so a void still cleans up correctly when
