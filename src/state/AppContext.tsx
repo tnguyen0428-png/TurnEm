@@ -475,7 +475,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.from('manicurists').select('*').order('sort_order', { ascending: true }),
       supabase.from('queue_entries').select('*'),
       supabase.from('completed_services').select('*'),
-      supabase.from('appointments').select('*'),
+      // Paginate appointments. PostgREST's default Range cap is 1000 rows; the
+      // appointments table crossed 1000 on 2026-05-30 and started silently
+      // truncating today's bookings (Sarah Samuelian's 10:00 multi-staff appt
+      // among others). Loop until a short page comes back so the cap stops
+      // mattering regardless of how the table grows.
+      (async () => {
+        const PAGE = 1000;
+        const all: Record<string, unknown>[] = [];
+        let from = 0;
+        // Cap iterations defensively; 50k rows is far more than the salon will
+        // ever accumulate but keeps an upstream bug from hanging the boot.
+        for (let i = 0; i < 50; i++) {
+          const { data, error } = await supabase
+            .from('appointments')
+            .select('*')
+            .range(from, from + PAGE - 1);
+          if (error) return { data: null, error };
+          if (!data || data.length === 0) break;
+          all.push(...data);
+          if (data.length < PAGE) break;
+          from += PAGE;
+        }
+        return { data: all, error: null };
+      })(),
       supabase.from('salon_services').select('*').order('sort_order'),
       supabase.from('turn_criteria').select('*'),
       supabase.from('calendar_days').select('*'),
