@@ -66,7 +66,7 @@ export default function MoneyCountTable({
     : BILL_DENOMINATIONS_CENTS;
 
   return (
-    <div className="border border-gray-100 rounded-xl overflow-hidden">
+    <div className="border border-gray-100 rounded-xl overflow-hidden" data-money-table>
       <div className={hideCoins ? 'grid grid-cols-1 gap-0' : 'grid grid-cols-2 gap-0'}>
         <Column
           title="BILLS"
@@ -136,6 +136,19 @@ function Column({
                 step={1}
                 value={qty === 0 ? '' : qty}
                 onChange={(e) => onSetQty(key, parseInt(e.target.value || '0', 10))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const table = (e.currentTarget as HTMLElement).closest('[data-money-table]');
+                    if (!table) return;
+                    const inputs = Array.from(table.querySelectorAll<HTMLInputElement>('input:not(:disabled)'));
+                    const idx = inputs.indexOf(e.currentTarget as HTMLInputElement);
+                    if (idx >= 0 && idx < inputs.length - 1) {
+                      inputs[idx + 1].focus();
+                      inputs[idx + 1].select();
+                    }
+                  }
+                }}
                 disabled={disabled}
                 placeholder="0"
                 className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm text-right focus:outline-none focus:border-gray-400 disabled:bg-gray-50"
