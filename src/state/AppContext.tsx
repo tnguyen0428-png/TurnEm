@@ -312,6 +312,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const prevStateRef = useRef<AppState>(INITIAL_STATE);
   const completedRef = useRef<AppState['completed']>(INITIAL_STATE.completed);
   const dailyHistoryRef = useRef<AppState['dailyHistory']>(INITIAL_STATE.dailyHistory);
+  const manicuristsRef = useRef<AppState['manicurists']>(INITIAL_STATE.manicurists);
 
   // Wraps a sync function so we track in-flight count and surface 'saving' / 'saved' /
   // 'error' to the UI. Each call increments the counter and shows 'saving'; when the
@@ -808,13 +809,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const completed = completedRef.current;
     if (completed.length === 0) return true; // nothing to save â not an error
     const date = dateOverride ?? getTodayLA();
+    // Sort entries by manicurist clock-in order so past-day History views
+    // (which use first-appearance insertion order) preserve clock-in sequence.
+    const clockInOrder = new Map<string, number>();
+    for (const m of manicuristsRef.current) {
+      if (m.clockInTime !== null) clockInOrder.set(m.id, m.clockInTime);
+    }
+    const sortedEntries = [...completed].sort((a, b) => {
+      const aTime = clockInOrder.get(a.manicuristId) ?? Number.POSITIVE_INFINITY;
+      const bTime = clockInOrder.get(b.manicuristId) ?? Number.POSITIVE_INFINITY;
+      return aTime - bTime;
+    });
     // Reuse the existing entry's ID for this date so repeated saves don't generate a new
     // UUID each time (which would fight the onConflict 'date' upsert and change the stored id).
     const existingEntry = dailyHistoryRef.current.find(h => h.date === date);
     const entry: DailyHistory = {
       id: existingEntry?.id ?? crypto.randomUUID(),
       date,
-      entries: completed,
+      entries: sortedEntries,
     };
     const { error } = await supabase
       .from('daily_history')
@@ -938,6 +950,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       prevStateRef.current = state;
       completedRef.current = state.completed;
       dailyHistoryRef.current = state.dailyHistory;
+      manicuristsRef.current = state.manicurists;
       return;
     }
     // This state change came from a realtime subscription. Skip the flush so we don't
@@ -947,6 +960,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       prevStateRef.current = state;
       completedRef.current = state.completed;
       dailyHistoryRef.current = state.dailyHistory;
+      manicuristsRef.current = state.manicurists;
       return;
     }
     // On the very first render after loadInitialData dispatches LOAD_STATE, prev still holds
@@ -977,6 +991,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     prevStateRef.current = state;
     completedRef.current = state.completed;
     dailyHistoryRef.current = state.dailyHistory;
+    manicuristsRef.current = state.manicurists;
   }, [state]);
 
   // Realtime multi-device sync. Subscribes to postgres_changes on the five live-ops tables
