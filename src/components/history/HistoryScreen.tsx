@@ -417,11 +417,21 @@ export default function HistoryScreen() {
     return rows;
   }, [viewingPastDay, state.queue, state.manicurists]);
 
+  // Hide voided rows from the visible list. They used to render grayed out
+  // with a strikethrough so users could see what was edited, but when a
+  // service is upgraded at checkout (e.g. Kathy 2026-05-30: Kid's Gel Pedi
+  // voided + Gel Pedicure inserted via `-add-mani-XX`), the staff card ends
+  // up showing TWO entries for what was logically one service. The voided
+  // row stays in the DB (audit trail intact) and per-manicurist turn totals
+  // already exclude voided rows (see turnsPerManicurist's `!e.voided` gate
+  // on line 516), so dropping them from the visible list just makes the UI
+  // match what actually happened.
   const displayedEntries = viewingPastDay && pastDayEntries !== null
-    ? pastDayEntries
+    ? pastDayEntries.filter((e) => !e.voided)
     : [
         ...inServiceEntries,
-        ...(state.completed.length > 0 ? state.completed : (todayArchivedEntries ?? [])),
+        ...(state.completed.length > 0 ? state.completed : (todayArchivedEntries ?? []))
+          .filter((e) => !e.voided),
       ];
 
   // Per-manicurist turn totals.
