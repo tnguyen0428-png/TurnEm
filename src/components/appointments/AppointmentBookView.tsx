@@ -1406,7 +1406,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
           // is already processed so a drag can't shift a future request,
           // it just corrects a past slot placement. Treat checked-out R
           // appts like any other dark-gray block: grab-and-move directly.
-          const isLocked = hasRequest && !isRequestUnlocked && !isCheckedOut;
+          const isLocked = false; /* TEMP 2026-05-31 urgent: unlock ALL blocks so receptionist can drag freely; restore original to re-lock requested appts */
           // Treat the old "isCompleted" semantics (muted look, no action buttons) as
           // "checked out OR currently in a queue lifecycle". Hover action row stays
           // hidden in those states.

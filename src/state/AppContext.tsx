@@ -1083,16 +1083,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         continue;
       }
       const currentReqs = appt.serviceRequests ?? [];
-      // Build next serviceRequests, only changing entries that diverge.
+      // TEMP (2026-05-31, urgent): do NOT override an existing serviceRequest's
+      // manicuristIds from the live queue. That override was reverting manual
+      // drags of in-service blocks in the appointment book (blocks "snapped
+      // back" to their original column). The receptionist needs to freely move
+      // blocks to see/rearrange them during service. We still ADD missing
+      // services and re-synth deleted appts below; we just no longer clobber a
+      // block the user moved by hand.
       let changed = false;
-      const next: typeof currentReqs = currentReqs.map((r) => {
-        const want = desired.get(r.service);
-        if (!want) return r;
-        const have = (r.manicuristIds ?? [])[0] ?? null;
-        if (have === want) return r;
-        changed = true;
-        return { ...r, manicuristIds: [want] };
-      });
+      const next: typeof currentReqs = [...currentReqs];
       // Add entries for services the queue has but the appt doesn't yet.
       const covered = new Set(currentReqs.map((r) => r.service));
       for (const [svc, mid] of desired) {
