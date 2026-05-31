@@ -1032,8 +1032,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     for (const [apptId, entries] of byApptId) {
       const appt = state.appointments.find((a) => a.id === apptId);
-      if (!appt) continue;
-      const currentReqs = appt.serviceRequests ?? [];
       // Build a map of (serviceName -> intended manicuristId) from the queue.
       // If two entries claim the same service (rare; can happen on partial
       // re-assign), the most recently-started one wins.
@@ -1050,6 +1048,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
       if (desired.size === 0) continue;
+      const desiredReqs = Array.from(desired.entries()).map(([svc, mid]) => ({
+        service: svc as ServiceType,
+        manicuristIds: [mid],
+        clientRequest: false,
+      }));
+      const desiredServices = Array.from(desired.keys()) as ServiceType[];
+      if (!appt) {
+        // Dangling reference: queue entries point at an appt the reducer
+        // already deleted (e.g. CANCEL_SERVICE on a walk-in removed the
+        // synth block, then the cashier reassigned via MultiServiceAssign;
+        // SPLIT_AND_ASSIGN children inherited the parent's now-deleted
+        // originalAppointment.id and skipped synth at line 822-823 of the
+        // reducer). Re-synthesize from the queue entry's preserved
+        // originalAppointment snapshot + the derived service/staff map.
+        // (audit 2026-05-31 Bug A v4)
+        const first = orderedByStart[0];
+        const seed = first.originalAppointment;
+        if (!seed) continue;
+        const primaryStaff = first.assignedManicuristId;
+        dispatch({
+          type: 'ADD_APPOINTMENT',
+          appointment: {
+            ...seed,
+            id: apptId,
+            services: desiredServices,
+            serviceRequests: desiredReqs,
+            manicuristId: primaryStaff ?? seed.manicuristId,
+            // Re-flag as walk-in so the receptionist can spot the
+            // auto-restored block and confirm/move it.
+            isWalkIn: true,
+          },
+        });
+        continue;
+      }
+      const currentReqs = appt.serviceRequests ?? [];
       // Build next serviceRequests, only changing entries that diverge.
       let changed = false;
       const next: typeof currentReqs = currentReqs.map((r) => {
