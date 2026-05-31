@@ -1004,6 +1004,82 @@ export function AppProvider({ children }: { children: ReactNode }) {
     manicuristsRef.current = state.manicurists;
   }, [state]);
 
+  // Appointment book sync: derive appt.serviceRequests from the live queue
+  // so queue-side staff changes (SPLIT_AND_ASSIGN, MultiServiceAssign,
+  // ASSIGN_CLIENT, REQUEST_ASSIGN) propagate to the book without each
+  // dispatcher needing to remember to update appointments separately.
+  //
+  // Conservative: only updates a serviceRequest entry whose manicuristIds
+  // differ from the queue's assignment for that service. Preserves any
+  // existing clientRequest flag. Adds entries for services that have no
+  // matching serviceRequest yet (the empty-array walk-in case). Does NOT
+  // remove existing entries — manual edits in AppointmentModal stay.
+  //
+  // Idempotent — only dispatches UPDATE_APPOINTMENT when the derived next
+  // value actually differs from the current, so no infinite loop.
+  // (audit 2026-05-31 Bug A v3)
+  useEffect(() => {
+    if (!state.loaded) return;
+    // Group in-progress queue entries by their originalAppointment.id.
+    const byApptId = new Map<string, typeof state.queue>();
+    for (const q of state.queue) {
+      const apptId = q.originalAppointment?.id;
+      if (!apptId) continue;
+      if (!q.assignedManicuristId) continue;
+      const list = byApptId.get(apptId) ?? [];
+      list.push(q);
+      byApptId.set(apptId, list);
+    }
+    for (const [apptId, entries] of byApptId) {
+      const appt = state.appointments.find((a) => a.id === apptId);
+      if (!appt) continue;
+      const currentReqs = appt.serviceRequests ?? [];
+      // Build a map of (serviceName -> intended manicuristId) from the queue.
+      // If two entries claim the same service (rare; can happen on partial
+      // re-assign), the most recently-started one wins.
+      const desired = new Map<string, string>();
+      const orderedByStart = [...entries].sort((a, b) => {
+        const ta = a.startedAt ?? 0;
+        const tb = b.startedAt ?? 0;
+        return ta - tb;
+      });
+      for (const e of orderedByStart) {
+        if (!e.assignedManicuristId) continue;
+        for (const svc of e.services ?? []) {
+          desired.set(svc, e.assignedManicuristId);
+        }
+      }
+      if (desired.size === 0) continue;
+      // Build next serviceRequests, only changing entries that diverge.
+      let changed = false;
+      const next: typeof currentReqs = currentReqs.map((r) => {
+        const want = desired.get(r.service);
+        if (!want) return r;
+        const have = (r.manicuristIds ?? [])[0] ?? null;
+        if (have === want) return r;
+        changed = true;
+        return { ...r, manicuristIds: [want] };
+      });
+      // Add entries for services the queue has but the appt doesn't yet.
+      const covered = new Set(currentReqs.map((r) => r.service));
+      for (const [svc, mid] of desired) {
+        if (covered.has(svc)) continue;
+        next.push({
+          service: svc as typeof currentReqs[number]['service'],
+          manicuristIds: [mid],
+          clientRequest: false,
+        });
+        changed = true;
+      }
+      if (!changed) continue;
+      dispatch({
+        type: 'UPDATE_APPOINTMENT',
+        id: apptId,
+        updates: { serviceRequests: next },
+      });
+    }
+  }, [state.queue, state.appointments, state.loaded]);
+
   // Realtime multi-device sync. Subscribes to postgres_changes on the five live-ops tables
   // after the initial data load. Each INSERT/UPDATE/DELETE from another device (or an echo
   // of our own write) becomes a REMOTE_* action. The sync effect above checks isApplyingRemoteRef
@@ -1754,11 +1830,22 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // We only act on entries that were assigned in `prev`. The cleanup
   // helper also cross-checks completed_services, so even if a service was
   // performed via a different code path we won't delete its line.
+  // Catches entries that disappeared between renders. Two shapes:
+  //   1. Was assigned in prev → caught by the existing condition; runs the
+  //      staff-keyed helper to recover the most common case.
+  //   2. Disappeared while waiting (prev.assignedManicuristId may already
+  //      be null — transient state between CANCEL_SERVICE and the next
+  //      reassignment dispatch). The qid-keyed helper below still runs for
+  //      every removed entry, so cancel-then-immediate-reassign in the
+  //      same render cycle still gets cleaned up. (audit 2026-05-31 v3)
   const removedWithoutCompletion = prev.filter(
     (p) =>
       !!p.assignedManicuristId &&
       !currentIds.has(p.id) &&
       !completedIds.has(p.id),
+  );
+  const removedRegardlessOfStaff = prev.filter(
+    (p) => !currentIds.has(p.id) && !completedIds.has(p.id),
   );
   for (const removed of removedWithoutCompletion) {
     const visitId = getVisitId(removed.parentQueueId ?? removed.id);
@@ -1790,6 +1877,25 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     }
   }
 
+  // Broader qid sweep — runs even when prev.assignedManicuristId was null
+  // (transient waiting state). Idempotent: if the entry was already cleaned
+  // by the staff-keyed loop above, this is a no-op. (audit 2026-05-31 v3)
+  const alreadyCleanedIds = new Set(removedWithoutCompletion.map((p) => p.id));
+  for (const removed of removedRegardlessOfStaff) {
+    if (alreadyCleanedIds.has(removed.id)) continue;
+    const visitId = getVisitId(removed.parentQueueId ?? removed.id);
+    try {
+      const n = await removeTicketLinesByEntryPrefix(visitId, removed.id);
+      if (n > 0) {
+        console.info(
+          `[syncQueue] removed ${n} transient-orphan ticket line(s) for visit ${visitId} / entry ${removed.id}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[syncQueue] transient-orphan cleanup failed for', removed.id, err);
+    }
+  }
+
   // ── cancel-in-place cleanup ───────────────────────────────────────────
   //
   // CANCEL_SERVICE on a non-add-child queue entry sends it back to
@@ -1801,7 +1907,7 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // a phantom line on the ticket. Detect the in-progress → waiting
   // transition here and run the same cleanup. (2026-05-31 audit Bug B.)
   const cancelledInPlace = prev.filter((p) => {
-    if (p.status !== 'in-progress' || !p.assignedManicuristId) return false;
+    if (p.status !== 'inProgress' || !p.assignedManicuristId) return false;
     const cur = queue.find((q) => q.id === p.id);
     return !!cur && cur.status === 'waiting';
   });
