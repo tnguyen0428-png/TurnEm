@@ -1563,16 +1563,32 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             const _last = (c.lastName ?? '').trim();
             const _phone = (c.phone ?? '').trim();
             if (!_first || !_last || !_phone) return;
-            const cid = await upsertCustomerFromIntake({
-              firstName: c.firstName,
-              lastName: c.lastName,
-              phone: c.phone,
-            });
-            if (cid && c.permanentNote) {
-              await supabase
-                .from('customers')
-                .update({ notes: c.notes, updated_at: new Date().toISOString() })
-                .eq('id', cid);
+            // The appointment is already dispatched above (intentionally
+            // optimistic), but the customer profile + permanent-note write
+            // here used to swallow errors with `void (async)()` and no catch.
+            // The receptionist would see the booking land and never know
+            // the note silently dropped. Surface a clear alert on failure so
+            // they know to re-enter via Blueprint > Customers.
+            // (2026-05-31 audit N31-H4)
+            try {
+              const cid = await upsertCustomerFromIntake({
+                firstName: c.firstName,
+                lastName: c.lastName,
+                phone: c.phone,
+              });
+              if (cid && c.permanentNote) {
+                const { error: noteErr } = await supabase
+                  .from('customers')
+                  .update({ notes: c.notes, updated_at: new Date().toISOString() })
+                  .eq('id', cid);
+                if (noteErr) throw noteErr;
+              }
+            } catch (err) {
+              console.error('[AppointmentModal] customer save failed:', err);
+              const msg = (err as { message?: string } | null)?.message ?? String(err);
+              window.alert(
+                `Appointment booked, but the customer profile / permanent note did not save:\n\n${msg}\n\nPlease re-enter the note via Blueprint > Customers.`,
+              );
             }
           })();
           setRecap(null);

@@ -2352,13 +2352,18 @@ export async function voidTicket(
   // payments should never have stayed on the books.
   //
   // Idempotent: a second void call on an already-voided ticket re-runs this
-  // delete and finds nothing to remove, so it's safe to call repeatedly.
+  // delete and finds nothing to remove, so it's safe to call repeatedly — so
+  // returning false here is recoverable. We MUST return false on failure
+  // though, otherwise the ticket stays in 'voided' status with payment rows
+  // still attached, which is the exact close-shift +$147 Sales Validation
+  // Error this whole function was added to prevent (2026-05-31 audit N31-H1).
   const { error: payDelErr } = await supabase
     .from('payments')
     .delete()
     .eq('ticket_id', ticketId);
   if (payDelErr) {
-    console.warn('[tickets] voidTicket payments delete:', payDelErr.message);
+    console.error('[tickets] voidTicket payments delete:', payDelErr.message);
+    return false;
   }
 
   // Roll back the turn credit + remove the completed_services rows that
@@ -2396,33 +2401,16 @@ export async function voidTicket(
           perStaff.set(r.manicurist_id, (perStaff.get(r.manicurist_id) ?? 0) + tv);
         }
 
-        // 2. Read-modify-write each affected manicurist's total_turns.
-        //    Clamped at 0 so a previously-applied partial rollback can't
-        //    drift the count negative. The realtime publication will echo
-        //    the UPDATE to all clients (REMOTE_MANICURIST_UPSERT in the
-        //    reducer does a full-row replace), so every device's local
-        //    state converges to the corrected total without each one
-        //    doing its own subtraction.
+        // 2. Compare-and-swap each affected manicurist's total_turns via
+        //    applyTurnDelta. The helper clamps at 0 and retries on CAS miss,
+        //    so a concurrent writer (TicketModal bucket recompute, another
+        //    void racing on an overlapping visit, syncManicurists) can't
+        //    silently clobber this rollback. The realtime publication will
+        //    echo the UPDATE to all clients (REMOTE_MANICURIST_UPSERT in
+        //    the reducer does a full-row replace), so every device's local
+        //    state converges. (2026-05-31 audit N31-H3)
         for (const [mid, delta] of perStaff) {
-          const { data: mRow, error: mFetchErr } = await supabase
-            .from('manicurists')
-            .select('total_turns')
-            .eq('id', mid)
-            .maybeSingle();
-          if (mFetchErr) {
-            console.warn('[tickets] voidTicket manicurist fetch:', mFetchErr.message);
-            continue;
-          }
-          if (!mRow) continue;
-          const cur = Number((mRow as { total_turns: number | string }).total_turns) || 0;
-          const next = Math.max(0, cur - delta);
-          const { error: mUpErr } = await supabase
-            .from('manicurists')
-            .update({ total_turns: next })
-            .eq('id', mid);
-          if (mUpErr) {
-            console.warn('[tickets] voidTicket manicurist turn rollback:', mUpErr.message);
-          }
+          await applyTurnDelta(mid, -delta);
         }
       }
 
@@ -2483,7 +2471,7 @@ export async function voidTicket(
  * statements, which loses any concurrent write (syncManicurists, voidTicket
  * rollback, a parallel reallocate call) that lands between them.
  */
-async function applyTurnDelta(
+export async function applyTurnDelta(
   staffId: string,
   delta: number,
   maxAttempts = 5,

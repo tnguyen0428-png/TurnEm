@@ -33,6 +33,7 @@ import {
   voidTicket,
   reallocateTurnsForStaffChanges,
   reconcileTicketItemsFromCompleted,
+  applyTurnDelta,
   type ClosingPaymentInput,
 } from '../../lib/tickets';
 import { fetchOpenShift } from '../../lib/shifts';
@@ -1347,18 +1348,13 @@ export default function TicketModal({
           return;
         }
         // Adjust the manicurist's totalTurns by the same delta so the queue
-        // card / staff portal reflect the new credit.
+        // card / staff portal reflect the new credit. Uses applyTurnDelta
+        // (compare-and-swap) so a concurrent writer — another tab's bucket
+        // recompute, a voidTicket rollback echo, syncManicurists — can't
+        // silently clobber this update with a stale snapshot.
+        // (2026-05-31 audit N31-H2)
         if (turnDelta !== 0 && entry.manicuristId) {
-          const { data: mRow } = await supabase
-            .from('manicurists')
-            .select('total_turns')
-            .eq('id', entry.manicuristId)
-            .maybeSingle();
-          const current = Number((mRow as { total_turns?: number } | null)?.total_turns ?? 0);
-          await supabase
-            .from('manicurists')
-            .update({ total_turns: Math.max(0, current + turnDelta) })
-            .eq('id', entry.manicuristId);
+          await applyTurnDelta(entry.manicuristId, turnDelta);
         }
       })();
     }
