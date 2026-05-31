@@ -1776,6 +1776,37 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     }
   }
 
+  // ── cancel-in-place cleanup ───────────────────────────────────────────
+  //
+  // CANCEL_SERVICE on a non-add-child queue entry sends it back to
+  // status='waiting' (it stays in state.queue, just unassigned). That
+  // doesn't trip the disappeared-entry check above, so the ticket_items
+  // row appended when the entry was assigned to a manicurist is left
+  // orphaned. If the cashier later re-assigns the same entry (possibly
+  // with a different service / different staff), the orphan resurrects as
+  // a phantom line on the ticket. Detect the in-progress → waiting
+  // transition here and run the same cleanup. (2026-05-31 audit Bug B.)
+  const cancelledInPlace = prev.filter((p) => {
+    if (p.status !== 'in-progress' || !p.assignedManicuristId) return false;
+    const cur = queue.find((q) => q.id === p.id);
+    return !!cur && cur.status === 'waiting';
+  });
+  for (const cancelled of cancelledInPlace) {
+    const visitId = getVisitId(cancelled.parentQueueId ?? cancelled.id);
+    const staffId = cancelled.assignedManicuristId;
+    if (!staffId) continue;
+    try {
+      const n = await removeOrphanTicketLines(visitId, staffId, cancelled.services);
+      if (n > 0) {
+        console.info(
+          `[syncQueue] removed ${n} cancelled-service ticket line(s) for visit ${visitId} / staff ${staffId}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[syncQueue] cancel cleanup failed for', cancelled.id, err);
+    }
+  }
+
   // ── final dedupe pass ──────────────────────────────────────────────────
   //
   // Brute-force last-line-of-defense: for every single-service assigned

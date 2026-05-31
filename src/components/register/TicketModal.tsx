@@ -863,6 +863,7 @@ export default function TicketModal({
     // manually-added lines never had a turn credited to begin with.
     const changes: Array<{
       queueEntryId: string;
+      serviceName: string;
       oldStaffId: string | null;
       newStaffId: string | null;
       newStaffName: string;
@@ -875,6 +876,7 @@ export default function TicketModal({
       if (orig.staff1Id === l.staff1Id) continue;
       changes.push({
         queueEntryId: orig.queueEntryId,
+        serviceName: l.name,
         oldStaffId: orig.staff1Id,
         newStaffId: l.staff1Id,
         newStaffName: l.staff1Name,
@@ -883,23 +885,61 @@ export default function TicketModal({
     }
     if (changes.length > 0) {
       void reallocateTurnsForStaffChanges(changes);
-      // Walk-in appt sync: when a staff change touches a queue entry whose
-      // completed_services row is linked to an auto-placed walk-in appt
-      // (Appointment.isWalkIn === true), move the appt block to the new
-      // manicurist's column so the book stays in sync with the ticket.
-      // Scoped to walk-ins only — scheduled appointments don't get auto-
-      // moved by ticket edits.
+      // Appt book sync: when the cashier reassigns a ticket line's staff,
+      // mirror the change onto the matching serviceRequest in the linked
+      // appointment so the book block follows the cashier's edit. Applies
+      // to BOTH walk-in and scheduled appts — the cashier's choice is
+      // authoritative; the book should reflect what the ticket says.
+      // (Previously this was gated to walk-ins only, which left scheduled
+      // appts stuck on the original staff in the book even after the
+      // ticket moved. 2026-05-31 audit Bug A.)
+      //
+      // Link priority: queue.originalAppointment.id (in-progress entries)
+      // → completed.originalAppointmentId (awaiting-payment after the
+      // service is done). For the matching serviceRequest we prefer one
+      // whose manicuristIds already included the OLD staff (precise on
+      // multi-occurrence services), falling back to the first request
+      // for that service name.
       for (const c of changes) {
         if (!c.newStaffId) continue;
+        const queueEntry = state.queue.find((q) => q.id === c.queueEntryId);
         const completedRow = state.completed.find((cs) => cs.id === c.queueEntryId);
-        const apptId = completedRow?.originalAppointmentId;
+        const apptId =
+          queueEntry?.originalAppointment?.id ??
+          completedRow?.originalAppointmentId ??
+          null;
         if (!apptId) continue;
         const appt = state.appointments.find((a) => a.id === apptId);
-        if (!appt || !appt.isWalkIn) continue;
+        if (!appt) continue;
+        const reqs = appt.serviceRequests ?? [];
+        if (reqs.length === 0) continue;
+        // Find the serviceRequest that owns this reassignment. Prefer one
+        // matching service + old staff; otherwise the first match by name.
+        let targetIdx = reqs.findIndex(
+          (r) =>
+            r.service === c.serviceName &&
+            (c.oldStaffId
+              ? (r.manicuristIds ?? []).includes(c.oldStaffId)
+              : (r.manicuristIds ?? []).length === 0),
+        );
+        if (targetIdx < 0) {
+          targetIdx = reqs.findIndex((r) => r.service === c.serviceName);
+        }
+        if (targetIdx < 0) continue;
+        const newReqs = reqs.map((r, i) =>
+          i === targetIdx ? { ...r, manicuristIds: [c.newStaffId!] } : r,
+        );
+        const updates: Partial<typeof appt> = { serviceRequests: newReqs };
+        // If the appointment's primary manicurist was the one being
+        // reassigned, follow the change too — keeps the appt's default
+        // column placement in sync with the per-service detail.
+        if (appt.manicuristId && appt.manicuristId === c.oldStaffId) {
+          updates.manicuristId = c.newStaffId;
+        }
         dispatch({
           type: 'UPDATE_APPOINTMENT',
           id: apptId,
-          updates: { manicuristId: c.newStaffId },
+          updates,
         });
       }
     }
