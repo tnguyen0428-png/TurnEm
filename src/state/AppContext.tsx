@@ -1104,30 +1104,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
         changed = true;
       }
-      // ALSO keep appt.services in sync. The book renders blocks from
-      // appt.services (via getApptSvcs), so a service present in
-      // serviceRequests but missing from services renders nothing —
-      // exactly the symptom when an add-service path overwrites services
-      // with a subset. Union with the existing services so we never drop
-      // a service that's already on the appt for another reason.
-      // (audit 2026-05-31 Bug A v5)
-      const currentServices = appt.services ?? [];
-      const targetServices: ServiceType[] = [...currentServices];
-      const currentServicesSet = new Set<string>(currentServices);
-      for (const svc of desiredServices) {
-        if (!currentServicesSet.has(svc)) {
-          targetServices.push(svc);
-          currentServicesSet.add(svc);
-        }
-      }
-      const servicesChanged = targetServices.length !== currentServices.length;
-      if (!changed && !servicesChanged) continue;
-      const updates: Partial<Appointment> = { serviceRequests: next };
-      if (servicesChanged) updates.services = targetServices;
+      if (!changed) continue;
       dispatch({
         type: 'UPDATE_APPOINTMENT',
         id: apptId,
-        updates,
+        updates: { serviceRequests: next },
       });
     }
   }, [state.queue, state.appointments, state.loaded]);
