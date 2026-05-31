@@ -16,8 +16,14 @@ export default function ManicuristPanel() {
     getSubscribedManicuristIds().then(setPushSubIds);
   }, []);
 
-  const clockedIn = state.manicurists.filter((m) => m.clockedIn);
-  const notClockedIn = state.manicurists.filter((m) => !m.clockedIn).sort((a, b) => a.name.localeCompare(b.name));
+  // Exclude receptionists from the manicurist queue. Receptionists clock in
+  // for their own time tracking but don't take services and shouldn't get a
+  // queue card / turn count. They're still in state.manicurists for their
+  // booking-access PIN, hours report, etc. (audit 2026-05-31)
+  const clockedIn = state.manicurists.filter((m) => m.clockedIn && !m.isReceptionist);
+  const notClockedIn = state.manicurists
+    .filter((m) => !m.clockedIn && !m.isReceptionist)
+    .sort((a, b) => a.name.localeCompare(b.name));
   const total = clockedIn.length;
   const totalTurns = clockedIn.reduce((sum, m) => sum + m.totalTurns, 0);
 
