@@ -3,7 +3,7 @@ import { appendItemsToTicket, backfillTicketStaff, cleanupDuplicateLinesForEntry
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
-import { supabase } from '../lib/supabase';
+import { supabase, fetchAllRows } from '../lib/supabase';
 import { defaultSalonServices } from '../constants/salonServices';
 import { defaultManicurists } from '../constants/manicurists';
 import { getLocalDateStr, getTodayLA } from '../utils/time';
@@ -424,7 +424,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Retry on transient failures: tab-wake hits often catch a half-reconnected
       // WebSocket / DNS resolve race. If retries are exhausted, surface a banner
       // instead of silently leaving the tab stale until the next focus event.
-      const { data, error } = await withRetry(() => supabase.from('appointments').select('*'));
+      // Paginate — without this, reconcile-on-focus would silently truncate at
+      // 1000 rows once the table grows past that, leaving the tab stale.
+      // (Upsert reducer means no rows get dropped from state, but new edits to
+      // truncated-off appointments would never land.)
+      const { data, error } = await withRetry(() => fetchAllRows(() => supabase.from('appointments').select('*')));
       if (error) {
         setSyncErrorTracked('Sync failed — could not refresh appointments after focus. Check connection.');
         return;
@@ -472,40 +476,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       { data: timeOffRows },
       { data: scheduleOverrideRows },
     ] = await Promise.all([
-      supabase.from('manicurists').select('*').order('sort_order', { ascending: true }),
-      supabase.from('queue_entries').select('*'),
-      supabase.from('completed_services').select('*'),
-      // Paginate appointments. PostgREST's default Range cap is 1000 rows; the
-      // appointments table crossed 1000 on 2026-05-30 and started silently
-      // truncating today's bookings (Sarah Samuelian's 10:00 multi-staff appt
-      // among others). Loop until a short page comes back so the cap stops
-      // mattering regardless of how the table grows.
-      (async () => {
-        const PAGE = 1000;
-        const all: Record<string, unknown>[] = [];
-        let from = 0;
-        // Cap iterations defensively; 50k rows is far more than the salon will
-        // ever accumulate but keeps an upstream bug from hanging the boot.
-        for (let i = 0; i < 50; i++) {
-          const { data, error } = await supabase
-            .from('appointments')
-            .select('*')
-            .range(from, from + PAGE - 1);
-          if (error) return { data: null, error };
-          if (!data || data.length === 0) break;
-          all.push(...data);
-          if (data.length < PAGE) break;
-          from += PAGE;
-        }
-        return { data: all, error: null };
-      })(),
-      supabase.from('salon_services').select('*').order('sort_order'),
-      supabase.from('turn_criteria').select('*'),
-      supabase.from('calendar_days').select('*'),
-      supabase.from('daily_history').select('*').order('date', { ascending: false }),
-      supabase.from('staff_schedules').select('*'),
-      supabase.from('staff_time_off').select('*'),
-      supabase.from('staff_schedule_overrides').select('*'),
+      // Every fetch here goes through fetchAllRows so the PostgREST 1000-row
+      // Range default never silently truncates the response. The appointments
+      // table hit this on 2026-05-30 (Sarah Samuelian's 10:00 multi-staff
+      // booking disappeared); the rest are smaller today but will get the same
+      // treatment as they grow — completed_services and daily_history in
+      // particular accumulate forever.
+      fetchAllRows(() => supabase.from('manicurists').select('*').order('sort_order', { ascending: true })),
+      fetchAllRows(() => supabase.from('queue_entries').select('*')),
+      fetchAllRows(() => supabase.from('completed_services').select('*')),
+      fetchAllRows(() => supabase.from('appointments').select('*')),
+      fetchAllRows(() => supabase.from('salon_services').select('*').order('sort_order')),
+      fetchAllRows(() => supabase.from('turn_criteria').select('*')),
+      fetchAllRows(() => supabase.from('calendar_days').select('*')),
+      fetchAllRows(() => supabase.from('daily_history').select('*').order('date', { ascending: false })),
+      fetchAllRows(() => supabase.from('staff_schedules').select('*')),
+      fetchAllRows(() => supabase.from('staff_time_off').select('*')),
+      fetchAllRows(() => supabase.from('staff_schedule_overrides').select('*')),
     ]);
 
     const appointments = (appointmentRows || []).map(mapDbAppointment);

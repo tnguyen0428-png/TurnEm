@@ -23,3 +23,39 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     lock: noLock,
   },
 });
+
+/**
+ * Paginate a Supabase select query to bypass PostgREST's default 1000-row Range
+ * cap. supabase-js sets `Range: 0-999` on every request unless an explicit
+ * `.range()` is provided; without pagination a table that crosses 1000 rows
+ * silently truncates and rows go missing in the UI (appointments crossed this
+ * threshold on 2026-05-30 and dropped ~50 of today's bookings).
+ *
+ * Call with a builder factory that returns a fresh query each iteration:
+ *
+ *     const { data, error } = await fetchAllRows(() =>
+ *       supabase.from('appointments').select('*').order('created_at')
+ *     );
+ *
+ * The factory pattern is required because supabase-js builders are thenables
+ * that get consumed when awaited — each page needs a brand-new builder.
+ *
+ * Iteration is capped at 50 pages (50k rows) defensively to avoid hanging if
+ * an upstream bug ever makes pages return non-empty forever.
+ */
+export async function fetchAllRows<T = Record<string, unknown>>(
+  buildQuery: () => { range: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }> },
+): Promise<{ data: T[] | null; error: unknown }> {
+  const PAGE = 1000;
+  const all: T[] = [];
+  let from = 0;
+  for (let i = 0; i < 50; i++) {
+    const { data, error } = await buildQuery().range(from, from + PAGE - 1);
+    if (error) return { data: null, error };
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return { data: all, error: null };
+}

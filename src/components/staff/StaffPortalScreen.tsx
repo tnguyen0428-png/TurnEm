@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
-import { supabase } from '../../lib/supabase';
+import { supabase, fetchAllRows } from '../../lib/supabase';
 import {
   getPermissionState,
   isPushSupported,
@@ -90,11 +90,14 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           { data: serviceRows },
           { data: appointmentRows },
         ] = await Promise.all([
-          supabase.from('manicurists').select('*'),
-          supabase.from('queue_entries').select('*'),
-          supabase.from('completed_services').select('*'),
-          supabase.from('salon_services').select('*').order('sort_order'),
-          supabase.from('appointments').select('*'),
+          // Paginate so PostgREST's 1000-row default Range cap can't silently
+          // truncate any table — same fix that prevented appointments from
+          // dropping on the main app (2026-05-30).
+          fetchAllRows(() => supabase.from('manicurists').select('*')),
+          fetchAllRows(() => supabase.from('queue_entries').select('*')),
+          fetchAllRows(() => supabase.from('completed_services').select('*')),
+          fetchAllRows(() => supabase.from('salon_services').select('*').order('sort_order')),
+          fetchAllRows(() => supabase.from('appointments').select('*')),
         ]);
         if (cancelled) return;
         if (staffErr || queueErr) {
