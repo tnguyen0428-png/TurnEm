@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, syncEntryToTicket } from '../lib/tickets';
+import { appendItemsToTicket, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -1774,6 +1774,20 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     } catch (err) {
       console.warn('[syncQueue] orphan cleanup failed for', removed.id, err);
     }
+    // ALSO sweep by qid: catches rows whose staff1_id was rewritten by an
+    // intermediate syncEntryToTicket name-fallback match before this
+    // cleanup ran, which the staff-keyed helper above can't see.
+    // (audit 2026-05-31 Bug B v2)
+    try {
+      const n = await removeTicketLinesByEntryPrefix(visitId, removed.id);
+      if (n > 0) {
+        console.info(
+          `[syncQueue] removed ${n} qid-orphan ticket line(s) for visit ${visitId} / entry ${removed.id}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[syncQueue] qid-orphan cleanup failed for', removed.id, err);
+    }
   }
 
   // ── cancel-in-place cleanup ───────────────────────────────────────────
@@ -1804,6 +1818,18 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
       }
     } catch (err) {
       console.warn('[syncQueue] cancel cleanup failed for', cancelled.id, err);
+    }
+    // ALSO sweep by qid (see disappeared-entry path above for rationale).
+    // (audit 2026-05-31 Bug B v2)
+    try {
+      const n = await removeTicketLinesByEntryPrefix(visitId, cancelled.id);
+      if (n > 0) {
+        console.info(
+          `[syncQueue] removed ${n} qid-orphan ticket line(s) for visit ${visitId} / entry ${cancelled.id}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[syncQueue] qid-orphan cleanup failed for', cancelled.id, err);
     }
   }
 

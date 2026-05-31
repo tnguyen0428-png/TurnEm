@@ -1104,6 +1104,131 @@ export async function removeOrphanTicketLines(
 }
 
 /**
+ * Delete ticket_items whose `queue_entry_id` points at a queue entry that
+ * no longer exists, scoped to a specific entry id. Counterpart to
+ * `removeOrphanTicketLines` for the case where intermediate sync passes
+ * (syncEntryToTicket name-fallback match in particular) have rewritten the
+ * row's `staff1_id` so the staff-keyed orphan helper can't find it.
+ *
+ * Matches by qid: exact `entryId` or `entryId#...` (the `#`-suffixed
+ * collision / multi-service siblings the rest of the codebase appends).
+ * Does NOT match `entryId-...` because dash-suffixed ids are LEGITIMATE
+ * child split entries — deleting them would clobber the staff change we
+ * just made, not clean up after it.
+ *
+ * Conservative: preserves rows whose service name appears in any
+ * completed_services row for this visit. Real work is never deleted by
+ * this sweep, only attribution-orphans.
+ *
+ * Returns the number of rows actually removed.
+ *
+ * Audit 2026-05-31 Bug B v2.
+ */
+export async function removeTicketLinesByEntryPrefix(
+  visitId: string,
+  entryId: string,
+): Promise<number> {
+  if (!visitId || !entryId) return 0;
+
+  // 1. Open ticket for this visit.
+  const { data: tRow, error: tErr } = await supabase
+    .from('tickets')
+    .select('id, subtotal_cents, discount_cents, tax_cents, tip_cents')
+    .eq('queue_entry_id', visitId)
+    .eq('status', 'open')
+    .maybeSingle();
+  if (tErr) {
+    console.warn('[tickets] removeTicketLinesByEntryPrefix find ticket:', tErr.message);
+    return 0;
+  }
+  if (!tRow) return 0;
+  const ticket = tRow as {
+    id: string;
+    subtotal_cents: number;
+    discount_cents: number;
+    tax_cents: number;
+    tip_cents: number;
+  };
+
+  // 2. Items keyed to this entry (exact or `#`-suffix siblings).
+  const { data: itemRows, error: iErr } = await supabase
+    .from('ticket_items')
+    .select('id, name, unit_price_cents, quantity, discount_cents, queue_entry_id')
+    .eq('ticket_id', ticket.id)
+    .or(`queue_entry_id.eq.${entryId},queue_entry_id.like.${entryId}#%`);
+  if (iErr) {
+    console.warn('[tickets] removeTicketLinesByEntryPrefix items lookup:', iErr.message);
+    return 0;
+  }
+  type ItemRow = {
+    id: string;
+    name: string;
+    unit_price_cents: number;
+    quantity: number;
+    discount_cents: number;
+  };
+  const items = (itemRows ?? []) as ItemRow[];
+  if (items.length === 0) return 0;
+
+  // 3. Performed services across the whole visit — preserved.
+  const { data: completedRows, error: cErr } = await supabase
+    .from('completed_services')
+    .select('services')
+    .like('id', `${visitId}%`);
+  if (cErr) {
+    console.warn('[tickets] removeTicketLinesByEntryPrefix completed lookup:', cErr.message);
+  }
+  const performed = new Set<string>();
+  for (const r of (completedRows ?? []) as Array<{ services: string[] | null }>) {
+    for (const svc of r.services ?? []) {
+      performed.add((svc ?? '').trim().toLowerCase());
+    }
+  }
+
+  const toDelete = items.filter(
+    (it) => !performed.has((it.name ?? '').trim().toLowerCase()),
+  );
+  if (toDelete.length === 0) return 0;
+
+  // 4. Delete and recompute ticket totals.
+  const { error: dErr } = await supabase
+    .from('ticket_items')
+    .delete()
+    .in('id', toDelete.map((it) => it.id));
+  if (dErr) {
+    console.warn('[tickets] removeTicketLinesByEntryPrefix delete:', dErr.message);
+    return 0;
+  }
+
+  const removedSubtotal = toDelete.reduce(
+    (s, it) => s + Math.max(0, it.unit_price_cents * it.quantity - it.discount_cents),
+    0,
+  );
+  const newSubtotal = Math.max(0, (ticket.subtotal_cents ?? 0) - removedSubtotal);
+  const newTotal = Math.max(
+    0,
+    newSubtotal -
+      (ticket.discount_cents ?? 0) +
+      (ticket.tax_cents ?? 0) +
+      (ticket.tip_cents ?? 0),
+  );
+  const { error: uErr } = await supabase
+    .from('tickets')
+    .update({
+      subtotal_cents: newSubtotal,
+      total_cents: newTotal,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', ticket.id)
+    .eq('status', 'open');
+  if (uErr) {
+    console.warn('[tickets] removeTicketLinesByEntryPrefix totals update:', uErr.message);
+  }
+
+  return toDelete.length;
+}
+
+/**
  * Append additional service line items to an existing OPEN ticket and
  * recompute its subtotal/total. Used when a SPLIT_AND_ASSIGN sibling gets
  * assigned to a manicurist after the parent's ticket already exists — the

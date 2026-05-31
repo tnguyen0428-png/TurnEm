@@ -912,7 +912,6 @@ export default function TicketModal({
         const appt = state.appointments.find((a) => a.id === apptId);
         if (!appt) continue;
         const reqs = appt.serviceRequests ?? [];
-        if (reqs.length === 0) continue;
         // Find the serviceRequest that owns this reassignment. Prefer one
         // matching service + old staff; otherwise the first match by name.
         let targetIdx = reqs.findIndex(
@@ -925,10 +924,28 @@ export default function TicketModal({
         if (targetIdx < 0) {
           targetIdx = reqs.findIndex((r) => r.service === c.serviceName);
         }
-        if (targetIdx < 0) continue;
-        const newReqs = reqs.map((r, i) =>
-          i === targetIdx ? { ...r, manicuristIds: [c.newStaffId!] } : r,
-        );
+        let newReqs: typeof reqs;
+        if (targetIdx >= 0) {
+          newReqs = reqs.map((r, i) =>
+            i === targetIdx ? { ...r, manicuristIds: [c.newStaffId!] } : r,
+          );
+        } else {
+          // No matching serviceRequest — synth one. This covers walk-in
+          // appointments whose service_requests column was saved empty
+          // (the synth path leaves it []), so the book has nothing to
+          // render per-service and falls back to appt.manicuristId for
+          // every block. Without this branch the cashier's staff change
+          // lands on the ticket but the book stays stuck on the primary
+          // manicurist. (audit 2026-05-31 Bug A v2)
+          newReqs = [
+            ...reqs,
+            {
+              service: c.serviceName as typeof reqs[number]['service'],
+              manicuristIds: [c.newStaffId!],
+              clientRequest: false,
+            },
+          ];
+        }
         const updates: Partial<typeof appt> = { serviceRequests: newReqs };
         // If the appointment's primary manicurist was the one being
         // reassigned, follow the change too — keeps the appt's default
