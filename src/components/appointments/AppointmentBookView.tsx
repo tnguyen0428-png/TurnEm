@@ -1209,6 +1209,59 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     // Tie-break by height descending so a longer block sits behind a shorter one
     // that starts at the same minute.
     const blocks = [...rawBlocks].sort((a, b) => a.top - b.top || b.height - a.height);
+
+    // Side-by-side overlap layout. When two or more appointments in this
+    // column overlap in time (intentionally same-time bookings, or two appts
+    // that drifted together), render them at fractional width so both stay
+    // visible instead of stacking and hiding each other.
+    //
+    // Algorithm:
+    //   1. Union-find: group blocks whose time spans transitively intersect.
+    //      (A overlaps B, B overlaps C  →  A, B, C share one group.)
+    //   2. Within each group, sort by top; assign each a lane index 0..N-1.
+    //   3. The render uses laneIndex / laneCount to compute left/width.
+    // Singleton groups (no overlap) keep the existing full-width layout.
+    // (audit 2026-05-31 overlap split)
+    type LayoutInfo = { laneIndex: number; laneCount: number };
+    const layoutByIdx = new Array<LayoutInfo>(blocks.length);
+    {
+      const parent = blocks.map((_, i) => i);
+      const find = (i: number): number => {
+        while (parent[i] !== i) {
+          parent[i] = parent[parent[i]];
+          i = parent[i];
+        }
+        return i;
+      };
+      const union = (a: number, b: number) => {
+        const ra = find(a), rb = find(b);
+        if (ra !== rb) parent[ra] = rb;
+      };
+      for (let i = 0; i < blocks.length; i++) {
+        const a = blocks[i];
+        const aEnd = a.top + a.height;
+        for (let j = i + 1; j < blocks.length; j++) {
+          const b = blocks[j];
+          if (b.top >= aEnd) break; // sorted by top — no further overlap possible
+          if (a.top < b.top + b.height && b.top < aEnd) union(i, j);
+        }
+      }
+      const groups = new Map<number, number[]>();
+      for (let i = 0; i < blocks.length; i++) {
+        const r = find(i);
+        const arr = groups.get(r) ?? [];
+        arr.push(i);
+        groups.set(r, arr);
+      }
+      for (const indices of groups.values()) {
+        indices.sort((a, b) => blocks[a].top - blocks[b].top || a - b);
+        const count = indices.length;
+        for (let lane = 0; lane < indices.length; lane++) {
+          layoutByIdx[indices[lane]] = { laneIndex: lane, laneCount: count };
+        }
+      }
+    }
+
     return (
       <div key={mId ?? 'any'} className="flex-shrink-0 relative border-r border-gray-200"
         style={{ width: colWidth, height: TOTAL_H }}
@@ -1287,6 +1340,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
 
         {blocks.map((blk, idx) => {
           const { appt, serviceName, occurrence, top, height, isFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;
+          const layout = layoutByIdx[idx] ?? { laneIndex: 0, laneCount: 1 };
           const palette     = apptPalette(appt);
           const isDragging  = dragInfo?.apptId === appt.id && dragInfo?.serviceName === serviceName;
           const linkedQ     = queueByApptId.get(appt.id);
@@ -1384,6 +1438,18 @@ export default function AppointmentBookView({ selectedDate }: Props) {
               style={{
                 top: top + 1, height, backgroundColor: bg, borderLeftColor: border,
                 borderTop: `1px solid ${border}60`, borderRight: `1px solid ${border}40`, borderBottom: `1px solid ${border}40`,
+                // Side-by-side layout when this block shares time with others
+                // in the same column. Inline left/width/right override the
+                // Tailwind `left-1 right-1` so each block occupies 1/N of the
+                // column width with a small gap between lanes. (audit
+                // 2026-05-31 overlap split)
+                ...(layout.laneCount > 1
+                  ? {
+                      left: `calc(${(layout.laneIndex * 100) / layout.laneCount}% + 2px)`,
+                      width: `calc(${100 / layout.laneCount}% - 4px)`,
+                      right: 'auto',
+                    }
+                  : {}),
                 // While a drag is in progress, let drop events pass through
                 // OTHER appt blocks to the slot grid underneath. The source
                 // block keeps normal pointer-events because changing them
