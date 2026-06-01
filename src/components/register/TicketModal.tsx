@@ -2288,7 +2288,7 @@ canEdit && (
                                 <div className="flex items-baseline gap-2">
                                   <label className="font-mono text-xs tracking-wider text-gray-700 uppercase font-semibold">Gift card code</label>
                                   {pinkLabel && (
-                                    <span className="font-mono text-xs font-bold text-pink-600">{pinkLabel}</span>
+                                    <span className="font-mono text-lg font-bold text-pink-600">{pinkLabel}</span>
                                   )}
                                 </div>
                                 <input
