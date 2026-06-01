@@ -224,9 +224,15 @@ export function parseDollarsToCents(input: string | number | null | undefined): 
  * did after the SalonBiz history import). We page through in chunks and
  * track the max as we go.
  */
+// TurnEm gift cards use a "TM<number>" serial (e.g. TM10100) to distinguish
+// them from the imported SalonBiz cards (bare digit serials like 1606834481).
+// This returns the NEXT TurnEm serial: max existing "TM<n>" + 1, seeded at
+// TM10100 when none exist yet. SalonBiz digit serials are intentionally
+// ignored so the two sequences never collide.
+const TM_SERIAL_SEED = 10100;
 export async function nextGiftCardSerial(): Promise<string> {
   const pageSize = 1000;
-  let max = 0;
+  let maxTm = 0;
   let offset = 0;
   while (true) {
     const { data, error } = await supabase
@@ -236,20 +242,20 @@ export async function nextGiftCardSerial(): Promise<string> {
       .range(offset, offset + pageSize - 1);
     if (error) {
       console.warn('[tickets] nextGiftCardSerial:', error.message);
-      return '00001';
+      return `TM${TM_SERIAL_SEED}`;
     }
     const rows = (data ?? []) as Array<{ name: string }>;
     for (const row of rows) {
-      const m = (row.name ?? '').match(/#(\d+)/);
+      const m = (row.name ?? '').match(/#TM(\d+)/i);
       if (m) {
         const n = parseInt(m[1], 10);
-        if (Number.isFinite(n) && n > max) max = n;
+        if (Number.isFinite(n) && n > maxTm) maxTm = n;
       }
     }
     if (rows.length < pageSize) break;
     offset += pageSize;
   }
-  return String(max + 1).padStart(5, '0');
+  return `TM${maxTm > 0 ? maxTm + 1 : TM_SERIAL_SEED}`;
 }
 
 // ── pricing math ─────────────────────────────────────────────────────────────

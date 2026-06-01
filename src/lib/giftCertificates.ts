@@ -67,14 +67,20 @@ interface DbRedemptionRow {
 
 /** Strip leading "#" + leading zeros + whitespace. Empty string if nothing left. */
 export function normalizeSerial(raw: string | null | undefined): string {
-  const s = (raw ?? '').trim().replace(/^#/, '').replace(/^0+/, '');
+  // Strip a leading "#" and (for bare-digit SalonBiz serials) leading zeros.
+  // Upper-case so the TurnEm "TM" prefix matches no matter how the cashier
+  // typed it (tm10100 == TM10100). Bare-digit serials are unaffected.
+  const s = (raw ?? '').trim().toUpperCase().replace(/^#/, '').replace(/^0+/, '');
   return s;
 }
 
 /** Extract the serial number from a gift_card_sale line item name. */
 function serialFromLineName(name: string): { display: string; norm: string } {
-  // Match the first "#<digits>" run, fall back to the first run of digits.
-  const m = name.match(/#(\d+)/) ?? name.match(/(\d+)/);
+  // TurnEm serials are "#TM<digits>" (e.g. #TM10100); imported SalonBiz
+  // serials are bare "#<digits>". Prefer the TM form, then a plain "#digits",
+  // then the first run of digits as a last resort.
+  const m =
+    name.match(/#(TM\d+)/i) ?? name.match(/#(\d+)/) ?? name.match(/(\d+)/);
   if (!m) return { display: '', norm: '' };
   const display = m[1];
   return { display, norm: normalizeSerial(display) };

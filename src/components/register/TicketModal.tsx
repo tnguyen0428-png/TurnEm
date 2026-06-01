@@ -680,10 +680,11 @@ export default function TicketModal({
     (async () => {
       try {
         const s = await nextGiftCardSerial();
-        const n = parseInt(s, 10);
+        // Serials are "TM<n>" (the TurnEm sequence). Parse the numeric part.
+        const n = parseInt(s.replace(/^TM/i, ''), 10);
         if (!cancelled && Number.isFinite(n)) {
-          // nextGiftCardSerial returns max+1. We store the max itself so
-          // openGiftModal can add 1 once it knows about pendingSerials.
+          // nextGiftCardSerial returns the next serial. We store the max
+          // (next-1) so openGiftModal can add 1 once it knows about pendingSerials.
           setDbMaxSerial(n - 1);
         }
       } catch (err) {
@@ -701,7 +702,9 @@ export default function TicketModal({
     const pendingFromLines = lines
       .filter((l) => l.kind === 'gift_card_sale')
       .map((l) => {
-        const m = (l.name ?? '').match(/#(\d+)/);
+        // Only the TurnEm "TM<n>" sequence counts here; old SalonBiz digit
+        // serials live in a separate space and never increment this counter.
+        const m = (l.name ?? '').match(/#TM(\d+)/i);
         return m ? parseInt(m[1], 10) : NaN;
       })
       .filter((n) => Number.isFinite(n));
@@ -712,7 +715,7 @@ export default function TicketModal({
     if (max == null) {
       try {
         const s = await nextGiftCardSerial();
-        const n = parseInt(s, 10);
+        const n = parseInt(s.replace(/^TM/i, ''), 10);
         if (Number.isFinite(n)) {
           max = n - 1;
           setDbMaxSerial(max);
@@ -721,8 +724,10 @@ export default function TicketModal({
         console.warn('[ticket modal] gift serial fetch failed', err);
       }
     }
-    const next = Math.max(max ?? 0, ...pendingFromLines, 0) + 1;
-    setGiftModalSerial(String(next).padStart(5, '0'));
+    // Floor at 10099 so the first TurnEm card is TM10100 even when nothing is
+    // found yet. The "TM" prefix distinguishes these from imported SalonBiz cards.
+    const next = Math.max(max ?? 10099, ...pendingFromLines, 10099) + 1;
+    setGiftModalSerial(`TM${next}`);
   }
 
   // ─── Pending payment edits ────────────────────────────────────────────────
