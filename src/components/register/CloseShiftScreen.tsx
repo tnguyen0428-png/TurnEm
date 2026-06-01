@@ -219,6 +219,13 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
   const allPayments = useMemo<EnrichedPayment[]>(() => {
     const out: EnrichedPayment[] = [];
     for (const t of tickets) {
+      // Voided tickets contribute no receipts (the breakdown above skips
+      // status==='voided'), so their payment rows must NOT count as tender
+      // here either. Otherwise a payment left on a voided ticket — e.g. a void
+      // done on an older build before void-deletes-payments shipped, or any
+      // delete that didn't run — inflates the expected tender and makes the
+      // drawer look short/negative at close-shift.
+      if (t.status === 'voided') continue;
       const staffName =
         t.primaryManicuristName ||
         t.items.find((it) => it.staff1Name)?.staff1Name ||
