@@ -1222,8 +1222,31 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'ADD_APPOINTMENT':
-      return { ...state, appointments: [...state.appointments, action.appointment] };
+    case 'ADD_APPOINTMENT': {
+      const incoming = action.appointment;
+      // Idempotency guard: never append a duplicate appointment. The queue
+      // re-synch effect (and synthWalkInAppt on reassignment) can dispatch
+      // ADD_APPOINTMENT more than once for the same logical booking; without
+      // this, those become phantom rows that show a false "!" double-booking
+      // flag and falsely block drag-to-move ("slot taken" on an empty-looking
+      // book). Skip if the same id is already present, OR an equivalent
+      // non-cancelled appointment already occupies the same
+      // (date, manicurist, time, client, service). Two DIFFERENT clients at the
+      // same time is a real double-booking (different client name) and is NOT
+      // skipped.
+      const normK = (s?: string | null) => (s ?? '').trim().toLowerCase();
+      const isDup = state.appointments.some((a) =>
+        a.id === incoming.id ||
+        (a.status !== 'cancelled' && a.status !== 'no-show' &&
+          a.date === incoming.date &&
+          (a.manicuristId ?? '') === (incoming.manicuristId ?? '') &&
+          a.time === incoming.time &&
+          normK(a.clientName) === normK(incoming.clientName) &&
+          normK(a.service) === normK(incoming.service)),
+      );
+      if (isDup) return state;
+      return { ...state, appointments: [...state.appointments, incoming] };
+    }
 
     case 'UPDATE_APPOINTMENT':
       // Every UPDATE bumps lastEditedAt. lastEditedByReceptionistId is set
