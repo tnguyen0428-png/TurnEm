@@ -2145,25 +2145,15 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
       // `silently_skip_ticket_items_with_add_child_qid` (migration
       // 20260522080000) — this client-side filter just avoids the
       // pointless round-trip.
-      // Build a composite-key set of items already on the ticket so we can
-      // skip an insert that would duplicate one. The phantom we hunted on
-      // 2026-05-30 (Kathy ticket #89, DANNY Gel Pedicure) slipped through
-      // every qid-based guard because both rows had non-NULL qids that
-      // *differed* (one bare visit id, one `…-mani-18#svc1`) — the qid
-      // dedupe trigger only catches NULL-qid duplicates, and the `-add-`
-      // trigger doesn't fire on bare qids. Composite-key dedupe catches
-      // any future variant.
-      const { data: existingRows, error: exErr } = await supabase
-        .from('ticket_items')
-        .select('kind,name,staff1_id,staff2_id,unit_price_cents')
-        .eq('ticket_id', input.ticketId);
-      if (exErr) {
-        console.warn('[tickets] updateOpenTicket fetch existing for dedupe:', exErr.message);
-      }
-      const dedupeKey = (r: { kind: string; name: string; staff1_id: string | null; staff2_id: string | null; unit_price_cents: number }) =>
-        `${r.kind}|${r.name}|${r.staff1_id ?? ''}|${r.staff2_id ?? ''}|${r.unit_price_cents}`;
-      const existingKeys = new Set((existingRows ?? []).map(dedupeKey));
-
+      // Phase 2 (2026-06-01): the composite-key dedupe that used to live here
+      // was REMOVED. It dropped any second line with the same
+      // (kind, name, staff, price), which silently deleted a LEGITIMATE repeat
+      // service (same service, same tech, twice) and undercharged the client.
+      // Phantom duplicates are now prevented structurally by line_uid + the
+      // ON CONFLICT DO NOTHING on insert (see lineUidForQid), so this blanket
+      // filter is no longer needed — and removing it lets real repeat services
+      // stick. The `-add-` guard below stays: those synthetic ids must never
+      // become ticket lines.
       const insertRows = newItems
         .map((it, idx) => ({
           ticket_id: input.ticketId,
@@ -2194,20 +2184,6 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
             );
             return false;
           }
-          // Composite-key dedupe: drop any row that already has a
-          // (kind, name, staff1_id, staff2_id, unit_price_cents) twin on
-          // this ticket. Legitimate "two of the same service" is expressed
-          // via quantity in the existing row, or by a different staff
-          // assignment — never by a second identical row.
-          if (existingKeys.has(dedupeKey(row))) {
-            console.warn(
-              '[tickets] updateOpenTicket: dropping duplicate composite-key insert',
-              { name: row.name, staff1: row.staff1_id, qid: row.queue_entry_id },
-            );
-            return false;
-          }
-          // Self-dedupe within this batch too.
-          existingKeys.add(dedupeKey(row));
           return true;
         });
       if (insertRows.length > 0) {
