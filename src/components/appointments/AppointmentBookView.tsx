@@ -109,9 +109,9 @@ interface ServiceBlock {
 
 interface DragInfo { apptId: string; serviceName: string; occurrence: number }
 interface PendingDrop { info: DragInfo; mId: string | null; slot: number }
-interface Props { selectedDate: string }
+interface Props { selectedDate: string; fitAll?: boolean }
 
-export default function AppointmentBookView({ selectedDate }: Props) {
+export default function AppointmentBookView({ selectedDate, fitAll = false }: Props) {
   const { state, dispatch } = useApp();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -573,12 +573,18 @@ export default function AppointmentBookView({ selectedDate }: Props) {
       if (w <= 0 || h <= 0) return;
 
       const n = Math.max(1, manicurists.length);
+      // In fit-all mode we drop the readable minimums so the ENTIRE book —
+      // every tech column + the full day — shrinks to fit the viewport with no
+      // scrolling, even on a small screen or with lots of techs. Normal mode
+      // keeps the minimums and scrolls when it can't fit everything.
+      const colFloor = fitAll ? 24 : MIN_COL_WIDTH;
+      const slotFloor = fitAll ? 6 : MIN_SLOT_HEIGHT;
       // Horizontal: divide remaining width evenly across manicurist columns
       const fitColW = Math.floor((w - TIME_COL_W) / n);
-      const newColW = Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, fitColW));
+      const newColW = Math.max(colFloor, Math.min(MAX_COL_WIDTH, fitColW));
       // Vertical: divide remaining height across all 15-minute slots
       const fitSlotH = Math.floor((h - HEADER_H) / TOTAL_SLOTS);
-      const newSlotH = Math.max(MIN_SLOT_HEIGHT, Math.min(MAX_SLOT_HEIGHT, fitSlotH));
+      const newSlotH = Math.max(slotFloor, Math.min(MAX_SLOT_HEIGHT, fitSlotH));
 
       setColWidth((c) => (c !== newColW ? newColW : c));
       setSlotHeight((s) => (s !== newSlotH ? newSlotH : s));
@@ -588,7 +594,7 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     const ro = new ResizeObserver(recalc);
     ro.observe(containerRef.current);
     return () => ro.disconnect();
-  }, [manicurists.length]);
+  }, [manicurists.length, fitAll]);
 
   // ── Sync horizontal scroll between header and body ──────────────────────
   const onBodyScroll = useCallback(() => {

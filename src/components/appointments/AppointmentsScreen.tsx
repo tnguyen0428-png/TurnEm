@@ -234,7 +234,7 @@ export default function AppointmentsScreen() {
 
       {/* ── Content ──────────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {bookMode === 'book' && <AppointmentBookView selectedDate={selectedDate} />}
+        {bookMode === 'book' && <AppointmentBookView selectedDate={selectedDate} fitAll={expanded} />}
 
         {bookMode === 'list' && (
           <div className="max-w-5xl mx-auto p-4 sm:p-6 overflow-y-auto h-full">
