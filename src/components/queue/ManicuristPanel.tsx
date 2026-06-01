@@ -16,13 +16,23 @@ export default function ManicuristPanel() {
     getSubscribedManicuristIds().then(setPushSubIds);
   }, []);
 
-  // Exclude receptionists from the manicurist queue. Receptionists clock in
-  // for their own time tracking but don't take services and shouldn't get a
-  // queue card / turn count. They're still in state.manicurists for their
-  // booking-access PIN, hours report, etc. (audit 2026-05-31)
-  const clockedIn = state.manicurists.filter((m) => m.clockedIn && !m.isReceptionist);
+  // Exclude DESK-ONLY receptionists from the manicurist queue. A desk-only
+  // receptionist clocks in for their own time tracking but doesn't take
+  // services, so they shouldn't get a queue card / turn count. They're still in
+  // state.manicurists for their booking-access PIN, hours report, etc.
+  // (audit 2026-05-31)
+  //
+  // Dual-role staff who are flagged is_receptionist BUT also perform services
+  // (e.g. PANDA, KAYLA — full skill lists) MUST still appear in the queue.
+  // Per StaffModal, the two flags are independent and a service-provider always
+  // has skills, so "desk-only" == receptionist with no skills.
+  // (fix 2026-06-01: the original `!isReceptionist` filter wrongly hid
+  // dual-role manicurists from the queue.)
+  const isDeskOnlyReceptionist = (m: { isReceptionist?: boolean; skills?: string[] }) =>
+    !!m.isReceptionist && (m.skills?.length ?? 0) === 0;
+  const clockedIn = state.manicurists.filter((m) => m.clockedIn && !isDeskOnlyReceptionist(m));
   const notClockedIn = state.manicurists
-    .filter((m) => !m.clockedIn && !m.isReceptionist)
+    .filter((m) => !m.clockedIn && !isDeskOnlyReceptionist(m))
     .sort((a, b) => a.name.localeCompare(b.name));
   const total = clockedIn.length;
   const totalTurns = clockedIn.reduce((sum, m) => sum + m.totalTurns, 0);
