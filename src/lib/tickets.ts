@@ -258,6 +258,74 @@ export function computeLineExt(line: { unitPriceCents: number; quantity: number;
   return Math.max(0, line.unitPriceCents * line.quantity - line.discountCents);
 }
 
+// ── line identity (phantom-duplicate prevention) ─────────────────────────────
+//
+// Every inserted ticket_items row carries a stable `line_uid`. The DB has a
+// UNIQUE index on it, and all inserts use ON CONFLICT (line_uid) DO NOTHING,
+// so the SAME logical line written twice — by a different code path or at a
+// different queue stage — collapses to a single row instead of becoming a
+// phantom duplicate. This replaces the fragile family of queue_entry_id
+// pattern-matching triggers, which kept missing new qid shapes.
+//
+// The hard constraint: a line_uid must be IDENTICAL for the two writes of one
+// logical line, yet DISTINCT for two genuinely separate lines — including a
+// legitimate second copy of the same service, same price, same technician.
+//
+// Two namespaces:
+//   * Structured queue lines (qid like `<visit>-mani-7`, `<visit>-waiting-mani-7`,
+//     `<visit>-mani-7#svc1`) get a deterministic id built from the parts that
+//     survive a stage change:
+//        q:<visitRoot>:<manicuristToken>:<slot>
+//     - visitRoot      = getVisitId(qid): strips the volatile stage prefix so
+//                        `-mani-7` and `-waiting-mani-7` map to the same visit.
+//     - manicuristToken= last `mani-<n>` in the qid: keeps split-visit siblings
+//                        (different techs on one visit) distinct. '_' if absent.
+//     - slot           = trailing `#svc<i>` / `#<i>` number: keeps multiple
+//                        service slots — incl. a legit repeat of the same
+//                        service in one entry (#svc0/#svc1) — distinct. '0' if
+//                        absent.
+//     Two writes of one logical slot collapse; distinct slots/techs do not.
+//   * Everything else (no qid, a bare visit id with no structure, or a
+//     synthetic `-add-` id) is a cashier/modal line with no shared queue
+//     identity, so it gets a FRESH unique id. This guarantees a legitimately
+//     duplicated modal line is never collapsed. (It also means a modal line
+//     that happens to duplicate a queue line is not auto-collapsed — no worse
+//     than before, and never drops real revenue.)
+function genLineUid(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c && typeof c.randomUUID === 'function') {
+    try {
+      return c.randomUUID();
+    } catch {
+      /* fall through to manual id */
+    }
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export function lineUidForQid(qid: string | null | undefined): string {
+  if (qid && !qid.includes('-add-')) {
+    const visitRoot = getVisitId(qid);
+    // Only treat as a structured queue line if getVisitId actually stripped
+    // something — a bare visit id (no suffix) is a modal fallback line and
+    // must stay unique so legit duplicates survive.
+    if (visitRoot && visitRoot !== qid) {
+      const maniMatches = qid.match(/mani-\d+/g);
+      const maniToken =
+        maniMatches && maniMatches.length ? maniMatches[maniMatches.length - 1] ?? '_' : '_';
+      // Trailing `#svc<i>` or `#<i>` number = the service slot. Keeps multiple
+      // slots (incl. a legit repeat of the same service) distinct.
+      let slot = '0';
+      const slotMatches = qid.match(/#(?:svc)?\d+/g);
+      const lastSlot = slotMatches && slotMatches.length ? slotMatches[slotMatches.length - 1] : null;
+      const slotNum = lastSlot ? lastSlot.match(/\d+/) : null;
+      if (slotNum && slotNum[0]) slot = slotNum[0];
+      return `q:${visitRoot}:${maniToken}:${slot}`;
+    }
+  }
+  return `u:${genLineUid()}`;
+}
+
 // ── reads ────────────────────────────────────────────────────────────────────
 
 /** Fetch a single ticket with its items and payments. Internal — used by
@@ -1435,6 +1503,7 @@ export async function appendItemsToTicket(
       ext_price_cents: Math.max(0, it.unitPriceCents * it.quantity),
       sort_order: startSort + idx,
       queue_entry_id: qe,
+      line_uid: lineUidForQid(qe),
     };
   });
   // Plain INSERT — the previous upsert used `onConflict:
@@ -1447,7 +1516,7 @@ export async function appendItemsToTicket(
   // conflict resolution is needed at the DB level.
   const { error: insErr } = await supabase
     .from('ticket_items')
-    .insert(itemRows);
+    .upsert(itemRows, { onConflict: 'line_uid', ignoreDuplicates: true });
   if (insErr) {
     console.warn('[tickets] appendItemsToTicket items insert:', insErr.message);
     return null;
@@ -1693,6 +1762,7 @@ export async function syncEntryToTicket(
         ext_price_cents: Math.max(0, d.catalogUnitPriceCents),
         sort_order: nextSortOrder++,
         queue_entry_id: d.queueEntryId,
+        line_uid: lineUidForQid(d.queueEntryId),
       });
     }
   }
@@ -1720,7 +1790,7 @@ export async function syncEntryToTicket(
     // entry.id for single-service), so in-batch collisions can't happen.
     const { error } = await supabase
       .from('ticket_items')
-      .insert(inserts);
+      .upsert(inserts, { onConflict: 'line_uid', ignoreDuplicates: true });
     if (error) {
       console.error('[tickets] syncEntryToTicket insert:', error.message);
       return false;
@@ -1883,6 +1953,7 @@ export async function createTicketAtCheckin(input: CreateTicketAtCheckinInput): 
         ext_price_cents: Math.max(0, it.unitPriceCents * it.quantity),
         sort_order: idx,
         queue_entry_id: qe,
+        line_uid: lineUidForQid(qe),
       };
     });
 
@@ -1897,7 +1968,9 @@ export async function createTicketAtCheckin(input: CreateTicketAtCheckinInput): 
     //   - We just guaranteed each input row has a distinct queue_entry_id
     //     within the batch (or queue_entry_id IS NULL, which the partial
     //     index doesn't enforce).
-    const { error: iErr } = await supabase.from('ticket_items').insert(itemRows);
+    const { error: iErr } = await supabase
+      .from('ticket_items')
+      .upsert(itemRows, { onConflict: 'line_uid', ignoreDuplicates: true });
     if (iErr) {
       console.error('[tickets] createTicketAtCheckin items, rolling back:', iErr.message);
       await supabase.from('tickets').delete().eq('id', ticketId);
@@ -2110,6 +2183,7 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
           // Sort new lines to the end of the existing/edited block.
           sort_order: (input.items?.length ?? 0) + idx,
           queue_entry_id: disambiguated.get(it) ?? null,
+          line_uid: lineUidForQid(disambiguated.get(it) ?? null),
         }))
         .filter((row) => {
           if (row.queue_entry_id && row.queue_entry_id.includes('-add-')) {
@@ -2137,7 +2211,7 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
           return true;
         });
       if (insertRows.length > 0) {
-        const { error: iErr } = await supabase.from('ticket_items').insert(insertRows);
+        const { error: iErr } = await supabase.from('ticket_items').upsert(insertRows, { onConflict: 'line_uid', ignoreDuplicates: true });
         if (iErr) { console.error('[tickets] updateOpenTicket insert new items:', iErr.message); return null; }
       }
     }

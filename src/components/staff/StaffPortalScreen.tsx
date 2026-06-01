@@ -101,7 +101,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
         ]);
         if (cancelled) return;
         if (staffErr || queueErr) {
-          console.error('[staff refresh] DB error:', staffErr?.message || queueErr?.message);
+          console.error('[staff refresh] DB error:', (staffErr as { message?: string } | null)?.message || (queueErr as { message?: string } | null)?.message);
           return;
         }
         if (staffRows && queueRows) {
