@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, ChevronDown, ChevronUp, Trash2, Printer } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar } from 'lucide-react';
 import Modal from '../shared/Modal';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import DatePickerPopover from '../shared/DatePickerPopover';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import {
@@ -105,6 +106,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     : null;
 
   const today = getTodayLA();
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const draft = mode === 'add' ? state.appointmentDraft : null;
 
 
@@ -1279,12 +1281,28 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">DATE</label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full px-4 py-4 rounded-xl border border-gray-200 font-mono text-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
-            />
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setDatePickerOpen((v) => !v)}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 text-left flex items-center justify-between gap-2 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+              >
+                <span>
+                  {date
+                    ? new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+                    : 'Pick a date'}
+                </span>
+                <Calendar size={16} className="text-pink-500 flex-shrink-0" />
+              </button>
+              {datePickerOpen && (
+                <DatePickerPopover
+                  value={date}
+                  today={today}
+                  onChange={(d) => { setDate(d); setDatePickerOpen(false); }}
+                  onClose={() => setDatePickerOpen(false)}
+                />
+              )}
+            </div>
           </div>
           <div>
             <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">TIME</label>
@@ -1297,7 +1315,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitTime(); } }}
               placeholder="9:30 AM"
               required
-              className="w-full px-4 py-4 rounded-xl border border-gray-200 font-mono text-lg text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>
         </div>
