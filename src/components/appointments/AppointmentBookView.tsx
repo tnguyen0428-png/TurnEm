@@ -262,6 +262,33 @@ export default function AppointmentBookView({ selectedDate }: Props) {
     return out;
   }, [state.appointments]);
 
+  // For every double-booked appointment, the OTHER appointment(s) sharing its
+  // exact (date, manicurist, time) slot — used to explain the "!" caution
+  // badge on hover (who it clashes with), instead of a generic message.
+  const collisionPartnersById = useMemo(() => {
+    const byKey = new Map<string, typeof state.appointments>();
+    for (const a of state.appointments) {
+      if (a.status === 'cancelled' || a.status === 'no-show') continue;
+      const key = `${a.date}__${a.manicuristId ?? ''}__${a.time}`;
+      const list = byKey.get(key) ?? [];
+      list.push(a);
+      byKey.set(key, list);
+    }
+    const out = new Map<string, Array<{ name: string; time: string }>>();
+    for (const list of byKey.values()) {
+      if (list.length < 2) continue;
+      for (const a of list) {
+        out.set(
+          a.id,
+          list
+            .filter((o) => o.id !== a.id)
+            .map((o) => ({ name: o.clientName || 'Walk-in', time: o.time })),
+        );
+      }
+    }
+    return out;
+  }, [state.appointments]);
+
   // Auto-fit dimensions — initial values used for the very first render before
   // the ResizeObserver in useLayoutEffect computes the real fit.
   const [colWidth, setColWidth]     = useState(130);
@@ -1623,7 +1650,15 @@ export default function AppointmentBookView({ selectedDate }: Props) {
                   {collidingApptIds.has(appt.id) && (
                     <span
                       className="flex-shrink-0 inline-flex items-center justify-center px-1 h-4 rounded-full bg-red-500 text-white font-bold text-[8px] tracking-wider"
-                      title="Overlaps another appointment at this time in this column"
+                      title={(() => {
+                        const partners = collisionPartnersById.get(appt.id) ?? [];
+                        const who = partners
+                          .map((p) => `${p.name} (${formatTimeOfDay(p.time)})`)
+                          .join(', ');
+                        return who
+                          ? `Double-booked: this ${formatTimeOfDay(appt.time)} slot already has ${who} on the same technician. Two appointments start at the same time — drag one to a clear slot to fix it.`
+                          : 'Double-booked: another appointment starts at this same time on this technician. Drag one to a clear slot to fix it.';
+                      })()}
                     >!</span>
                   )}
                   {appt.partyId && (
