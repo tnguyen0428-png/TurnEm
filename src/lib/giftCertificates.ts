@@ -48,6 +48,7 @@ interface DbSaleRow {
     business_date: string;
     client_name: string;
     opened_at: string;
+    status: string;
   } | null;
 }
 
@@ -102,7 +103,7 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
     for (let offset = 0; ; offset += PAGE) {
       const { data, error } = await supabase
         .from('ticket_items')
-        .select('id, name, ext_price_cents, ticket_id, tickets(id, ticket_number, business_date, client_name, opened_at)')
+        .select('id, name, ext_price_cents, ticket_id, tickets(id, ticket_number, business_date, client_name, opened_at, status)')
         .eq('kind', 'gift_card_sale')
         .range(offset, offset + PAGE - 1);
       if (error) {
@@ -152,6 +153,7 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
     const { display, norm } = serialFromLineName(s.name ?? '');
     const ticket = s.tickets;
     if (!ticket) continue; // orphaned sale line — skip
+    if (ticket.status === 'voided') continue; // voided sale — not a real cert, serial is free
     const redemption = norm ? redemptionByNorm.get(norm) ?? null : null;
     out.push({
       serial: display,
@@ -199,7 +201,7 @@ export async function lookupGiftCardBalance(
   const padded = norm.padStart(5, '0');
   const { data: saleRows, error: saleErr } = await supabase
     .from('ticket_items')
-    .select('id, name, ext_price_cents')
+    .select('id, name, ext_price_cents, tickets(status)')
     .eq('kind', 'gift_card_sale')
     .or(`name.ilike.%#${norm},name.ilike.%#${padded}`);
   if (saleErr) {
@@ -208,9 +210,13 @@ export async function lookupGiftCardBalance(
   }
   // Filter to the row whose serial actually matches (the ILIKE above may have
   // false positives on long-tailed similar serials, e.g. searching #42 also
-  // matches #1042). The post-filter normalizes both sides.
+  // matches #1042). Also exclude sales on a VOIDED ticket — a voided sale
+  // frees its serial for reuse, so its value must not count toward a balance.
   const matchingSales = (saleRows ?? []).filter((r) => {
-    const { norm: rNorm } = serialFromLineName((r as { name: string }).name ?? '');
+    const row = r as { name?: string; tickets?: { status?: string } | { status?: string }[] | null };
+    const tk = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
+    if (tk?.status === 'voided') return false;
+    const { norm: rNorm } = serialFromLineName(row.name ?? '');
     return rNorm === norm;
   });
   if (matchingSales.length === 0) return empty;

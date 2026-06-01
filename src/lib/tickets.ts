@@ -237,15 +237,19 @@ export async function nextGiftCardSerial(): Promise<string> {
   while (true) {
     const { data, error } = await supabase
       .from('ticket_items')
-      .select('name')
+      .select('name, tickets(status)')
       .eq('kind', 'gift_card_sale')
       .range(offset, offset + pageSize - 1);
     if (error) {
       console.warn('[tickets] nextGiftCardSerial:', error.message);
       return `TM${TM_SERIAL_SEED}`;
     }
-    const rows = (data ?? []) as Array<{ name: string }>;
+    const rows = (data ?? []) as Array<{ name: string; tickets: { status?: string } | { status?: string }[] | null }>;
     for (const row of rows) {
+      // Skip sale lines on a VOIDED ticket — that serial was never really
+      // sold, so it's free to reuse for the next purchase.
+      const tk = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
+      if (tk?.status === 'voided') continue;
       const m = (row.name ?? '').match(/#TM(\d+)/i);
       if (m) {
         const n = parseInt(m[1], 10);
