@@ -1969,13 +1969,12 @@ export default function TicketModal({
 
               {/* Line items grid — scrolls inside if needed so the rest stays in view */}
               <div className="border border-gray-200 rounded-xl overflow-hidden flex flex-col min-h-0">
-                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_36px_30px] gap-2 px-3 py-1.5 bg-gray-100 border-b border-gray-200 text-[11px] tracking-wider font-mono font-semibold text-gray-700 uppercase">
+                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_36px_30px] gap-2 px-3 py-1.5 bg-gray-100 border-b border-gray-200 text-[11px] tracking-wider font-mono font-semibold text-gray-700 uppercase">
                   <span className="text-center">#</span>
                   <span className="text-center">Qty</span>
                   <span>Service</span>
                   <span>Staff</span>
                   <span className="text-right">Price</span>
-                  <span className="text-right">Disc</span>
                   <span className="text-right">Ext</span>
                   <span className="text-center">R</span>
                   <span></span>
@@ -2003,7 +2002,7 @@ export default function TicketModal({
                       return (
                         <div
                           key={idx}
-                          className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_90px_36px_30px] gap-2 items-center px-3 py-1 border-b border-gray-100 last:border-b-0"
+                          className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_36px_30px] gap-2 items-center px-3 py-1 border-b border-gray-100 last:border-b-0"
                         >
                           {badgeNumber !== null ? (
                             <span className="justify-self-center w-7 h-7 rounded-full border-2 border-red-500 text-red-600 font-mono text-base font-bold flex items-center justify-center">
@@ -2091,14 +2090,6 @@ export default function TicketModal({
                             onBlur={(e) => updateLine(idx, { priceInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
                             disabled={!canEdit}
                             className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-right focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
-                          />
-                          <input
-                            type="text" inputMode="decimal" value={line.discountInput}
-                            onChange={(e) => updateLine(idx, { discountInput: e.target.value })}
-                            onBlur={(e) => updateLine(idx, { discountInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
-                            disabled={!canEdit || !note.trim()}
-                            title={!note.trim() ? 'Add a note before applying a discount.' : undefined}
-                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-right focus:outline-none disabled:bg-gray-100 disabled:text-gray-700 disabled:cursor-not-allowed"
                           />
                           <span className="px-1.5 py-1 font-mono text-sm font-semibold text-gray-900 text-right">
                             {formatMoneyCents(ext)}
