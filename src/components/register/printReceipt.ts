@@ -84,9 +84,14 @@ export function printReceipt(ticket: Ticket): void {
       const cashDetail = p.method === 'cash' && p.tenderedCents != null
         ? `<div class="staff">Tendered ${formatMoneyCents(p.tenderedCents)} · Change ${formatMoneyCents(p.changeCents || 0)}</div>`
         : '';
+      // Show the redeemed gift-certificate number under the "Gift" line so the
+      // receipt is a self-contained record of which cert was applied.
+      const giftDetail = p.method === 'gift' && (p.giftCardCode ?? '').trim()
+        ? `<div class="staff">Gift Cert #${escapeHtml((p.giftCardCode ?? '').trim())}</div>`
+        : '';
       return `
         <tr>
-          <td>${methodLabel(p.method)}${cashDetail}</td>
+          <td>${methodLabel(p.method)}${cashDetail}${giftDetail}</td>
           <td class="item-price">${formatMoneyCents(p.amountCents)}</td>
         </tr>`;
     })

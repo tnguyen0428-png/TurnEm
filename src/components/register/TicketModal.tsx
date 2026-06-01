@@ -2328,8 +2328,11 @@ canEdit && (
                     ) : (
                       ticket.payments.map((p) => (
                         <div key={p.id} className="px-2.5 py-2 flex items-center justify-between">
-                          <span className="font-mono text-sm font-bold text-gray-700">
+                          <span className="font-mono text-sm font-bold text-gray-700 flex items-center gap-2">
                             {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
+                            {p.method === 'gift' && (p.giftCardCode ?? '').trim() && (
+                              <span className="font-mono text-[11px] font-semibold text-gray-500">#{(p.giftCardCode ?? '').trim()}</span>
+                            )}
                           </span>
                           <span className="font-mono text-base text-gray-900">{formatMoneyCents(p.amountCents)}</span>
                         </div>
