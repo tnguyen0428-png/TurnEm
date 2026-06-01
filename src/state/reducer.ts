@@ -192,10 +192,72 @@ function findBuddyWalkInTime(
   return bestTime;
 }
 
+// Mirrors AppointmentBookView's `durFor`: a service's base catalog duration
+// plus the assigned staff's per-service time adjustment, floored at 5 min.
+// Kept in sync so the reducer's overlap math matches what the book renders.
+function svcDurationMins(
+  svcName: string,
+  manId: string | null,
+  salonServices: ReadonlyArray<{ name: string; duration: number }>,
+  manicurists: ReadonlyArray<Manicurist>,
+): number {
+  const base = salonServices.find((s) => s.name === svcName)?.duration ?? 60;
+  const staffAdj = manId
+    ? (manicurists.find((mm) => mm.id === manId)?.timeAdjustments?.[svcName] || 0)
+    : 0;
+  return Math.max(base + staffAdj, 5);
+}
+
+// Coarse total span (summed service durations) for an appointment/walk-in,
+// used only for overlap detection. Floored at 5 min so a block always has
+// a non-zero footprint.
+function servicesSpanMins(
+  services: readonly string[],
+  manId: string | null,
+  salonServices: ReadonlyArray<{ name: string; duration: number }>,
+  manicurists: ReadonlyArray<Manicurist>,
+): number {
+  let total = 0;
+  for (const s of services) if (s) total += svcDurationMins(s, manId, salonServices, manicurists);
+  return Math.max(total, 5);
+}
+
+// True if a REAL (non-walk-in) appointment in this manicurist's column on
+// `date` overlaps the half-open interval [atMin, atMin + durMin) — i.e. a
+// genuine time-range conflict, not just a same-start-time match. Other
+// unplaced walk-ins are intentionally NOT treated as blockers: they're the
+// parked items themselves, and the buddy/stack logic already handles them.
+function columnHasApptOverlap(
+  date: string,
+  manicuristId: string,
+  atMin: number,
+  durMin: number,
+  appts: Appointment[],
+  salonServices: ReadonlyArray<{ name: string; duration: number }>,
+  manicurists: ReadonlyArray<Manicurist>,
+): boolean {
+  const endMin = atMin + durMin;
+  for (const a of appts) {
+    if (a.date !== date) continue;
+    if (a.manicuristId !== manicuristId) continue;
+    if (a.isWalkIn) continue;
+    if (a.status === 'cancelled' || a.status === 'no-show') continue;
+    const [sh, sm] = a.time.split(':').map(Number);
+    const aStart = sh * 60 + sm;
+    const svcs = (a.services && a.services.length ? a.services : (a.service ? [a.service] : []))
+      .filter(Boolean) as string[];
+    const aEnd = aStart + servicesSpanMins(svcs, a.manicuristId ?? null, salonServices, manicurists);
+    if (aStart < endMin && aEnd > atMin) return true;
+  }
+  return false;
+}
+
 function synthWalkInAppt(
   client: QueueEntry,
   manicuristId: string,
   appts: Appointment[],
+  salonServices: ReadonlyArray<{ name: string; duration: number }>,
+  manicurists: ReadonlyArray<Manicurist>,
   now: Date = new Date(),
 ): Appointment {
   const date = getLocalDateStr(now);
@@ -213,11 +275,28 @@ function synthWalkInAppt(
     !isRequest ? findBuddyWalkInTime(manicuristId, date, appts, now.getTime()) : null;
   const preferred = buddyTime ?? rounded;
   const start = preferred < '08:00' ? '08:00' : preferred;
-  const time = pickNextOpenSlot(date, manicuristId, start, appts);
+
+  // If the walk-in's now-slot would land on top of an existing appointment in
+  // this manicurist's column (a real [start, end) overlap — e.g. a 1:30–2:30
+  // booking when the walk-in is assigned at 2:00), park the block at the 8 AM
+  // column top instead of dropping it onto the appointment. The block keeps
+  // isWalkIn=true, so it renders with the flashing "W" badge; when the
+  // receptionist drags it to the right slot, executeDrop clears the flag.
+  // This replaces the old "walk forward to the next open slot" behavior for
+  // the overlap case, which is what caused the walk-in/appointment pile-up.
+  const [sH, sM] = start.split(':').map(Number);
+  const startMin = sH * 60 + sM;
+  const walkInDur = servicesSpanMins(client.services ?? [], manicuristId, salonServices, manicurists);
+  const overlapsAppt = columnHasApptOverlap(
+    date, manicuristId, startMin, walkInDur, appts, salonServices, manicurists,
+  );
+
+  const time = overlapsAppt ? '08:00' : pickNextOpenSlot(date, manicuristId, start, appts);
   // sameTime flags appointments that are intentionally on the same time row
   // as another appt (visual stacking instead of "conflict?" warnings). Set
-  // it when the buddy alignment actually landed us on the buddy's row.
-  const alignedWithBuddy = buddyTime !== null && time === buddyTime;
+  // it when the buddy alignment actually landed us on the buddy's row — never
+  // when we've parked at 8 AM to dodge an overlap.
+  const alignedWithBuddy = !overlapsAppt && buddyTime !== null && time === buddyTime;
   return {
     id: crypto.randomUUID(),
     clientName: client.clientName,
@@ -577,7 +656,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // disappears" symptom from 2026-05-25.
       const needsReSynth = !!client.originalAppointment && !existingAppt;
       const synthAppt = !client.originalAppointment || needsReSynth
-        ? synthWalkInAppt(client, action.manicuristId, state.appointments)
+        ? synthWalkInAppt(client, action.manicuristId, state.appointments, state.salonServices, state.manicurists)
         : null;
       const nextAppointments = synthAppt
         ? [...state.appointments, synthAppt]
@@ -659,7 +738,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // requested client (REQUEST_ASSIGN always seeds a brand-new queue
       // entry, so originalAppointment is never set here).
       const requestSynthAppt = !action.client.originalAppointment
-        ? synthWalkInAppt(action.client, action.manicuristId, state.appointments)
+        ? synthWalkInAppt(action.client, action.manicuristId, state.appointments, state.salonServices, state.manicurists)
         : null;
       return {
         ...state,
@@ -821,7 +900,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       for (const e of newEntries) {
         if (!e.assignedManicuristId) continue;
         if (e.originalAppointment) continue;
-        const appt = synthWalkInAppt(e, e.assignedManicuristId, apptAcc);
+        const appt = synthWalkInAppt(e, e.assignedManicuristId, apptAcc, state.salonServices, state.manicurists);
         synthApptByChildId.set(e.id, appt);
         apptAcc.push(appt);
       }
