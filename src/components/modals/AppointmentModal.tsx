@@ -1283,7 +1283,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+              className="w-full px-4 py-4 rounded-xl border border-gray-200 font-mono text-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>
           <div>
@@ -1297,7 +1297,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitTime(); } }}
               placeholder="9:30 AM"
               required
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+              className="w-full px-4 py-4 rounded-xl border border-gray-200 font-mono text-lg text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
             />
           </div>
         </div>
