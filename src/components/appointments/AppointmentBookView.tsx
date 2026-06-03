@@ -1439,7 +1439,12 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           // is already processed so a drag can't shift a future request,
           // it just corrects a past slot placement. Treat checked-out R
           // appts like any other dark-gray block: grab-and-move directly.
-          const isLocked = false; /* TEMP 2026-05-31 urgent: unlock ALL blocks so receptionist can drag freely; restore original to re-lock requested appts */
+          // A client-requested (R badge) appt that hasn't been checked out is
+          // LOCKED against accidental hand-drags — the receptionist must
+          // double-click it first (which sets movableRequestApptId, pulses the
+          // R badge, and flips isRequestUnlocked) to move it once. Checked-out
+          // R appts and every non-request lifecycle state stay freely draggable.
+          const isLocked = hasRequest && !isCheckedOut && !isRequestUnlocked;
           // Treat the old "isCompleted" semantics (muted look, no action buttons) as
           // "checked out OR currently in a queue lifecycle". Hover action row stays
           // hidden in those states.
