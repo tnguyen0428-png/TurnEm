@@ -23,7 +23,6 @@ interface Props {
 
 export default function OpenShiftModal({ receptionists, onClose, onOpened }: Props) {
   const [count, setCount] = useState<DenominationCount>({});
-  const [receptionistId, setReceptionistId] = useState<string>('');
   const [pin, setPin] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,38 +34,33 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened }: Pro
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Auto-focus the PIN input on mount AND re-focus when the receptionist
-  // dropdown changes. Either workflow works — type PIN first then pick
-  // from dropdown, or pick from dropdown then PIN is already focused.
+  // Auto-focus the PIN input on mount.
   useEffect(() => {
     const t = setTimeout(() => pinRef.current?.focus(), 50);
     return () => clearTimeout(t);
-  }, [receptionistId]);
+  }, []);
 
-  const selected = useMemo(
-    () => receptionists.find((r) => r.id === receptionistId) ?? null,
-    [receptionists, receptionistId],
+  // The PIN itself identifies who is opening — first receptionist whose
+  // personal pinCode matches wins. No name dropdown: whoever's PIN is entered
+  // is recorded as the opener.
+  const matched = useMemo(
+    () => receptionists.find((r) => r.pinCode && r.pinCode === pin) ?? null,
+    [receptionists, pin],
   );
 
   async function handleOpen() {
     setError(null);
-    if (!selected) {
-      setError('Pick a receptionist first.');
+    if (pin.length === 0) {
+      setError('Enter your PIN to open the shift.');
       return;
     }
-    // Compare against the receptionist's own pin_code. A missing or empty
-    // pin on the roster means "no pin set" — refuse rather than auto-pass.
-    if (!selected.pinCode) {
-      setError(`${selected.name} has no PIN configured. Set one in Staff before opening.`);
-      return;
-    }
-    if (pin !== selected.pinCode) {
+    if (!matched) {
       setError('Incorrect PIN.');
       return;
     }
     setBusy(true);
     const cents = totalFromCount(count);
-    const shift = await openShift(cents, count, selected.id);
+    const shift = await openShift(cents, count, matched.id);
     setBusy(false);
     if (!shift) {
       setError('Could not open shift — try again.');
@@ -76,7 +70,7 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened }: Pro
   }
 
   const totalCents = totalFromCount(count);
-  const canOpen = !busy && !!selected && pin.length > 0;
+  const canOpen = !busy && pin.length > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -99,33 +93,26 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened }: Pro
             billsAscending
             hideTotal
           />
-          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
-            <label className="flex flex-col gap-1">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Receptionist</span>
-              <select
-                value={receptionistId}
-                onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
-                className="px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
-              >
-                <option value="">Select…</option>
-                {receptionists.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">PIN</span>
-              <input
-                ref={pinRef}
-                type="password"
-                inputMode="numeric"
-                autoComplete="off"
-                value={pin}
-                onChange={(e) => { setPin(e.target.value); setError(null); }}
-                className="px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
-                placeholder="••••"
-              />
-            </label>
+          <div className="flex flex-col gap-1 pt-2 border-t border-gray-100">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">
+              Enter your PIN to open
+            </span>
+            <input
+              ref={pinRef}
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              value={pin}
+              onChange={(e) => { setPin(e.target.value); setError(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && canOpen) void handleOpen(); }}
+              className="px-3 py-2 rounded-lg border border-gray-200 font-mono text-sm tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
+              placeholder="••••"
+            />
+            {matched && (
+              <span className="font-mono text-[11px] text-emerald-600">
+                Opening as {matched.name}
+              </span>
+            )}
           </div>
           {error && <p className="font-mono text-xs text-red-500">{error}</p>}
         </div>

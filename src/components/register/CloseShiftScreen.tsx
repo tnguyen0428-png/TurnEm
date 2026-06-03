@@ -103,23 +103,24 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
   }, [isReadOnly, shift.id, closingCount, varianceNote]);
 
   const [busy, setBusy] = useState(false);
-  const [receptionistId, setReceptionistId] = useState<string>('');
   const [pin, setPin] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const hasOpenTickets = openTickets.length > 0;
   const pinRef = useRef<HTMLInputElement>(null);
 
-  // Auto-focus the PIN field as soon as the close-shift surface opens AND
-  // re-focus it whenever the receptionist dropdown changes (e.g. cashier
-  // picks themselves after typing PIN). Either order works:
-  //   - Type PIN first, then pick from dropdown
-  //   - Pick from dropdown first, PIN gets focused
-  // The setError dependency is intentionally omitted — only the mount and
-  // receptionistId transitions should trigger focus.
+  // The PIN itself identifies who is closing — first receptionist whose
+  // personal pinCode matches wins. No name dropdown: whoever's PIN is entered
+  // is recorded as the closer (closed_by).
+  const matched = useMemo(
+    () => receptionists.find((r) => r.pinCode && r.pinCode === pin) ?? null,
+    [receptionists, pin],
+  );
+
+  // Auto-focus the PIN field as soon as the close-shift surface opens.
   useEffect(() => {
     const t = setTimeout(() => pinRef.current?.focus(), 50);
     return () => clearTimeout(t);
-  }, [receptionistId]);
+  }, []);
 
   // Three-step close:
   //   main       → editable shift summary (tabs incl. editable transactions)
@@ -137,16 +138,11 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
       setError('Variance is non-zero — please add a note explaining why.');
       return;
     }
-    const selected = receptionists.find((r) => r.id === receptionistId) ?? null;
-    if (!selected) {
-      setError('Pick a receptionist to attribute the close to.');
+    if (pin.length === 0) {
+      setError('Enter your PIN to close the shift.');
       return;
     }
-    if (!selected.pinCode) {
-      setError(`${selected.name} has no PIN configured. Set one in Staff before closing.`);
-      return;
-    }
-    if (pin !== selected.pinCode) {
+    if (!matched) {
       setError('Incorrect PIN.');
       return;
     }
@@ -155,9 +151,8 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
 
   async function handleConfirmClose() {
     setError(null);
-    const selected = receptionists.find((r) => r.id === receptionistId) ?? null;
-    if (!selected) {
-      setError('Pick a receptionist to attribute the close to.');
+    if (!matched) {
+      setError('Incorrect PIN.');
       setStep('main');
       return;
     }
@@ -168,7 +163,7 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
       expectedCashCents,
       varianceNote: varianceNote.trim(),
       closingCount,
-      receptionistId: selected.id,
+      receptionistId: matched.id,
     });
     setBusy(false);
     if (!closed) {
@@ -375,19 +370,7 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
           ) : (
             <>
               <div className="flex items-center gap-2 flex-wrap">
-                <label className="flex items-center gap-2">
-                  <span className="font-mono text-base uppercase tracking-wider text-gray-500">Closing as</span>
-                  <select
-                    value={receptionistId}
-                    onChange={(e) => { setReceptionistId(e.target.value); setPin(''); setError(null); }}
-                    className="px-2 py-1.5 rounded-lg border border-gray-200 font-mono text-base bg-white focus:outline-none focus:ring-2 focus:ring-pink-300"
-                  >
-                    <option value="">Select…</option>
-                    {receptionists.map((r) => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
-                </label>
+                <span className="font-mono text-base uppercase tracking-wider text-gray-500">Enter PIN to close</span>
                 <input
                   ref={pinRef}
                   type="password"
@@ -398,6 +381,9 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
                   placeholder="PIN"
                   className="px-2 py-1.5 w-24 rounded-lg border border-gray-200 font-mono text-base tracking-widest focus:outline-none focus:ring-2 focus:ring-pink-300"
                 />
+                {matched && (
+                  <span className="font-mono text-sm text-emerald-600">Closing as {matched.name}</span>
+                )}
               </div>
               <div className="ml-auto flex items-center gap-2">
                 <button onClick={onClose}
@@ -406,7 +392,7 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
                 </button>
                 <button
                   onClick={handleContinueToClose}
-                  disabled={busy || hasOpenTickets || !receptionistId || pin.length === 0}
+                  disabled={busy || hasOpenTickets || pin.length === 0}
                   title={hasOpenTickets ? 'Close all open tickets first' : undefined}
                   className={`px-4 py-2 rounded-lg font-mono text-base font-bold transition-colors ${
                     hasOpenTickets
