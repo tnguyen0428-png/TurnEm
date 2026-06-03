@@ -298,7 +298,19 @@ function synthWalkInAppt(
   // when we've parked at 8 AM to dodge an overlap.
   const alignedWithBuddy = !overlapsAppt && buddyTime !== null && time === buddyTime;
   return {
-    id: crypto.randomUUID(),
+    // Stable, deterministic id derived from the queue entry instead of a fresh
+    // random uuid. The walk-in block is a *synthesized* placeholder, and several
+    // paths (re-assign, SPLIT_AND_ASSIGN, CANCEL_SERVICE-then-reassign, and the
+    // AppContext queue re-synch effect) can re-run synth for the SAME logical
+    // walk-in. With a random id each re-run produced a NEW row the id-based
+    // dedup couldn't recognize -> phantom duplicate blocks (false "!" double-
+    // booking flags, false "slot taken" drag blocks, and downstream the
+    // content-based guard silently dropping real bookings). Keying on the queue
+    // entry id makes every re-synth collapse onto the same row by id, while two
+    // genuinely different walk-ins (distinct queue ids, incl. each split child)
+    // still get distinct blocks. `id` is a text column, so the prefix is safe
+    // and never collides with a real booking's uuid.
+    id: `walkin:${client.id}`,
     clientName: client.clientName,
     clientPhone: '',
     service: client.services[0] || '',
@@ -1224,26 +1236,18 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
 
     case 'ADD_APPOINTMENT': {
       const incoming = action.appointment;
-      // Idempotency guard: never append a duplicate appointment. The queue
-      // re-synch effect (and synthWalkInAppt on reassignment) can dispatch
-      // ADD_APPOINTMENT more than once for the same logical booking; without
-      // this, those become phantom rows that show a false "!" double-booking
-      // flag and falsely block drag-to-move ("slot taken" on an empty-looking
-      // book). Skip if the same id is already present, OR an equivalent
-      // non-cancelled appointment already occupies the same
-      // (date, manicurist, time, client, service). Two DIFFERENT clients at the
-      // same time is a real double-booking (different client name) and is NOT
-      // skipped.
-      const normK = (s?: string | null) => (s ?? '').trim().toLowerCase();
-      const isDup = state.appointments.some((a) =>
-        a.id === incoming.id ||
-        (a.status !== 'cancelled' && a.status !== 'no-show' &&
-          a.date === incoming.date &&
-          (a.manicuristId ?? '') === (incoming.manicuristId ?? '') &&
-          a.time === incoming.time &&
-          normK(a.clientName) === normK(incoming.clientName) &&
-          normK(a.service) === normK(incoming.service)),
-      );
+      // Idempotency is by id ONLY. The queue re-synch effect and synthWalkInAppt
+      // can dispatch ADD_APPOINTMENT more than once for the same logical walk-in;
+      // now that synth blocks carry a stable `walkin:<queueId>` id (and re-synch
+      // re-adds with that same id), a re-run collapses onto the existing row here.
+      //
+      // We deliberately NO LONGER dedupe on content
+      // (date/manicurist/time/client/service). A client can legitimately have the
+      // same service twice in the same slot, and content dedup was silently
+      // dropping those real bookings — the "disappearing slots" report. Two
+      // genuinely distinct bookings always get distinct ids, so id-based dedup is
+      // sufficient and safe.
+      const isDup = state.appointments.some((a) => a.id === incoming.id);
       if (isDup) return state;
       return { ...state, appointments: [...state.appointments, incoming] };
     }
