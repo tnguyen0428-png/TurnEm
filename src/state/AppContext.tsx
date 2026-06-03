@@ -298,7 +298,25 @@ function mapDbStaffScheduleOverride(row: Record<string, unknown>): StaffSchedule
 let _dataLoadStarted = false;
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
+  const [state, rawDispatch] = useReducer(appReducer, INITIAL_STATE);
+  // Intentional-deletion ledger. The sync delete-detection below infers
+  // "this appointment was deleted" from a diff of in-memory state, then issues
+  // a real DB DELETE. A sync/realtime batching race can transiently drop a
+  // still-valid booking from state, and the diff would then destroy it for good
+  // (the "existing appt disappears, sometimes on time-adjust" reports; same
+  // class as the Christina 5/27 / Megan 5/28 deletions). Booked appts only ever
+  // leave state via an explicit DELETE_APPOINTMENT (trash icon / modal cancel /
+  // last-service-removed) or a tombstoned remote delete — so we record the
+  // explicit ones here and let the diff delete a BOOKED row only if it's in this
+  // set. Walk-in synth blocks (high-churn, low-stakes) are still allowed through
+  // the diff unconditionally. dispatch stays referentially stable (no deps).
+  const pendingApptDeletesRef = useRef<Set<string>>(new Set());
+  const dispatch = useCallback<React.Dispatch<AppAction>>((action) => {
+    if (action.type === 'DELETE_APPOINTMENT') {
+      pendingApptDeletesRef.current.add(action.id);
+    }
+    rawDispatch(action);
+  }, []);
   const [syncError, setSyncError] = useState<string | null>(null);
   const clearSyncError = useCallback(() => {
     setSyncError(null);
@@ -939,8 +957,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // wholesale-replace it was the trapdoor that silently destroyed live
       // appointments while their staff were still mid-service.
       const deletedAppts = prev.appointments.filter(
-        (a) => !currentApptIds.has(a.id) && !isTombstoned(a.id),
+        (a) =>
+          !currentApptIds.has(a.id) &&
+          !isTombstoned(a.id) &&
+          // Protect real bookings: only delete from DB if the user explicitly
+          // deleted it (recorded in the ledger) or it's a walk-in synth block.
+          // A booked appt that merely went missing from state (a sync/realtime
+          // batching race) is left alone and self-heals on the next upsert/
+          // refresh instead of being permanently destroyed.
+          (pendingApptDeletesRef.current.has(a.id) || a.isWalkIn === true),
       );
+      // Consume handled intent markers, and drop any whose appt is still present
+      // (an explicit delete superseded by a concurrent re-add) so the set can't
+      // grow unbounded.
+      for (const a of deletedAppts) pendingApptDeletesRef.current.delete(a.id);
+      for (const id of Array.from(pendingApptDeletesRef.current)) {
+        if (currentApptIds.has(id)) pendingApptDeletesRef.current.delete(id);
+      }
       if (deletedAppts.length > 0) {
         for (const a of deletedAppts) tombstone(a.id);
         trackSave(() => chainAppointmentWrite(async () => {
@@ -2211,14 +2244,12 @@ function appointmentToRow(a: Appointment) {
 }
 
 async function syncAppointments(appointments: Appointment[], prev: Appointment[], onError: (msg: string) => void) {
-  const currentIds = new Set(appointments.map((a) => a.id));
-
-  // Delete appts that disappeared since last sync.
-  const deleted = prev.filter((a) => !currentIds.has(a.id));
-  for (const a of deleted) {
-    const { error } = await withRetry(() => supabase.from('appointments').delete().eq('id', a.id));
-    if (error) { console.error('[syncAppointments] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
-  }
+  // NOTE: this function NO LONGER deletes. Deletions are handled exclusively by
+  // the gated delete-detection in the sync effect (which only removes a real
+  // booking when it was explicitly deleted, never on a transient state-diff
+  // race). The old unconditional `prev - current` delete pass here was a second,
+  // UNGATED path that could destroy a booking that merely went missing for a
+  // render — removing it closes that hole. syncAppointments now only upserts.
 
   // Per-row diff: only upsert appts whose data actually changed. Stops stale tabs from
   // re-uploading every appt (which would resurrect rows another tab just deleted) and
