@@ -1,0 +1,15 @@
+-- URGENT live fix (2026-06-03): appointment deletes were failing on the
+-- register with "Sync failed — data may not be saved. Check connection."
+--
+-- Root cause: the diagnostic AFTER DELETE trigger on `appointments`
+-- (appointments_log_delete → log_appointment_delete()) was created
+-- SECURITY INVOKER, so its INSERT into `appointment_delete_log` ran as the
+-- app's role. That table has RLS enabled with NO policy, so the insert was
+-- denied ("new row violates row-level security policy"), which rolled back the
+-- entire DELETE on appointments. Every walk-in-churn delete failed and the
+-- client surfaced the sync-error banner.
+--
+-- Fix: make the audit-log function SECURITY DEFINER so it can always write its
+-- log row regardless of RLS, letting the appointment DELETE commit. The
+-- function already pins search_path to public, pg_temp, so this is safe.
+ALTER FUNCTION public.log_appointment_delete() SECURITY DEFINER;
