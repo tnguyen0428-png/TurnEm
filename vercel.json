@@ -2,5 +2,37 @@
   "rewrites": [
     { "source": "/staff", "destination": "/staff.html" },
     { "source": "/((?!assets|sw\\.js|manifest|Turn_Em_Logo|staff\\.html|.*\\.webp|.*\\.gif|.*\\.png|.*\\.jpg).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/staff",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/staff.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    }
   ]
 }
