@@ -7,45 +7,7 @@ import type { ClientFormData } from './ClientForm';
 import type { QueueEntry } from '../../types';
 import { upsertCustomerFromIntake, splitClientName } from '../../lib/customers';
 import { getLocalDateStr } from '../../utils/time';
-
-// Normalize a name for "same client" comparison: trim + collapse internal
-// whitespace + lowercase. So "Sally  " === "sally" === "Sally".
-function normName(s: string): string {
-  return s.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-// Strip a trailing " <digits>" suffix so "Sally 3" → "Sally". Used so we
-// always count duplicates against the bare base name, regardless of which
-// numbered variant the cashier typed in.
-function stripSuffix(s: string): string {
-  return s.trim().replace(/\s+\d+$/, '');
-}
-
-// Build the suggested numbered name. If the bare base "Sally" is already
-// in-salon (with or without numbered siblings), return the next free
-// "Sally N" — N starts at 2 because the original counts as #1.
-function pickNextSuffix(baseName: string, existing: string[]): string {
-  const bare = stripSuffix(baseName);
-  const bareKey = normName(bare);
-  if (!bareKey) return baseName.trim();
-  const taken = new Set<number>();
-  for (const n of existing) {
-    const tNorm = normName(n);
-    if (tNorm === bareKey) {
-      taken.add(1);
-      continue;
-    }
-    // Match "<base> <digits>" where <base> normalizes to the bare key.
-    const m = n.trim().match(/^(.*?)\s+(\d+)$/);
-    if (m && normName(m[1]) === bareKey) {
-      const num = parseInt(m[2], 10);
-      if (Number.isFinite(num) && num >= 1) taken.add(num);
-    }
-  }
-  let next = 2;
-  while (taken.has(next)) next++;
-  return `${bare} ${next}`;
-}
+import { dedupeClientName } from '../../utils/clientNaming';
 
 export default function AddClientModal() {
   const { state, dispatch } = useApp();
@@ -110,11 +72,19 @@ export default function AddClientModal() {
           return getLocalDateStr(new Date(c.completedAt)) === today;
         })
         .map((c) => c.clientName);
-      const allInSalon = [...queueNames, ...completedToday];
-      const enteredKey = normName(entered);
-      const exactMatch = allInSalon.some((n) => normName(n) === enteredKey);
-      if (exactMatch) {
-        const suggested = pickNextSuffix(entered, allInSalon);
+      // Also count today's booked appointments (scheduled / checked-in /
+      // completed) as "in salon today" — otherwise a second walk-in named
+      // "Christy" wouldn't be numbered when the first Christy is an
+      // appointment that hasn't reached the floor yet. Cancelled / no-show
+      // appts are excluded since that person isn't actually coming in.
+      const apptNamesToday = state.appointments
+        .filter((a) => a.date === today && a.status !== 'cancelled' && a.status !== 'no-show')
+        .map((a) => a.clientName);
+      const allInSalon = [...queueNames, ...completedToday, ...apptNamesToday];
+      // `entered` is already trimmed; dedupeClientName returns it unchanged
+      // when there's no collision, or the next "Name N" when there is.
+      const suggested = dedupeClientName(entered, allInSalon);
+      if (suggested !== entered) {
         setPendingDup({ data, suggestedName: suggested });
         return;
       }

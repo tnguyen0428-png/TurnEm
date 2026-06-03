@@ -12,6 +12,7 @@ import {
 import type { Customer } from '../../types';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { getTodayLA } from '../../utils/time';
+import { dedupeClientName } from '../../utils/clientNaming';
 import { resolveScheduleForDate } from '../../utils/schedule';
 import type { ServiceType, ServiceRequest, Appointment } from '../../types';
 
@@ -729,7 +730,30 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       ?? (mode === 'edit' && editing ? editing.manicuristId : null)
       ?? draft?.manicuristId
       ?? autoPerService?.find((id) => id != null) ?? null;
-    const name = clientName.trim() || 'Walk-in';
+    // Auto-number a duplicate name so two different people with the same first
+    // name stay distinguishable in the book (we usually don't store last names).
+    // Only for NEW bookings — editing keeps the typed name as-is. Collide
+    // against other active appointments on the SAME date, plus anyone already
+    // in the salon when the booking is for today.
+    const rawName = clientName.trim() || 'Walk-in';
+    let name = rawName;
+    if (mode === 'add') {
+      const sameDayApptNames = state.appointments
+        .filter((a) =>
+          a.id !== editing?.id &&
+          a.date === date &&
+          a.status !== 'cancelled' &&
+          a.status !== 'no-show',
+        )
+        .map((a) => a.clientName);
+      const floorNames = date === getTodayLA()
+        ? [
+            ...state.queue.map((q) => q.clientName),
+            ...state.completed.filter((c) => !c.voided).map((c) => c.clientName),
+          ]
+        : [];
+      name = dedupeClientName(rawName, [...sameDayApptNames, ...floorNames]);
+    }
 
     // Auto-link party group: when "Party group" is checked, look for another appointment
     // at the same date+time that already has a partyId and reuse it. Otherwise mint a new
