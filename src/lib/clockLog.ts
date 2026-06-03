@@ -1,19 +1,24 @@
 // clockLog.ts
 //
-// Local-only ledger of receptionist clock-in / clock-out events, persisted in
-// localStorage. Used by the Reports tab in Blueprint to render hours worked.
+// Supabase-backed ledger of receptionist clock-in / clock-out events.
+// Every CLOCK IN / CLOCK OUT confirmed from the Register's time clock appends
+// one row to the `clock_events` table; the Blueprint → Reports → Receptionist
+// Hours screen reads them back to render hours worked.
 //
-// This is intentionally simple: every CLOCK_IN and CLOCK_OUT triggered from
-// the Register's time clock appends one row. Entries can be edited or deleted
-// from the report screen (e.g. to correct a forgotten clock-out).
+// Why Supabase (not localStorage): clock-in/out happens across multiple POS
+// devices (front desk, back office, iPad). A per-browser ledger split the
+// "in" and "out" of a single shift across devices, producing never-closed
+// and orphaned sessions and unreliable payroll totals. The shared table makes
+// every device see every event and survives cache clears.
 //
 // Schema notes:
-//   - id is a uuid created at append time so edits/deletes are idempotent.
-//   - timestamp is ms epoch in the user's local timezone.
+//   - id is a uuid (DB default) so edits/deletes are idempotent.
+//   - timestamp is exposed to the UI as ms epoch; the table stores it as
+//     `event_time timestamptz`. Mappers convert between the two.
 //   - staffName is denormalized so the report doesn't break if a staff member
 //     is renamed or removed later.
-//   - storage is per-browser (not synced). Upgrade to Supabase later if you
-//     need cross-device persistence or payroll-grade durability.
+
+import { supabase } from './supabase';
 
 export type ClockEventType = 'in' | 'out';
 
@@ -29,73 +34,88 @@ export interface ClockEvent {
   edited?: boolean;
 }
 
-const KEY = 'turnem.clockLog.v1';
-
-function safeParse(raw: string | null): ClockEvent[] {
-  if (!raw) return [];
-  try {
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-    return arr.filter(
-      (e): e is ClockEvent =>
-        e && typeof e.id === 'string' &&
-        typeof e.staffId === 'string' &&
-        typeof e.staffName === 'string' &&
-        (e.type === 'in' || e.type === 'out') &&
-        typeof e.timestamp === 'number',
-    );
-  } catch {
-    return [];
-  }
+interface DbClockEvent {
+  id: string;
+  staff_id: string;
+  staff_name: string;
+  type: ClockEventType;
+  event_time: string;
+  note: string | null;
+  edited: boolean | null;
+  created_at: string;
 }
 
-function write(events: ClockEvent[]) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(events));
-  } catch {
-    // Quota exceeded or storage disabled — silently ignore; this is best-effort.
-  }
+function fromDb(row: DbClockEvent): ClockEvent {
+  return {
+    id: row.id,
+    staffId: row.staff_id,
+    staffName: row.staff_name,
+    type: row.type,
+    timestamp: new Date(row.event_time).getTime(),
+    note: row.note ?? undefined,
+    edited: row.edited ?? false,
+  };
 }
 
-export function getAllEvents(): ClockEvent[] {
-  if (typeof window === 'undefined') return [];
-  return safeParse(localStorage.getItem(KEY));
+// ── reads ────────────────────────────────────────────────────────────────────
+
+export async function getAllEvents(): Promise<ClockEvent[]> {
+  const { data, error } = await supabase
+    .from('clock_events')
+    .select('*')
+    .order('event_time', { ascending: false });
+  if (error) { console.error('[clockLog] getAllEvents:', error.message); return []; }
+  return (data ?? []).map((r) => fromDb(r as DbClockEvent));
 }
 
-export function appendEvent(
+// ── writes ───────────────────────────────────────────────────────────────────
+
+export async function appendEvent(
   staffId: string,
   staffName: string,
   type: ClockEventType,
   when: number = Date.now(),
-): ClockEvent {
-  const ev: ClockEvent = {
-    id: crypto.randomUUID(),
-    staffId,
-    staffName,
-    type,
-    timestamp: when,
-  };
-  const all = getAllEvents();
-  all.push(ev);
-  write(all);
-  return ev;
+): Promise<ClockEvent | null> {
+  const { data, error } = await supabase
+    .from('clock_events')
+    .insert({
+      staff_id: staffId,
+      staff_name: staffName,
+      type,
+      event_time: new Date(when).toISOString(),
+    })
+    .select('*')
+    .single();
+  if (error) { console.error('[clockLog] appendEvent:', error.message); return null; }
+  return fromDb(data as DbClockEvent);
 }
 
-export function updateEvent(id: string, patch: Partial<Omit<ClockEvent, 'id'>>): ClockEvent | null {
-  const all = getAllEvents();
-  const idx = all.findIndex((e) => e.id === id);
-  if (idx === -1) return null;
-  const merged: ClockEvent = { ...all[idx], ...patch, edited: true };
-  all[idx] = merged;
-  write(all);
-  return merged;
+export async function updateEvent(
+  id: string,
+  patch: Partial<Omit<ClockEvent, 'id'>>,
+): Promise<ClockEvent | null> {
+  // Build the DB patch from whichever UI fields were provided. Any edit via
+  // the report flags the row as edited.
+  const dbPatch: Record<string, unknown> = { edited: true };
+  if (patch.timestamp !== undefined) dbPatch.event_time = new Date(patch.timestamp).toISOString();
+  if (patch.type !== undefined) dbPatch.type = patch.type;
+  if (patch.staffId !== undefined) dbPatch.staff_id = patch.staffId;
+  if (patch.staffName !== undefined) dbPatch.staff_name = patch.staffName;
+  if (patch.note !== undefined) dbPatch.note = patch.note;
+
+  const { data, error } = await supabase
+    .from('clock_events')
+    .update(dbPatch)
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) { console.error('[clockLog] updateEvent:', error.message); return null; }
+  return fromDb(data as DbClockEvent);
 }
 
-export function deleteEvent(id: string): boolean {
-  const all = getAllEvents();
-  const next = all.filter((e) => e.id !== id);
-  if (next.length === all.length) return false;
-  write(next);
+export async function deleteEvent(id: string): Promise<boolean> {
+  const { error } = await supabase.from('clock_events').delete().eq('id', id);
+  if (error) { console.error('[clockLog] deleteEvent:', error.message); return false; }
   return true;
 }
 
@@ -104,6 +124,9 @@ export function deleteEvent(id: string): boolean {
  * sessions. An "in" without a following "out" is treated as still on duty
  * (endTime = null). An orphan "out" (no preceding "in") is reported with
  * startTime = null so the user can spot and fix it in the editor.
+ *
+ * Pure function — operates on an already-fetched event array, unchanged from
+ * the original localStorage implementation.
  */
 export interface ClockSession {
   staffId: string;

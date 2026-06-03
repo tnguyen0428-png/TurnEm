@@ -12,9 +12,11 @@
 // per receptionist so a manager can see "Panda worked 38h this week" without
 // adding times by hand.
 
-import { useEffect, useMemo, useState } from 'react';
-import { Pencil, Trash2, Sun, Moon, X, Plus } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pencil, Trash2, Sun, Moon, X, Plus, Lock } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
+import { supabase } from '../../lib/supabase';
+import { PinVerifyModal } from '../shared/AdminPinGate';
 import {
   getAllEvents,
   updateEvent,
@@ -106,8 +108,28 @@ export default function ReceptionistHoursReport() {
   );
 
   // Reload events into local state on mount + whenever a change is made.
-  const [events, setEvents] = useState<ClockEvent[]>(() => getAllEvents());
-  function reload() { setEvents(getAllEvents()); }
+  // Source is the shared Supabase clock_events table, so a reload also picks
+  // up clock-ins/outs made on other devices.
+  const [events, setEvents] = useState<ClockEvent[]>([]);
+  const reload = useCallback(async () => {
+    setEvents(await getAllEvents());
+  }, []);
+
+  // Initial load.
+  useEffect(() => { void reload(); }, [reload]);
+
+  // Realtime: refresh the moment any device clocks in/out or a manager edits
+  // an entry, so the hours list and totals are always current without waiting
+  // for the 60s poll. Mirrors the postgres_changes pattern used elsewhere.
+  useEffect(() => {
+    const channel = supabase
+      .channel('blueprint-clock-events-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clock_events' }, () => {
+        void reload();
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [reload]);
 
   // Filters
   const [staffFilter, setStaffFilter] = useState<string>('all'); // 'all' | staffId
@@ -117,11 +139,26 @@ export default function ReceptionistHoursReport() {
   const [editing, setEditing] = useState<ClockEvent | null>(null);
   const [adding, setAdding] = useState(false);
 
-  // Re-read every minute so durations stay current for still-open sessions.
+  // Editing (add / edit / delete) is gated behind the master/admin PIN. Once a
+  // manager enters it correctly, the screen stays unlocked until they navigate
+  // away. `pendingAction` holds the action to run after a successful unlock.
+  const [unlocked, setUnlocked] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+
+  // Run `action` immediately if already unlocked, otherwise prompt for the
+  // master PIN and run it on success.
+  const guarded = useCallback((action: () => void) => {
+    if (unlocked) { action(); return; }
+    // Store the function itself (the updater form would call it).
+    setPendingAction(() => action);
+  }, [unlocked]);
+
+  // Re-read every minute so durations stay current for still-open sessions
+  // and so events from other devices appear without a manual refresh.
   useEffect(() => {
-    const t = setInterval(reload, 60_000);
+    const t = setInterval(() => { void reload(); }, 60_000);
     return () => clearInterval(t);
-  }, []);
+  }, [reload]);
 
   const [from, to] = useMemo(() => rangeBounds(range, customFrom, customTo), [range, customFrom, customTo]);
 
@@ -162,7 +199,8 @@ export default function ReceptionistHoursReport() {
     <div className="p-6 overflow-y-auto h-full space-y-5">
       <div>
         <p className="font-mono text-xs text-gray-400">
-          Clock-in / clock-out log for receptionists. Stored locally on this browser — back up periodically.
+          Clock-in / clock-out log for receptionists. Synced across all devices.
+          {!unlocked && ' Editing requires the manager PIN.'}
         </p>
       </div>
 
@@ -222,10 +260,10 @@ export default function ReceptionistHoursReport() {
         )}
         <div className="ml-auto">
           <button
-            onClick={() => setAdding(true)}
+            onClick={() => guarded(() => setAdding(true))}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 font-mono text-xs font-bold"
           >
-            <Plus size={14} /> ADD ENTRY
+            {unlocked ? <Plus size={14} /> : <Lock size={14} />} ADD ENTRY
           </button>
         </div>
       </div>
@@ -302,19 +340,18 @@ export default function ReceptionistHoursReport() {
                 </span>
                 <span className="flex items-center justify-end gap-1">
                   <button
-                    onClick={() => setEditing(e)}
+                    onClick={() => guarded(() => setEditing(e))}
                     className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100"
                     title="Edit"
                   >
                     <Pencil size={13} />
                   </button>
                   <button
-                    onClick={() => {
+                    onClick={() => guarded(() => {
                       if (confirm(`Delete this ${e.type === 'in' ? 'clock-in' : 'clock-out'} for ${e.staffName}?`)) {
-                        deleteEvent(e.id);
-                        reload();
+                        void deleteEvent(e.id).then(() => reload());
                       }
-                    }}
+                    })}
                     className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50"
                     title="Delete"
                   >
@@ -331,10 +368,10 @@ export default function ReceptionistHoursReport() {
         <EditEntryModal
           event={editing}
           onClose={() => setEditing(null)}
-          onSave={(patch) => {
-            updateEvent(editing.id, patch);
+          onSave={async (patch) => {
+            await updateEvent(editing.id, patch);
             setEditing(null);
-            reload();
+            await reload();
           }}
         />
       )}
@@ -343,15 +380,29 @@ export default function ReceptionistHoursReport() {
         <AddEntryModal
           receptionists={receptionists.map((m) => ({ id: m.id, name: m.name }))}
           onClose={() => setAdding(false)}
-          onAdd={(staffId, staffName, type, timestamp) => {
-            const ev = appendEvent(staffId, staffName, type, timestamp);
+          onAdd={async (staffId, staffName, type, timestamp) => {
+            const ev = await appendEvent(staffId, staffName, type, timestamp);
             // Mark manually-added entries as edited so they're flagged.
-            updateEvent(ev.id, { edited: true });
+            if (ev) await updateEvent(ev.id, { edited: true });
             setAdding(false);
-            reload();
+            await reload();
           }}
         />
       )}
+
+      {/* Manager PIN gate for add / edit / delete — same master PIN as the rest
+          of the app (system_state.admin_passcode). */}
+      <PinVerifyModal
+        isOpen={pendingAction !== null}
+        title="Manager PIN"
+        onCancel={() => setPendingAction(null)}
+        onSuccess={() => {
+          setUnlocked(true);
+          const action = pendingAction;
+          setPendingAction(null);
+          action?.();
+        }}
+      />
     </div>
   );
 }
