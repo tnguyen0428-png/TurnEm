@@ -4,14 +4,36 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
 
+let reloadingForUpdate = false;
+
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (!('serviceWorker' in navigator)) {
     console.log('Service workers not supported');
     return null;
   }
   try {
+    // When a NEW service worker takes control (e.g. after a deploy that ships
+    // an updated sw.js), reload once so the page runs the fresh build instead
+    // of a stale cached shell. Guards:
+    //   - `hadController` skips the reload on a first-ever install (there was
+    //     no prior worker, so nothing to refresh away from).
+    //   - `reloadingForUpdate` prevents reload loops within a page load.
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloadingForUpdate) return;
+      reloadingForUpdate = true;
+      window.location.reload();
+    });
+
     const registration = await navigator.serviceWorker.register('/sw.js');
     console.log('Service Worker registered');
+
+    // Proactively check for a newer sw.js now and once an hour, so a long-lived
+    // POS tab picks up a new worker (and its cache purge) without anyone having
+    // to manually clear site data.
+    void registration.update();
+    setInterval(() => { void registration.update(); }, 60 * 60 * 1000);
+
     return registration;
   } catch (err) {
     console.error('Service Worker registration failed:', err);
