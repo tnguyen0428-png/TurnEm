@@ -576,6 +576,37 @@ export async function linkClosedTicketToVisit(
 }
 
 /**
+ * Continuous backfill of a ticket's appointment_id while the visit is open.
+ *
+ * The appointment id is otherwise written only once, at ticket creation, off
+ * the queue entry's originalAppointment. If that link wasn't on the entry yet
+ * at that instant (check-in ordering) or the ticket was opened via the
+ * append/consolidate path, the id is silently left null and never recovered —
+ * which is why a paid appointment could fail to darken in the book (Jone
+ * Coleman 2026-06-02). Calling this on every reconcile pass gives the link the
+ * whole service window to attach, so by checkout the ticket reliably points at
+ * its appointment. The book then darkens the EXACT block by id (never by name),
+ * so two same-name/same-tech bookings (mother + daughter) can't darken each
+ * other.
+ *
+ * Guarded by `.is('appointment_id', null)` so we never overwrite an existing
+ * link (protects the legit "two visits same day, same client" case). Idempotent:
+ * a no-op once the id is set.
+ */
+export async function backfillTicketAppointment(
+  visitId: string,
+  appointmentId: string,
+): Promise<void> {
+  if (!visitId || !appointmentId) return;
+  const { error } = await supabase
+    .from('tickets')
+    .update({ appointment_id: appointmentId, updated_at: new Date().toISOString() })
+    .eq('queue_entry_id', visitId)
+    .is('appointment_id', null);
+  if (error) console.warn('[tickets] backfillTicketAppointment:', error.message);
+}
+
+/**
  * Reconcile: for each completed entry on `dateLA` that has no matching
  * ticket, either:
  *   - append its services to an existing OPEN ticket for the same client

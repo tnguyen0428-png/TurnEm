@@ -37,7 +37,6 @@ import {
   type ClosingPaymentInput,
 } from '../../lib/tickets';
 import { fetchOpenShift } from '../../lib/shifts';
-import { getTodayLA } from '../../utils/time';
 import GiftCardSaleModal from './GiftCardSaleModal';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
@@ -1627,54 +1626,26 @@ export default function TicketModal({
     //      heuristic used by awaitingPaymentApptIds in AppointmentBookView.
     //      This is what makes self-darken survive page refreshes.
     {
-      // Compute the set of appointment ids to flip to 'completed'. Multiple
-      // ids are valid: one closed ticket can cover several same-named
-      // clients (e.g. two Lindas paying together) — every appt whose staff
-      // column appears on this ticket should darken.
+      // Darken the linked appointment block by EXACT appointment id only —
+      // never by client name. The authoritative path is now the DB trigger
+      // `tickets_complete_appointment_on_close`, which flips the appointment by
+      // its id when this ticket closes (works on every device, survives
+      // refresh). This client dispatch is just instant local feedback on the
+      // paying device. The ticket's appointment_id is kept reliably populated by
+      // the continuous backfill in syncQueue.
+      //
+      // The old name-match fallback was removed deliberately: when two same-name
+      // clients shared a tech (e.g. a mother and daughter booked under one name,
+      // same service, same manicurist) it darkened BOTH blocks on a single
+      // payment. Keying strictly by id darkens only the booking that was paid.
       const apptIdsToComplete = new Set<string>();
+      if (ticket.appointmentId) {
+        apptIdsToComplete.add(ticket.appointmentId);
+      }
       if (ticket.queueEntryId) {
         const completedRow = state.completed.find((c) => c.id === ticket.queueEntryId);
         if (completedRow?.originalAppointmentId) {
           apptIdsToComplete.add(completedRow.originalAppointmentId);
-        }
-      }
-      if (apptIdsToComplete.size === 0 && ticket.clientName) {
-        const norm = (v: string | undefined) =>
-          (v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-        const ticketName = norm(ticket.clientName);
-        // CRITICAL: use LA date here, not new Date().toISOString().split('T')[0]
-        // — the latter returns the UTC date, which rolls over to "tomorrow"
-        // at 5pm PDT. Appts are stored with the LA date string, so a UTC
-        // lookup after 5pm finds nothing and the appt never auto-darkens.
-        const todayKey = getTodayLA();
-        const candidates = state.appointments.filter((a) =>
-          a.date === todayKey &&
-          (a.status === 'scheduled' || a.status === 'checked-in') &&
-          norm(a.clientName) === ticketName
-        );
-        if (candidates.length === 1) {
-          apptIdsToComplete.add(candidates[0].id);
-        } else if (candidates.length > 1) {
-          // Multiple same-named clients in today's book (e.g. two Lindas,
-          // two Jennifers). Disambiguate by matching the served manicurist:
-          // the ticket's items carry staff1Id/staff2Id, the appt carries
-          // manicuristId. Every candidate whose column appears on the
-          // ticket gets darkened — a single ticket commonly covers all
-          // services across all served staff, so flipping every matching
-          // appt is the right behavior.
-          const staffIds = new Set<string>();
-          for (const it of ticket.items ?? []) {
-            if (it.staff1Id) staffIds.add(it.staff1Id);
-            if (it.staff2Id) staffIds.add(it.staff2Id);
-          }
-          for (const c of candidates) {
-            if (c.manicuristId && staffIds.has(c.manicuristId)) {
-              apptIdsToComplete.add(c.id);
-            }
-          }
-          // If no candidate's manicurist is on the ticket, leave them in
-          // light-gray awaiting-payment rather than darkening the wrong
-          // person's block.
         }
       }
       for (const id of apptIdsToComplete) {

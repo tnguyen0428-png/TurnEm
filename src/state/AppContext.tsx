@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket } from '../lib/tickets';
+import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -1877,6 +1877,12 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
           services: entry.services,
           staffId: entry.assignedManicuristId,
         });
+      }
+      // Continuously (idempotently) ensure this visit's ticket carries its
+      // appointment id, so checkout darkens the exact block by id. No-op once
+      // set; matched on the ticket's queue_entry_id (the visit root).
+      if (entry.originalAppointment?.id) {
+        await backfillTicketAppointment(getVisitId(entry.id), entry.originalAppointment.id);
       }
     } catch (err) {
       console.error('[syncQueue] syncEntryToTicket failed for', entry.id, err);
