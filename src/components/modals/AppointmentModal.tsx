@@ -730,6 +730,26 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       ?? (mode === 'edit' && editing ? editing.manicuristId : null)
       ?? draft?.manicuristId
       ?? autoPerService?.find((id) => id != null) ?? null;
+
+    // SAFEGUARD: guarantee the appointment's anchor manicurist actually has a
+    // column placement in serviceRequests. A same-time multi-service booking
+    // can store its anchor only in the top-level manicuristId, with no matching
+    // serviceRequests entry (the book renders that occurrence from manicuristId).
+    // When such an appointment is edited — e.g. the receptionist shortens a
+    // service's duration — the loop above can mint a placeholder entry with an
+    // empty manicuristIds, orphaning that occurrence so it vanishes from the
+    // appt book (the register is unaffected: it reads ticket_items separately).
+    // If the anchor isn't represented in any entry, drop it into the first empty
+    // slot so the column placement survives the edit.
+    if (
+      appointmentManicuristId &&
+      serviceRequests.length > 0 &&
+      !serviceRequests.some((r) => r.manicuristIds?.includes(appointmentManicuristId))
+    ) {
+      const orphan = serviceRequests.find((r) => !r.manicuristIds || r.manicuristIds.length === 0);
+      if (orphan) orphan.manicuristIds = [appointmentManicuristId];
+    }
+
     // Auto-number a duplicate name so two different people with the same first
     // name stay distinguishable in the book (we usually don't store last names).
     // Only for NEW bookings — editing keeps the typed name as-is. Collide
