@@ -1027,6 +1027,11 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
       manicuristIds: mId ? [mId] : (currentReq?.manicuristIds ?? []),
       clientRequest: (currentReq?.clientRequest ?? false) as boolean,
       startTime: newTime,
+      // Preserve any per-service duration tweak (e.g. a shortened time) across
+      // the move. Without this the drag rebuilds the entry at the base duration,
+      // so a shortened service springs back to full length and has to be
+      // shortened again after every move. Omit when zero to keep the payload tidy.
+      ...(currentReq?.durationAdjustment ? { durationAdjustment: currentReq.durationAdjustment } : {}),
     };
 
     let updatedReqs = [...allReqs];
