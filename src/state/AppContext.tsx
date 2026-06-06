@@ -311,9 +311,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // set. Walk-in synth blocks (high-churn, low-stakes) are still allowed through
   // the diff unconditionally. dispatch stays referentially stable (no deps).
   const pendingApptDeletesRef = useRef<Set<string>>(new Set());
+  // Same protection for completed_services as for appointments above: a completed
+  // row must only be DELETED from the DB when the user explicitly removed it, never
+  // because it transiently fell out of in-memory `state.completed` during a sync /
+  // realtime race. Without this, a partial reload silently deleted real turn history
+  // (the 6/5 "missing morning turns" incident). We record explicit single deletes
+  // here, and flag the two legitimate bulk clears (the History "Clear" button and the
+  // post-save nightly DAILY_RESET) so syncCompleted's diff-delete only fires for
+  // genuine user intent. A completed row that merely goes missing is left in the DB
+  // and self-heals on the next load.
+  const pendingCompletedDeletesRef = useRef<Set<string>>(new Set());
+  const bulkCompletedClearRef = useRef<boolean>(false);
   const dispatch = useCallback<React.Dispatch<AppAction>>((action) => {
     if (action.type === 'DELETE_APPOINTMENT') {
       pendingApptDeletesRef.current.add(action.id);
+    } else if (action.type === 'DELETE_COMPLETED') {
+      pendingCompletedDeletesRef.current.add(action.id);
+    } else if (action.type === 'CLEAR_HISTORY' || action.type === 'DAILY_RESET') {
+      // Both clear `state.completed` wholesale by design. CLEAR_HISTORY is the
+      // History screen's red Clear button (gated behind a successful save);
+      // DAILY_RESET only fires after saveTodayHistory() succeeds. Authorize the
+      // next syncCompleted flush to delete every removed row.
+      bulkCompletedClearRef.current = true;
     }
     rawDispatch(action);
   }, []);
@@ -848,13 +867,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const bTime = clockInOrder.get(b.manicuristId) ?? Number.POSITIVE_INFINITY;
       return aTime - bTime;
     });
-    // Reuse the existing entry's ID for this date so repeated saves don't generate a new
-    // UUID each time (which would fight the onConflict 'date' upsert and change the stored id).
-    const existingEntry = dailyHistoryRef.current.find(h => h.date === date);
+    // MERGE rather than overwrite. daily_history is one row per date, and the
+    // upsert below replaces that row's `entries` wholesale. If this device's
+    // `completed` list is partial (e.g. it loaded after a clear, or mid-sync),
+    // a blind overwrite would erase a fuller record another device/the nightly
+    // job already saved (a contributor to the 6/5 turn loss). So we read the
+    // current stored row, union by entry id, and let THIS device's live copy win
+    // on conflict (carries the latest edits/voids) while never dropping ids it
+    // simply didn't have. Read the DB (not the in-memory ref) so a save from a
+    // different device is merged in too.
+    const { data: storedRow } = await supabase
+      .from('daily_history')
+      .select('id, entries')
+      .eq('date', date)
+      .maybeSingle();
+    const mergedById = new Map<string, CompletedEntry>();
+    for (const e of ((storedRow?.entries as CompletedEntry[] | null) ?? [])) {
+      if (e && e.id) mergedById.set(e.id, e);
+    }
+    for (const e of sortedEntries) mergedById.set(e.id, e); // live wins on conflict
+    const mergedEntries = Array.from(mergedById.values()).sort((a, b) => {
+      const aTime = clockInOrder.get(a.manicuristId) ?? Number.POSITIVE_INFINITY;
+      const bTime = clockInOrder.get(b.manicuristId) ?? Number.POSITIVE_INFINITY;
+      return aTime - bTime;
+    });
+    // Reuse the existing row's ID for this date so repeated saves don't generate a
+    // new UUID each time (which would fight the onConflict 'date' upsert).
+    const existingId = (storedRow?.id as string | undefined) ?? dailyHistoryRef.current.find(h => h.date === date)?.id;
     const entry: DailyHistory = {
-      id: existingEntry?.id ?? crypto.randomUUID(),
+      id: existingId ?? crypto.randomUUID(),
       date,
-      entries: sortedEntries,
+      entries: mergedEntries,
     };
     const { error } = await supabase
       .from('daily_history')
@@ -1015,7 +1058,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     if (prev.manicurists !== state.manicurists) trackSave(() => syncManicurists(state.manicurists, prev.manicurists, setSyncErrorTracked));
     if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked, state.salonServices, state.manicurists, state.completed));
-    if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked, state.salonServices));
+    if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked, state.salonServices, pendingCompletedDeletesRef.current, bulkCompletedClearRef));
     if (prev.appointments !== state.appointments) {
       // Deletions already handled above (with tombstoning). syncAppointments here upserts
       // current rows; its internal delete pass is a redundant safety net. We funnel both
@@ -2040,15 +2083,41 @@ async function syncCompleted(
   prev: AppState['completed'],
   onError: (msg: string) => void,
   salonServices: AppState['salonServices'],
+  explicitDeleteIds: Set<string>,
+  bulkClearRef: { current: boolean },
 ) {
   const prevById = new Map(prev.map((c) => [c.id, c]));
   const currentIds = new Set(completed.map((c) => c.id));
 
-  // Handle deletes: entries in prev but not in current
+  // Handle deletes: entries in prev but not in current.
+  //
+  // CRITICAL: do NOT delete a row from the DB just because it vanished from the
+  // in-memory list. A sync / realtime race can transiently drop a still-valid
+  // completed entry from `state.completed`; an unconditional diff-delete then
+  // destroys real turn history for every device (the 6/5 missing-morning-turns
+  // incident). We only delete when the removal was user-intended:
+  //   • a bulk clear (History "Clear" button → CLEAR_HISTORY, or the post-save
+  //     nightly DAILY_RESET) authorizes deleting every removed row this pass;
+  //   • otherwise only ids the user explicitly removed (DELETE_COMPLETED, tracked
+  //     in explicitDeleteIds) are deleted.
+  // Anything else is left in the DB and self-heals into state on the next load.
   const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
   if (removedIds.length > 0) {
-    const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', removedIds));
-    if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    const allowBulk = bulkClearRef.current;
+    const idsToDelete = allowBulk
+      ? removedIds
+      : removedIds.filter((id) => explicitDeleteIds.has(id));
+    // Consume the intent markers we just honored so the set can't grow unbounded.
+    for (const id of removedIds) explicitDeleteIds.delete(id);
+    if (allowBulk) bulkClearRef.current = false;
+    const skipped = removedIds.length - idsToDelete.length;
+    if (skipped > 0) {
+      console.warn(`[syncCompleted] skipped ${skipped} unconfirmed completed delete(s) — left in DB to self-heal (not a user/clear delete)`);
+    }
+    if (idsToDelete.length > 0) {
+      const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', idsToDelete));
+      if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    }
   }
 
   // Handle inserts (new entries) and updates (entries that changed)

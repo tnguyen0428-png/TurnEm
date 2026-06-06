@@ -200,6 +200,28 @@ Deno.serve(async (_req: Request) => {
       completedAt: new Date(row.completed_at as string).getTime(),
     }));
 
+    // MERGE rather than overwrite. daily_history is one row per date; a blind
+    // replace would erase any entries already saved (e.g. via the in-app "Save
+    // Today" button or an earlier run) that aren't in completed_services right
+    // now — a contributor to the 6/5 turn loss. Read the current row, union by
+    // entry id, and let the freshly-archived rows win on conflict (they carry
+    // the latest edits/voids) while never dropping ids that were saved earlier.
+    const { data: existingRow } = await supabase
+      .from("daily_history")
+      .select("entries")
+      .eq("date", todayLA)
+      .maybeSingle();
+    const mergedById = new Map<string, CompletedEntry>();
+    const existingEntries = (existingRow?.entries as CompletedEntry[] | null) ?? [];
+    for (const e of existingEntries) {
+      if (e && (e as { id?: string }).id) mergedById.set((e as { id: string }).id, e);
+    }
+    for (const e of entries) mergedById.set(e.id, e); // fresh archive wins on conflict
+    const mergedEntries = Array.from(mergedById.values());
+    console.log(
+      `[nightly-save-history] Merge: ${existingEntries.length} existing + ${entries.length} fresh → ${mergedEntries.length} total for ${todayLA}`,
+    );
+
     // Upsert one row per date — onConflict matches the UNIQUE(date) constraint.
     // Note: we deliberately do NOT include `id` here. Supabase's upsert UPDATE
     // sets every column in the payload; including a fresh UUID would churn the
@@ -208,7 +230,7 @@ Deno.serve(async (_req: Request) => {
     const { error: upsertError } = await supabase
       .from("daily_history")
       .upsert(
-        { date: todayLA, entries },
+        { date: todayLA, entries: mergedEntries },
         { onConflict: "date" },
       );
 
