@@ -186,8 +186,45 @@ export default function TicketModal({
       if (it.queueEntryId && it.kind === 'service') {
         const visitId = it.queueEntryId.includes('#') ? it.queueEntryId.split('#')[0] : it.queueEntryId;
         const entry = state.completed.find((e) => e.id === visitId);
+        // (1) Per-service request recorded on the completed_services row.
         if (entry?.requestedServices?.includes(it.name as ServiceType)) {
           isRequested = true;
+        }
+        // (2) Whole-entry request flag — the SingleServiceAssign path sets this
+        //     without populating requestedServices per-service. Applies to the
+        //     entry's own manicurist's lines.
+        if (!isRequested && entry?.isRequested && (!it.staff1Id || entry.manicuristId === it.staff1Id)) {
+          isRequested = true;
+        }
+        // (3) Authoritative cross-check against the linked appointment's
+        //     serviceRequests — the SAME source the appt book uses to draw the
+        //     red R. This guarantees "R on the book" == "R on the ticket" even
+        //     if the completed_services request flags were dropped upstream,
+        //     which otherwise makes the save-time turn recompute bake in a
+        //     full (wrong) turn and clear the R. (Per Tony 2026-06-06: Lea's
+        //     Gel Mani request for HANA was lost at the register → wrong turn.)
+        if (!isRequested) {
+          const norm = (s?: string) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+          // Prefer the in-memory appointment-id link (set by COMPLETE_SERVICE
+          // this session); fall back to matching today's appointment by client
+          // name, since the completed_services row loaded from the DB doesn't
+          // carry the link after a reload.
+          const apptId = entry?.originalAppointmentId ?? null;
+          const ticketName = norm(ticket.clientName);
+          const matched = state.appointments.some((a) => {
+            const idHit = apptId != null && a.id === apptId;
+            const nameHit = ticketName.length > 0 && norm(a.clientName) === ticketName;
+            if (!idHit && !nameHit) return false;
+            return (a.serviceRequests || []).some((r) =>
+              r.service === it.name &&
+              r.clientRequest === true &&
+              (r.manicuristIds || []).length > 0 &&
+              // Credit the request only when the staff who served this line is
+              // the one the customer requested — mirrors the completion rule.
+              (!it.staff1Id || (r.manicuristIds || []).includes(it.staff1Id)),
+            );
+          });
+          if (matched) isRequested = true;
         }
       }
       return {
