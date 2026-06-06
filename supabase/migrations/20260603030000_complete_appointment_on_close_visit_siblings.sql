@@ -13,8 +13,13 @@
 --
 -- Fix: on close, also flip same-visit walk-in sibling rows, matched by the
 -- visit root and constrained to the ticket's business_date + still-active
--- statuses (so we never touch a different day's booking for a repeat walk-in,
--- or a cancelled/no-show row).
+-- statuses.
+--
+-- NOTE the date comparison: appointments.date is TEXT (YYYY-MM-DD) while
+-- tickets.business_date is DATE, so business_date MUST be cast with to_char.
+-- An earlier draft compared them directly (text = date), which raised
+-- "operator does not exist: text = date" inside the trigger and rolled back
+-- EVERY ticket close — blocking all payments until hotfixed. Keep the cast.
 CREATE OR REPLACE FUNCTION public.complete_appointment_on_ticket_close()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -31,7 +36,7 @@ BEGIN
         OR (
           NEW.queue_entry_id IS NOT NULL
           AND id LIKE 'walkin:' || NEW.queue_entry_id || '%'
-          AND date = NEW.business_date
+          AND date = to_char(NEW.business_date, 'YYYY-MM-DD')
         )
       );
   END IF;

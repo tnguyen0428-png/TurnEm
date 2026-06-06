@@ -1004,11 +1004,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           !currentApptIds.has(a.id) &&
           !isTombstoned(a.id) &&
           // Protect real bookings: only delete from DB if the user explicitly
-          // deleted it (recorded in the ledger) or it's a walk-in synth block.
-          // A booked appt that merely went missing from state (a sync/realtime
-          // batching race) is left alone and self-heals on the next upsert/
-          // refresh instead of being permanently destroyed.
-          (pendingApptDeletesRef.current.has(a.id) || a.isWalkIn === true),
+          // deleted it (recorded in the ledger) or it's a *synthetic* walk-in
+          // block (id prefixed `walkin:`). A booked appt that merely went
+          // missing from state (a sync/realtime batching race) is left alone
+          // and self-heals on the next upsert/refresh instead of being
+          // permanently destroyed. The `walkin:` prefix guard also protects
+          // real appts that now carry isWalkIn=true while parked after an
+          // appointment assignment (per Tony, 2026-06-06).
+          (pendingApptDeletesRef.current.has(a.id) || (a.isWalkIn === true && a.id.startsWith('walkin:'))),
       );
       // Consume handled intent markers, and drop any whose appt is still present
       // (an explicit delete superseded by a concurrent re-add) so the set can't

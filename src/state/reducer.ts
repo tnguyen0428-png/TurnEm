@@ -252,18 +252,24 @@ function columnHasApptOverlap(
   return false;
 }
 
-function synthWalkInAppt(
+// Shared "walk-in style" placement for a client landing in a manicurist's
+// column. Returns the time slot the block should occupy plus whether it ended
+// up buddy-aligned. Used by both synthWalkInAppt (true walk-ins) AND the
+// appointment-assignment path so an assigned appt drops into the tech's column
+// at the current time and parks at the 8 AM column top when its slot is taken
+// — i.e. it's handled "the way a walk-in is handled" (per Tony, 2026-06-06).
+function pickWalkInStyleTime(
   client: QueueEntry,
   manicuristId: string,
   appts: Appointment[],
   salonServices: ReadonlyArray<{ name: string; duration: number }>,
   manicurists: ReadonlyArray<Manicurist>,
-  now: Date = new Date(),
-): Appointment {
+  now: Date,
+): { time: string; alignedWithBuddy: boolean } {
   const date = getLocalDateStr(now);
   // Floor the search to 08:00 — the salon doesn't open before then and the
   // appt book grid doesn't render slots earlier in the day. Without this,
-  // any walk-in added pre-open (or pre-rounded-08:00) lands at e.g. 06:15
+  // any client added pre-open (or pre-rounded-08:00) lands at e.g. 06:15
   // and is invisible above the book's first visible slot.
   const rounded = roundLATimeToQuarter(now);
   // Non-request walk-ins prefer to align with a "buddy" walk-in placed on
@@ -276,27 +282,42 @@ function synthWalkInAppt(
   const preferred = buddyTime ?? rounded;
   const start = preferred < '08:00' ? '08:00' : preferred;
 
-  // If the walk-in's now-slot would land on top of an existing appointment in
-  // this manicurist's column (a real [start, end) overlap — e.g. a 1:30–2:30
-  // booking when the walk-in is assigned at 2:00), park the block at the 8 AM
+  // If the now-slot would land on top of an existing appointment in this
+  // manicurist's column (a real [start, end) overlap — e.g. a 1:30–2:30
+  // booking when the client is assigned at 2:00), park the block at the 8 AM
   // column top instead of dropping it onto the appointment. The block keeps
-  // isWalkIn=true, so it renders with the flashing "W" badge; when the
+  // its parked flag, so it renders with the flashing "W" badge; when the
   // receptionist drags it to the right slot, executeDrop clears the flag.
   // This replaces the old "walk forward to the next open slot" behavior for
   // the overlap case, which is what caused the walk-in/appointment pile-up.
   const [sH, sM] = start.split(':').map(Number);
   const startMin = sH * 60 + sM;
-  const walkInDur = servicesSpanMins(client.services ?? [], manicuristId, salonServices, manicurists);
+  const dur = servicesSpanMins(client.services ?? [], manicuristId, salonServices, manicurists);
   const overlapsAppt = columnHasApptOverlap(
-    date, manicuristId, startMin, walkInDur, appts, salonServices, manicurists,
+    date, manicuristId, startMin, dur, appts, salonServices, manicurists,
   );
 
   const time = overlapsAppt ? '08:00' : pickNextOpenSlot(date, manicuristId, start, appts);
-  // sameTime flags appointments that are intentionally on the same time row
-  // as another appt (visual stacking instead of "conflict?" warnings). Set
-  // it when the buddy alignment actually landed us on the buddy's row — never
-  // when we've parked at 8 AM to dodge an overlap.
+  // alignedWithBuddy feeds the appt's sameTime flag: intentionally on the same
+  // time row as another appt (visual stacking instead of "conflict?" warnings).
+  // True only when the buddy alignment actually landed us on the buddy's row —
+  // never when we've parked at 8 AM to dodge an overlap.
   const alignedWithBuddy = !overlapsAppt && buddyTime !== null && time === buddyTime;
+  return { time, alignedWithBuddy };
+}
+
+function synthWalkInAppt(
+  client: QueueEntry,
+  manicuristId: string,
+  appts: Appointment[],
+  salonServices: ReadonlyArray<{ name: string; duration: number }>,
+  manicurists: ReadonlyArray<Manicurist>,
+  now: Date = new Date(),
+): Appointment {
+  const date = getLocalDateStr(now);
+  const { time, alignedWithBuddy } = pickWalkInStyleTime(
+    client, manicuristId, appts, salonServices, manicurists, now,
+  );
   return {
     // Stable, deterministic id derived from the queue entry instead of a fresh
     // random uuid. The walk-in block is a *synthesized* placeholder, and several
@@ -582,7 +603,11 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const linkedAppt = linkedApptId
         ? state.appointments.find((a) => a.id === linkedApptId)
         : null;
-      const shouldDeleteAppt = !!(linkedAppt && linkedAppt.isWalkIn);
+      // Only ever delete *synthetic* walk-in blocks (id prefixed `walkin:`).
+      // A real booking can now carry isWalkIn=true while parked after an
+      // appointment assignment (per Tony, 2026-06-06); the id-prefix guard
+      // makes sure that flag can never cause a genuine appt to be destroyed.
+      const shouldDeleteAppt = !!(linkedAppt && linkedAppt.isWalkIn && linkedAppt.id.startsWith('walkin:'));
       // Phantom-pointer prevention: any manicurist whose currentClient was
       // pointing at this entry must be freed up. Without this, removing a
       // queue entry via REMOVE_CLIENT (e.g. TicketModal's add-child sweep
@@ -670,11 +695,35 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const synthAppt = !client.originalAppointment || needsReSynth
         ? synthWalkInAppt(client, action.manicuristId, state.appointments, state.salonServices, state.manicurists)
         : null;
+      // Appointment-assignment placement (per Tony, 2026-06-06): when a
+      // scheduled appt is assigned to a tech, drop its block into that tech's
+      // column "the way a walk-in is handled" — at the current time, parking
+      // at the 8 AM column top if the slot overlaps an existing booking.
+      // We reuse the isWalkIn flag so the block gets the amber "W" parked
+      // treatment and is draggable to confirm placement (executeDrop clears
+      // the flag). This is safe because the destructive delete paths
+      // (REMOVE_CLIENT, CANCEL_SERVICE, AppContext delete-sync) are guarded to
+      // only ever delete *synthetic* walk-ins (id prefixed `walkin:`), so a
+      // real booking carrying isWalkIn=true can never be auto-deleted.
+      const assignedApptPlacement = existingAppt
+        ? pickWalkInStyleTime(
+            client, action.manicuristId, state.appointments,
+            state.salonServices, state.manicurists, new Date(now),
+          )
+        : null;
       const nextAppointments = synthAppt
         ? [...state.appointments, synthAppt]
-        : existingAppt && existingAppt.manicuristId !== action.manicuristId
+        : existingAppt && assignedApptPlacement
           ? state.appointments.map((a) =>
-              a.id === existingAppt.id ? { ...a, manicuristId: action.manicuristId } : a,
+              a.id === existingAppt.id
+                ? {
+                    ...a,
+                    manicuristId: action.manicuristId,
+                    time: assignedApptPlacement.time,
+                    sameTime: assignedApptPlacement.alignedWithBuddy,
+                    isWalkIn: true,
+                  }
+                : a,
             )
           : state.appointments;
       return {
@@ -1014,7 +1063,9 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const cancelApptStill = cancelApptId
         ? state.appointments.find((a) => a.id === cancelApptId)
         : null;
-      const cancelDeleteAppt = !!(cancelApptStill && cancelApptStill.isWalkIn);
+      // Synthetic walk-ins only (see REMOVE_CLIENT). A real appt parked via
+      // assignment keeps its block on cancel instead of being deleted.
+      const cancelDeleteAppt = !!(cancelApptStill && cancelApptStill.isWalkIn && cancelApptStill.id.startsWith('walkin:'));
       return {
         ...state,
         queue: updatedQueue,
