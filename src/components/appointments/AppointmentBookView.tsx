@@ -1681,10 +1681,22 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                     <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-500 text-white font-bold text-[9px]" title="Party group">P</span>
                   )}
                   {appt.isWalkIn && !isCheckedOut && (
-                    <span
-                      className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-pink-500 text-white font-bold text-[9px] animate-pulse ring-2 ring-pink-300"
-                      title="Walk-in (auto-placed — drag to the real slot)"
-                    >W</span>
+                    // True walk-ins (synthetic `walkin:` id) get the pink "W".
+                    // An assigned appointment parked via walk-in-style placement
+                    // carries isWalkIn=true on a real uuid id — show an amber
+                    // "A" badge instead so staff can tell them apart (per Tony,
+                    // 2026-06-06). Both clear when dragged to a real slot.
+                    appt.id.startsWith('walkin:') ? (
+                      <span
+                        className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-pink-500 text-white font-bold text-[9px] animate-pulse ring-2 ring-pink-300"
+                        title="Walk-in (auto-placed — drag to the real slot)"
+                      >W</span>
+                    ) : (
+                      <span
+                        className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-500 text-white font-bold text-[9px] animate-pulse ring-2 ring-amber-300"
+                        title="Assigned appointment (auto-placed — drag to the real slot)"
+                      >A</span>
+                    )
                   )}
                   {appt.notes && appt.notes.trim() && (
                     <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-sky-400 text-white font-bold text-[9px]" title={appt.notes}>N</span>
