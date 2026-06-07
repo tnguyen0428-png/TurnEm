@@ -2314,6 +2314,23 @@ export async function closeTicket(input: CloseTicketInput): Promise<Ticket | nul
   // we still flip the ticket to closed so it leaves the open-tickets list,
   // we just skip the payment-row insert since there's nothing to record.
 
+  // 0. Clear any non-refund payments already on this ticket. A payment can be
+  //    SAVED while the ticket is still open (held/partial — per Tony 2026-06-06);
+  //    without this, the insert in step 1 would DUPLICATE those rows and
+  //    double-count the drawer + sales reports. Refund rows are audit-only and
+  //    preserved. No-ops on the normal path (open ticket with no saved payment).
+  {
+    const { error: clearErr } = await supabase
+      .from('payments')
+      .delete()
+      .eq('ticket_id', input.ticketId)
+      .is('refund_of', null);
+    if (clearErr) {
+      console.error('[tickets] closeTicket pre-clear saved payments:', clearErr.message);
+      return null;
+    }
+  }
+
   // 1. Insert payment rows. Capture the returned ids so we can roll them back
   //    if step 2 fails or matches zero rows — otherwise the payments end up
   //    stranded on a ticket we didn't actually close, and a retry inserts

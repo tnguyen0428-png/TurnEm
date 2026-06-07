@@ -276,7 +276,20 @@ export default function TicketModal({
   const [tipInput, setTipInput] = useState((ticket.tipCents / 100).toFixed(2));
 
   // ─── Payments scratchpad (for processing on close) ────────────────────────
-  const [pending, setPending] = useState<PendingPayment[]>([]);
+  // Seed from any payments already saved on this ticket so a payment SAVED on
+  // an OPEN ticket (held/partial, not yet processed) reloads when the ticket is
+  // reopened instead of vanishing. Refund rows are audit-only and excluded.
+  // (Per Tony 2026-06-06: allow saving a payment on an open ticket.)
+  const [pending, setPending] = useState<PendingPayment[]>(() =>
+    ticket.payments
+      .filter((p) => p.refundOf === null)
+      .map((p) => ({
+        method: p.method,
+        amountInput: (p.amountCents / 100).toFixed(2),
+        tenderedInput: p.tenderedCents != null ? (p.tenderedCents / 100).toFixed(2) : '',
+        giftCardCode: p.giftCardCode ?? '',
+      })),
+  );
 
   // ─── Explicitly-removed item ids ──────────────────────────────────────────
   // Tracks which existing ticket_items the cashier removed via the trash icon
@@ -2388,7 +2401,23 @@ canEdit && (
             {isOpen && (
               <>
                 <span className="w-px h-8 bg-gray-200 mx-1" />
-                <button onClick={() => { void doSave(); }} disabled={busy !== 'idle'}
+                <button onClick={async () => {
+                  // SAVE on an OPEN ticket: persist line items/header AND any
+                  // entered payment (even a partial one), then leave the ticket
+                  // OPEN. PROCESS is still what closes it. The close-shift drawer
+                  // already counts payment rows on open (non-voided) tickets, so a
+                  // saved payment shows as collected right away, and RegisterScreen's
+                  // payments-table subscription refetches so the captured-payments
+                  // panel updates. (Per Tony 2026-06-06.)
+                  const s = await doSave();
+                  if (!s) return;
+                  const payRes = await replaceTicketPayments(ticket.id, pending.map((p) => ({
+                    method: p.method,
+                    amountCents: parseDollarsToCents(p.amountInput),
+                    giftCardCode: p.giftCardCode,
+                  })));
+                  if (!payRes) { setError('Saved items but could not save the payment.'); return; }
+                }} disabled={busy !== 'idle'}
                   className="px-5 py-2.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-sm font-bold disabled:opacity-50">
                   {busy === 'saving' ? 'SAVING…' : 'SAVE'}
                 </button>
