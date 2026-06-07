@@ -939,79 +939,119 @@ export default function TicketModal({
     }
     if (changes.length > 0) {
       void reallocateTurnsForStaffChanges(changes);
-      // Appt book sync: when the cashier reassigns a ticket line's staff,
-      // mirror the change onto the matching serviceRequest in the linked
-      // appointment so the book block follows the cashier's edit. Applies
-      // to BOTH walk-in and scheduled appts — the cashier's choice is
-      // authoritative; the book should reflect what the ticket says.
-      // (Previously this was gated to walk-ins only, which left scheduled
-      // appts stuck on the original staff in the book even after the
-      // ticket moved. 2026-05-31 audit Bug A.)
-      //
-      // Link priority: queue.originalAppointment.id (in-progress entries)
-      // → completed.originalAppointmentId (awaiting-payment after the
-      // service is done). For the matching serviceRequest we prefer one
-      // whose manicuristIds already included the OLD staff (precise on
-      // multi-occurrence services), falling back to the first request
-      // for that service name.
-      for (const c of changes) {
-        if (!c.newStaffId) continue;
-        const queueEntry = state.queue.find((q) => q.id === c.queueEntryId);
-        const completedRow = state.completed.find((cs) => cs.id === c.queueEntryId);
-        const apptId =
-          queueEntry?.originalAppointment?.id ??
-          completedRow?.originalAppointmentId ??
-          null;
-        if (!apptId) continue;
-        const appt = state.appointments.find((a) => a.id === apptId);
-        if (!appt) continue;
-        const reqs = appt.serviceRequests ?? [];
-        // Find the serviceRequest that owns this reassignment. Prefer one
-        // matching service + old staff; otherwise the first match by name.
-        let targetIdx = reqs.findIndex(
-          (r) =>
-            r.service === c.serviceName &&
-            (c.oldStaffId
-              ? (r.manicuristIds ?? []).includes(c.oldStaffId)
-              : (r.manicuristIds ?? []).length === 0),
+    }
+
+    // ── Appt-book sync: mirror the cashier's per-line edits — BOTH a staff
+    // reassignment AND a service rename — onto the linked appointment so the
+    // book shows what was actually done. Accumulated per appointment so several
+    // edits on one appt can't clobber each other, and it runs for staff-only,
+    // name-only, or both. (Per Tony 2026-06-07: a ticket service/manicurist
+    // change must show in the appt book — e.g. Emree's "Polish Change Feet" was
+    // changed to "Gel Polish Feet" but the book kept the old name.)
+    //
+    // Link priority: queue.originalAppointment.id (in-progress) →
+    // completed.originalAppointmentId (awaiting payment, same session) →
+    // client-name match against today's appts (reopened closed ticket, where
+    // the in-memory appt link is gone).
+    {
+      type Appt = typeof state.appointments[number];
+      type SvcReq = Appt['serviceRequests'][number];
+      type Svc = Appt['services'][number];
+      const norm = (s?: string) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+      const resolveApptId = (orig: { queueEntryId: string | null; name: string }): string | null => {
+        const qid = orig.queueEntryId;
+        const queueEntry = qid ? state.queue.find((q) => q.id === qid) : null;
+        const completedRow = qid ? state.completed.find((cs) => cs.id === qid) : null;
+        const direct = queueEntry?.originalAppointment?.id ?? completedRow?.originalAppointmentId ?? null;
+        if (direct) return direct;
+        const tname = norm(ticket.clientName);
+        const hit = state.appointments.find(
+          (a) => norm(a.clientName) === tname && (a.services ?? []).some((s) => norm(s) === norm(orig.name)),
         );
-        if (targetIdx < 0) {
-          targetIdx = reqs.findIndex((r) => r.service === c.serviceName);
+        return hit?.id ?? null;
+      };
+
+      type Working = { services: Svc[]; serviceRequests: SvcReq[]; manicuristId: string | null; touched: boolean };
+      const work = new Map<string, Working>();
+      const getWork = (apptId: string): Working | null => {
+        const existing = work.get(apptId);
+        if (existing) return existing;
+        const appt = state.appointments.find((a) => a.id === apptId);
+        if (!appt) return null;
+        const w: Working = {
+          services: [...(appt.services ?? [])],
+          serviceRequests: (appt.serviceRequests ?? []).map((r) => ({ ...r, manicuristIds: [...(r.manicuristIds ?? [])] })),
+          manicuristId: appt.manicuristId ?? null,
+          touched: false,
+        };
+        work.set(apptId, w);
+        return w;
+      };
+
+      for (const l of lines) {
+        if (l.kind !== 'service' || !l.existingId) continue;
+        const orig = originalStaffByItemId.get(l.existingId);
+        if (!orig) continue;
+        const oldName = orig.name?.trim();
+        const newName = l.name?.trim();
+        const nameChanged = !!oldName && !!newName && oldName !== newName;
+        const staffChanged = orig.staff1Id !== l.staff1Id;
+        if (!nameChanged && !staffChanged) continue;
+        const apptId = resolveApptId(orig);
+        if (!apptId) continue;
+        const w = getWork(apptId);
+        if (!w) continue;
+
+        // services[]: rename the first occurrence of the old service name.
+        if (nameChanged && oldName && newName) {
+          const si = w.services.findIndex((s) => s === oldName);
+          if (si >= 0) w.services[si] = newName as Svc;
+          else if (!w.services.includes(newName as Svc)) w.services.push(newName as Svc);
+          w.touched = true;
         }
-        let newReqs: typeof reqs;
-        if (targetIdx >= 0) {
-          newReqs = reqs.map((r, i) =>
-            i === targetIdx ? { ...r, manicuristIds: [c.newStaffId!] } : r,
-          );
-        } else {
-          // No matching serviceRequest — synth one. This covers walk-in
-          // appointments whose service_requests column was saved empty
-          // (the synth path leaves it []), so the book has nothing to
-          // render per-service and falls back to appt.manicuristId for
-          // every block. Without this branch the cashier's staff change
-          // lands on the ticket but the book stays stuck on the primary
-          // manicurist. (audit 2026-05-31 Bug A v2)
-          newReqs = [
-            ...reqs,
-            {
-              service: c.serviceName as typeof reqs[number]['service'],
-              manicuristIds: [c.newStaffId!],
-              clientRequest: false,
-            },
-          ];
+
+        // serviceRequests[]: update the request that owns this line (matched by
+        // old service + old staff, else by old service name) with the new name
+        // and/or new staff. clientRequest / startTime are preserved.
+        let ri = w.serviceRequests.findIndex(
+          (r) => r.service === oldName && (orig.staff1Id ? (r.manicuristIds ?? []).includes(orig.staff1Id) : true),
+        );
+        if (ri < 0) ri = w.serviceRequests.findIndex((r) => r.service === oldName);
+        if (ri >= 0) {
+          const r = w.serviceRequests[ri];
+          w.serviceRequests[ri] = {
+            ...r,
+            service: (newName || r.service) as Svc,
+            manicuristIds: l.staff1Id ? [l.staff1Id] : (r.manicuristIds ?? []),
+          };
+          w.touched = true;
+        } else if (l.staff1Id && (newName || oldName)) {
+          // No matching request (e.g. walk-in saved with empty service_requests)
+          // — synth one so the book renders this line under the right staff/name.
+          w.serviceRequests.push({
+            service: (newName || oldName) as Svc,
+            manicuristIds: [l.staff1Id],
+            clientRequest: false,
+          } as SvcReq);
+          w.touched = true;
         }
-        const updates: Partial<typeof appt> = { serviceRequests: newReqs };
-        // If the appointment's primary manicurist was the one being
-        // reassigned, follow the change too — keeps the appt's default
-        // column placement in sync with the per-service detail.
-        if (appt.manicuristId && appt.manicuristId === c.oldStaffId) {
-          updates.manicuristId = c.newStaffId;
+
+        // Keep the appt's primary column in sync if it was the reassigned staff.
+        if (staffChanged && l.staff1Id && w.manicuristId === orig.staff1Id) {
+          w.manicuristId = l.staff1Id;
         }
-        dispatch({
-          type: 'UPDATE_APPOINTMENT',
-          id: apptId,
-          updates,
-        });
+      }
+
+      for (const [apptId, w] of work) {
+        if (!w.touched) continue;
+        const updates: Partial<Appt> = {
+          services: w.services,
+          service: (w.services[0] ?? '') as Svc,
+          serviceRequests: w.serviceRequests,
+          manicuristId: w.manicuristId,
+        };
+        dispatch({ type: 'UPDATE_APPOINTMENT', id: apptId, updates });
       }
     }
 
