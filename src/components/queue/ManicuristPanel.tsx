@@ -30,7 +30,33 @@ export default function ManicuristPanel() {
   // dual-role manicurists from the queue.)
   const isDeskOnlyReceptionist = (m: { isReceptionist?: boolean; skills?: string[] }) =>
     !!m.isReceptionist && (m.skills?.length ?? 0) === 0;
-  const clockedIn = state.manicurists.filter((m) => m.clockedIn && !isDeskOnlyReceptionist(m));
+
+  // Defensive reconcile for the manicurist↔queue desync (Hana/Jackie, 2026-06-06):
+  // a manicurist can have an in-progress queue entry assigned to them while their
+  // own row was never flipped to 'busy' (a dropped status/currentClient write).
+  // We derive the in-service state from the queue so a single lost write can't
+  // (a) blank the card or (b) leave a secretly-busy tech sitting in the
+  // available turn-order, where they'd wrongly be offered the next client.
+  // Derived only — no dispatch — so it can't fight a realtime echo. Applied
+  // BEFORE turn ordering below so every downstream consumer sees the fix.
+  const inProgressByMani = new Map<string, typeof state.queue[number]>();
+  for (const c of state.queue) {
+    if (c.status !== 'inProgress' || !c.assignedManicuristId) continue;
+    const existing = inProgressByMani.get(c.assignedManicuristId);
+    // Prefer a real entry over an add-child (`…-add-…`) as the shown client.
+    if (!existing || (/-add-/.test(existing.id) && !/-add-/.test(c.id))) {
+      inProgressByMani.set(c.assignedManicuristId, c);
+    }
+  }
+  const reconcileBusy = (m: typeof state.manicurists[number]): typeof state.manicurists[number] => {
+    if (m.status !== 'available') return m; // never override a real break/busy
+    const qc = inProgressByMani.get(m.id);
+    if (!qc) return m;
+    return { ...m, status: 'busy' as const, currentClient: m.currentClient ?? qc.id };
+  };
+  const clockedIn = state.manicurists
+    .filter((m) => m.clockedIn && !isDeskOnlyReceptionist(m))
+    .map(reconcileBusy);
   const notClockedIn = state.manicurists
     .filter((m) => !m.clockedIn && !isDeskOnlyReceptionist(m))
     .sort((a, b) => a.name.localeCompare(b.name));
