@@ -695,17 +695,21 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const synthAppt = !client.originalAppointment || needsReSynth
         ? synthWalkInAppt(client, action.manicuristId, state.appointments, state.salonServices, state.manicurists)
         : null;
-      // Appointment-assignment placement (per Tony, 2026-06-06): when a
-      // scheduled appt is assigned to a tech, drop its block into that tech's
-      // column "the way a walk-in is handled" — at the current time, parking
-      // at the 8 AM column top if the slot overlaps an existing booking.
-      // We reuse the isWalkIn flag so the block gets the amber "W" parked
-      // treatment and is draggable to confirm placement (executeDrop clears
-      // the flag). This is safe because the destructive delete paths
-      // (REMOVE_CLIENT, CANCEL_SERVICE, AppContext delete-sync) are guarded to
-      // only ever delete *synthetic* walk-ins (id prefixed `walkin:`), so a
-      // real booking carrying isWalkIn=true can never be auto-deleted.
-      const assignedApptPlacement = existingAppt
+      // Appointment-assignment placement (per Tony, 2026-06-08): placement on
+      // assignment depends on whether the appt is a customer REQUEST.
+      //   • Request (client.isRequested) → the client booked this tech at this
+      //     time, so the block STAYS in its booked slot. We leave the appt row
+      //     untouched (original time + column). No walk-in placement, no "W".
+      //   • Non-request → handled "the way a walk-in is handled": drop the
+      //     block into the ASSIGNED tech's column at the current time, parking
+      //     at that tech's 8 AM column top if the slot overlaps an existing
+      //     booking. We reuse the isWalkIn flag so the block gets the amber "W"
+      //     parked treatment and is draggable to confirm placement (executeDrop
+      //     clears the flag). Safe because the destructive delete paths
+      //     (REMOVE_CLIENT, CANCEL_SERVICE, AppContext delete-sync) only ever
+      //     delete *synthetic* walk-ins (id prefixed `walkin:`), so a real
+      //     booking carrying isWalkIn=true can never be auto-deleted.
+      const assignedApptPlacement = existingAppt && !client.isRequested
         ? pickWalkInStyleTime(
             client, action.manicuristId, state.appointments,
             state.salonServices, state.manicurists, new Date(now),
@@ -725,6 +729,8 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                   }
                 : a,
             )
+          // Request appt (assignedApptPlacement === null) → leave the book
+          // exactly as booked. Also the fall-through when there is no appt.
           : state.appointments;
       return {
         ...state,
