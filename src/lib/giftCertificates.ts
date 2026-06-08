@@ -186,6 +186,10 @@ export interface GiftCardBalance {
   originalCents: number;
   usedCents: number;
   balanceCents: number;
+  /** True when the lookup could NOT complete (DB/network error) — distinct
+   *  from a genuine "not in the system" (found=false, lookupError falsy). The
+   *  redemption guard blocks on BOTH but with different messaging. */
+  lookupError?: boolean;
 }
 
 export async function lookupGiftCardBalance(
@@ -206,7 +210,7 @@ export async function lookupGiftCardBalance(
     .or(`name.ilike.%#${norm},name.ilike.%#${padded}`);
   if (saleErr) {
     console.warn('[giftCertificates] lookupGiftCardBalance sale fetch:', saleErr.message);
-    return empty;
+    return { ...empty, lookupError: true };
   }
   // Filter to the row whose serial actually matches (the ILIKE above may have
   // false positives on long-tailed similar serials, e.g. searching #42 also
@@ -240,7 +244,10 @@ export async function lookupGiftCardBalance(
   const { data: redemptionRows, error: redErr } = await q;
   if (redErr) {
     console.warn('[giftCertificates] lookupGiftCardBalance redemptions fetch:', redErr.message);
-    return { found: true, originalCents, usedCents: 0, balanceCents: originalCents };
+    // Couldn't load prior redemptions — don't optimistically report the full
+    // value as available (that could green-light an over-redemption). Flag the
+    // error so the guard blocks until the balance can actually be verified.
+    return { found: true, originalCents, usedCents: 0, balanceCents: originalCents, lookupError: true };
   }
   const usedCents = (redemptionRows ?? [])
     .filter((r) => normalizeSerial((r as { gift_card_code: string | null }).gift_card_code) === norm)

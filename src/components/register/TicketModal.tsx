@@ -854,7 +854,13 @@ export default function TicketModal({
     }
     for (const [norm, g] of bySerial) {
       const bal = await lookupGiftCardBalance(norm, ticket.id);
-      if (bal.found && g.amountCents > bal.balanceCents) {
+      if (bal.lookupError) {
+        return `Couldn't verify gift cert #${g.label} — check the connection and try again.`;
+      }
+      if (!bal.found) {
+        return `Gift cert #${g.label} isn't in the system — double-check the number. Only gift certs sold here can be redeemed.`;
+      }
+      if (g.amountCents > bal.balanceCents) {
         return `Gift cert #${g.label} only has ${formatMoneyCents(bal.balanceCents)} left — you applied ${formatMoneyCents(g.amountCents)}. Lower it and put the remainder on another tender.`;
       }
     }
