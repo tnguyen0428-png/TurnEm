@@ -21,26 +21,6 @@ export function clientHasAnyWaxService(services: ServiceType[], salonServices: S
   return services.some((s) => waxNames.has(s));
 }
 
-export function isSam(m: Manicurist): boolean {
-  return m.name.toLowerCase() === 'sam';
-}
-
-export function findSamIfActive(manicurists: Manicurist[]): Manicurist | null {
-  return manicurists.find(m => isSam(m) && m.clockedIn) ?? null;
-}
-
-export function getSamPreferenceForServices(
-  manicurists: Manicurist[],
-  services: ServiceType[],
-  salonServices: SalonService[]
-): Manicurist | null {
-  const sam = findSamIfActive(manicurists);
-  if (!sam) return null;
-  const hasAcrylic = services.some(s => isAcrylicService(s, salonServices));
-  const samHasAcrylicSkill = services.some(s => isAcrylicService(s, salonServices) && sam.skills.includes(s));
-  return hasAcrylic && samHasAcrylicSkill ? sam : null;
-}
-
 export function waxRotationCompare(a: Manicurist, b: Manicurist): number {
   const aW = a.hasWax ? 1 : 0;
   const bW = b.hasWax ? 1 : 0;

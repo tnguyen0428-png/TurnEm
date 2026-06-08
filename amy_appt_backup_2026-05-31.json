@@ -1,0 +1,22 @@
+{
+  "note": "Backup of Amy's appointment row BEFORE phantom-block cleanup on 2026-05-31. To revert, restore services + service_requests to these values.",
+  "id": "aeaaa8f1-d5d2-4933-bc90-60c843d9396b",
+  "client_name": "Amy",
+  "date": "2026-05-31",
+  "time": "15:30",
+  "status": "checked-in",
+  "last_edited_at": "2026-05-31 22:56:09.28+00",
+  "services": ["Pedicure","Gel Manicure","Gel Manicure","Kid's Gel Pedi","Kid's Gel Pedi","Kid's Gel Mani","Kid's Gel Pedi","Kid's Gel Mani","Kid's Gel Mani","Gel Pedicure"],
+  "service_requests": [
+    {"service":"Pedicure","startTime":"15:30","clientRequest":false,"manicuristIds":["mani-2"]},
+    {"service":"Gel Manicure","startTime":"16:15","clientRequest":false,"manicuristIds":["mani-7"]},
+    {"service":"Gel Manicure","startTime":"16:15","clientRequest":false,"manicuristIds":["mani-7"]},
+    {"service":"Kid's Gel Pedi","startTime":"16:15","clientRequest":false,"manicuristIds":["mani-16"]},
+    {"service":"Kid's Gel Pedi","startTime":"15:15","clientRequest":false,"manicuristIds":["mani-16"]},
+    {"service":"Kid's Gel Mani","startTime":"16:00","clientRequest":false,"manicuristIds":["mani-12"]},
+    {"service":"Kid's Gel Pedi","startTime":"16:00","clientRequest":false,"manicuristIds":["mani-16"]},
+    {"service":"Kid's Gel Mani","startTime":"16:00","clientRequest":false,"manicuristIds":["mani-18"]},
+    {"service":"Kid's Gel Mani","startTime":"16:00","clientRequest":false,"manicuristIds":["mani-8"]},
+    {"service":"Gel Pedicure","startTime":"16:30","clientRequest":false,"manicuristIds":["mani-18"]}
+  ]
+}

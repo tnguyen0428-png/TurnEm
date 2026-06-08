@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { Clock, MessageSquare, Check, Timer } from 'lucide-react';
-import { useCountdown } from '../../hooks/useCountdown';
 import Modal from '../shared/Modal';
 import Badge from '../shared/Badge';
 import CountdownBadge from '../shared/CountdownBadge';
@@ -12,7 +11,6 @@ import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import type { QueueEntry, ServiceType, Manicurist } from '../../types';
-import { isAcrylicService, getSamPreferenceForServices, findSamIfActive, isSam } from '../../utils/salonRules';
 import {
   getClientDurationMs,
   formatServiceList,
@@ -48,32 +46,6 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
   });
 
   const [showConfirm, setShowConfirm] = useState(false);
-  const [dismissedSamPrompt, setDismissedSamPrompt] = useState(false);
-
-  const sam = getSamPreferenceForServices(state.manicurists, client.services, state.salonServices);
-  // Suppress Sam prompt if all acrylic rows already have an explicit manicurist request
-  const acrylicRowsWithoutRequest = serviceRows.filter(
-    row => isAcrylicService(row.service, state.salonServices) && !row.requestedId
-  );
-  const showSamPrompt = !!sam && sam.status === 'busy' && !dismissedSamPrompt && acrylicRowsWithoutRequest.length > 0;
-  const samCurrentClient = sam ? state.queue.find(c => c.id === sam.currentClient) ?? null : null;
-  const samDurationMs = sam ? getClientDurationMs(sam, state.queue, state.salonServices) : 0;
-  const { display: samCountdownDisplay } = useCountdown(samCurrentClient?.startedAt ?? null, samDurationMs);
-
-  function handleWaitForSam() {
-    if (!sam) return;
-    setAssignments((prev) => {
-      const updated = { ...prev };
-      for (const row of serviceRows) {
-        if (isAcrylicService(row.service, state.salonServices)) {
-          updated[row.uniqueKey] = sam.id;
-          setCollapsedRows((c) => new Set([...c, row.uniqueKey]));
-        }
-      }
-      return updated;
-    });
-    setDismissedSamPrompt(true);
-  }
 
   const assignedManicuristIds = useMemo(() => {
     const ids = new Set<string>();
@@ -85,7 +57,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
   const allAssigned = Object.values(assignments).every((id) => id !== null);
 
-  function getEligibleForRow(service: ServiceType, rowKey: string): (Manicurist & { _takenByOther: boolean; _isSuggested: boolean; _isSamPreferred: boolean; _isExplicitlyRequested: boolean; _isBusySam: boolean; _almostDone: boolean })[] {
+  function getEligibleForRow(service: ServiceType, rowKey: string): (Manicurist & { _takenByOther: boolean; _isSuggested: boolean; _isExplicitlyRequested: boolean; _almostDone: boolean })[] {
     const skilled = getEligibleForService(service, state.manicurists, state.salonServices, state.queue);
     const takenByOtherIds = new Set(
       Object.entries(assignments)
@@ -99,18 +71,11 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     const rowData = serviceRows.find(r => r.uniqueKey === rowKey);
     const explicitlyRequestedId = rowData?.requestedId ?? null;
 
-    const rowIsAcrylic = isAcrylicService(service, state.salonServices);
-    const samCandidate = rowIsAcrylic && !explicitlyRequestedId
-      ? findSamIfActive(state.manicurists)
-      : null;
-    const samForRow = samCandidate?.skills.includes(service) ? samCandidate : null;
-
-    const preferredId = explicitlyRequestedId ?? samForRow?.id ?? null;
-    const preferredManicurist = preferredId
-      ? state.manicurists.find(m => m.id === preferredId && m.clockedIn) ?? null
+    const preferredManicurist = explicitlyRequestedId
+      ? state.manicurists.find(m => m.id === explicitlyRequestedId && m.clockedIn) ?? null
       : null;
 
-    // If the preferred manicurist is already assigned to another row for this client,
+    // If the requested manicurist is already assigned to another row for this client,
     // don't highlight them as preferred — treat them like a normal staff member.
     const preferredTakenByOther = preferredManicurist
       ? assignedManicuristIds.has(preferredManicurist.id) && assignments[rowKey] !== preferredManicurist.id
@@ -123,9 +88,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         ...m,
         _takenByOther: assignedManicuristIds.has(m.id) && assignments[rowKey] !== m.id,
         _isSuggested: suggested?.id === m.id,
-        _isSamPreferred: false,
         _isExplicitlyRequested: false,
-        _isBusySam: false,
         _almostDone: ('_almostDone' in m && !!(m as { _almostDone?: boolean })._almostDone),
       }));
 
@@ -135,16 +98,12 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       ...effectivePreferred,
       _takenByOther: false,
       _isSuggested: false,
-      _isSamPreferred: !explicitlyRequestedId,
-      _isExplicitlyRequested: !!explicitlyRequestedId,
-      _isBusySam: effectivePreferred.status === 'busy',
+      _isExplicitlyRequested: true,
       _almostDone: false,
     };
 
-    // When a specific manicurist is explicitly requested, show only that person
-    if (explicitlyRequestedId) return [preferredRow];
-
-    return [preferredRow, ...baseRows];
+    // A specific manicurist is explicitly requested — show only that person
+    return [preferredRow];
   }
 
   function handlePickManicurist(rowKey: string, manicuristId: string) {
@@ -399,49 +358,13 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
           );
         })()}
 
-        {showSamPrompt && (() => {
-          const samRequested = sam && (client.serviceRequests || []).some(
-            (r) => r.manicuristIds && r.manicuristIds.includes(sam.id)
-          );
-          return (
-          <div className={`mb-4 p-4 rounded-2xl border-2 border-dashed ${samRequested ? 'border-pink-300 bg-pink-50' : 'border-indigo-300 bg-indigo-50'}`}>
-            <div className="flex items-center gap-2 mb-2">
-              {samRequested
-                ? <Badge label="REQUESTED" variant="pink" />
-                : <Badge label="PREFERRED" variant="indigo" />}
-              <span className={`font-mono text-xs font-semibold ${samRequested ? 'text-pink-800' : 'text-indigo-800'}`}>Sam is currently busy</span>
-            </div>
-            <p className={`font-mono text-xs ${samRequested ? 'text-pink-700' : 'text-indigo-700'} mb-4`}>
-              Sam has{' '}
-              <span className="font-bold tabular-nums">{samCountdownDisplay || '…'}</span>{' '}
-              remaining on his current client. Wait for Sam, or assign{' '}
-              <span className="font-bold">{client.clientName}</span> to someone else?
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={handleWaitForSam}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl ${samRequested ? 'bg-pink-500 hover:bg-pink-600' : 'bg-indigo-500 hover:bg-indigo-600'} text-white font-mono text-xs font-semibold active:scale-[0.98] transition-all`}
-              >
-                <Timer size={13} />
-                WAIT FOR SAM
-              </button>
-              <button
-                onClick={() => setDismissedSamPrompt(true)}
-                className="flex-1 py-2 rounded-xl bg-white border border-gray-200 text-gray-600 font-mono text-xs font-semibold hover:bg-gray-50 active:scale-[0.98] transition-all"
-              >
-                Assign Someone Else
-              </button>
-            </div>
-          </div>
-          ); })()}
-
         {(() => {
           const deferredItems = serviceRows
             .filter(row => {
               const reqId = (client.serviceRequests || []).find(r => r.service === row.service)?.manicuristIds?.[0];
               if (!reqId) return false;
               const m = state.manicurists.find(x => x.id === reqId);
-              return !!m && m.status === 'busy' && !isSam(m);
+              return !!m && m.status === 'busy';
             })
             .map(row => {
               const reqId = (client.serviceRequests || []).find(r => r.service === row.service)!.manicuristIds[0];
@@ -467,7 +390,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
           );
         })()}
 
-        <div className={`space-y-4 mb-5 ${showSamPrompt ? 'opacity-50 pointer-events-none' : ''}`}>
+        <div className="space-y-4 mb-5">
           {serviceRows.map((row) => {
             const key = row.uniqueKey;
             const selectedId = assignments[key];
@@ -523,9 +446,8 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                     {eligible.map((m, idx) => {
                       const isSelected = selectedId === m.id;
                       const isRequested = requestedId === m.id;
-                      const isBusySam = m._isBusySam;
-                      const isAlmostDone = !isBusySam && m._almostDone;
-                      const isBusy = isBusySam || isAlmostDone;
+                      const isAlmostDone = m._almostDone;
+                      const isBusy = isAlmostDone;
                       const busyDurationMs = isBusy
                         ? getClientDurationMs(m, state.queue, state.salonServices)
                         : 0;
@@ -536,14 +458,9 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                       return (
                         <div key={m.id}>
                           <div
-                            onClick={() => !m._takenByOther && !isAlmostDone && !isBusySam && handlePickManicurist(key, m.id)}
-                            style={isBusySam ? { opacity: 0.85 } : undefined}
+                            onClick={() => !m._takenByOther && !isAlmostDone && handlePickManicurist(key, m.id)}
                             className={`w-full text-left p-3 rounded-xl border-2 transition-all duration-200 ${
-                              isBusySam && isSelected
-                                ? 'border-amber-300 bg-amber-50/50 shadow-sm'
-                                : isBusySam
-                                ? 'border-indigo-200 bg-indigo-50/30'
-                                : isAlmostDone
+                              isAlmostDone
                                 ? 'border-amber-200 bg-amber-50/30'
                                 : m._takenByOther
                                 ? 'opacity-40 cursor-not-allowed border-gray-100 bg-gray-50'
@@ -551,8 +468,6 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                   ? 'cursor-pointer border-emerald-300 bg-emerald-50/50 shadow-sm'
                                   : m._isExplicitlyRequested
                                     ? 'cursor-pointer border-pink-200 bg-pink-50/30 hover:border-pink-300 hover:shadow-md'
-                                    : m._isSamPreferred
-                                    ? 'cursor-pointer border-indigo-300 bg-indigo-50/50 hover:border-indigo-400 hover:shadow-md'
                                     : isRequested
                                       ? 'cursor-pointer border-pink-200 bg-pink-50/30 hover:border-pink-300 hover:shadow-md'
                                       : m._isSuggested
@@ -568,10 +483,9 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                 <ServiceHistory m={m} />
                                 {isSelected && <Check size={14} className="text-emerald-500" />}
                                 {!isAlmostDone && m._isExplicitlyRequested && <Badge label="REQUESTED" variant="pink" />}
-                                {!isAlmostDone && m._isSamPreferred && !m._isExplicitlyRequested && <Badge label="PREFERRED" variant="indigo" />}
-                                {!isAlmostDone && !m._isSamPreferred && !m._isExplicitlyRequested && isRequested && <Badge label="REQUESTED" variant="pink" />}
-                                {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && rowIs4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
-                                {!isAlmostDone && !m._isSamPreferred && m._isSuggested && !isRequested && !rowIs4thSpecial && !requestedId && <Badge label="RECOMMENDED" variant="green" />}
+                                {!isAlmostDone && !m._isExplicitlyRequested && isRequested && <Badge label="REQUESTED" variant="pink" />}
+                                {!isAlmostDone && m._isSuggested && !isRequested && rowIs4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
+                                {!isAlmostDone && m._isSuggested && !isRequested && !rowIs4thSpecial && !requestedId && <Badge label="RECOMMENDED" variant="green" />}
                                 {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
                                 {(() => {
                                   const apptIn = getMinsToNextAppt(m.id, state.appointments, false, state.queue, state.completed);

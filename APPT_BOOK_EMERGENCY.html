@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TurnEm — Emergency Appt Book</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0; padding: 16px; background: #ffffff; color: #111;
+}
+h1 { font-size: 20px; margin: 0 0 4px; }
+.sub { color: #555; font-size: 13px; margin-bottom: 12px; }
+.controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.controls input[type=date], .controls button {
+  font-size: 14px; padding: 8px 12px; border: 1px solid #cdcdcd; border-radius: 6px; background: #fff;
+}
+.controls button { cursor: pointer; background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 600; }
+.controls button:hover { background: #1d4ed8; }
+.count-pill { background: #eef2ff; color: #3730a3; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+.error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; }
+.loading { color: #666; font-size: 13px; margin: 12px 0; }
+.staff-section { margin-bottom: 18px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.staff-header { background: #f3f4f6; padding: 10px 14px; font-weight: 700; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
+.appt-row { display: grid; grid-template-columns: 80px 1fr 140px 110px; gap: 10px; padding: 10px 14px; border-top: 1px solid #f1f1f1; font-size: 14px; align-items: center; }
+.appt-row:nth-child(even) { background: #fafafa; }
+.appt-time { font-weight: 700; color: #1e3a8a; font-size: 15px; }
+.appt-client { font-weight: 600; }
+.appt-service { color: #555; font-size: 12px; margin-top: 2px; }
+.appt-phone { color: #666; font-size: 13px; font-variant-numeric: tabular-nums; }
+.status { font-size: 11px; padding: 3px 10px; border-radius: 999px; text-transform: uppercase; font-weight: 700; text-align: center; }
+.status-scheduled { background: #dbeafe; color: #1e40af; }
+.status-checked-in { background: #fef3c7; color: #92400e; }
+.status-completed { background: #d1fae5; color: #065f46; }
+.status-cancelled { background: #fee2e2; color: #991b1b; text-decoration: line-through; }
+.status-other { background: #e5e7eb; color: #374151; }
+.note { font-style: italic; color: #6b7280; font-size: 12px; margin-top: 2px; }
+.empty { padding: 30px; text-align: center; color: #666; }
+.auto-refresh { color: #16a34a; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>TurnEm — Emergency Appointment Book (Read-Only)</h1>
+<div class="sub">Live data from Supabase. Auto-refreshes every 30 seconds. Use this while the main app is down.</div>
+
+<div class="controls">
+  <label>Date: <input type="date" id="dateInput"></label>
+  <button id="reloadBtn">Reload Now</button>
+  <span class="count-pill" id="countPill">— appts</span>
+  <span class="auto-refresh" id="autoStatus"></span>
+</div>
+
+<div id="error" class="error" style="display:none"></div>
+<div id="loading" class="loading">Loading...</div>
+<div id="content"></div>
+
+<script>
+const SUPABASE_URL = "https://cpgiqgyfoqlczpvbwfic.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNwZ2lxZ3lmb3FsY3pwdmJ3ZmljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzODAzOTYsImV4cCI6MjA4OTk1NjM5Nn0.kr-ouYtUr0gl_FxO0vT0wNNJvTSfpv4ON1s9O1rqH-s";
+
+function todayLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+const dateInput = document.getElementById('dateInput');
+const reloadBtn = document.getElementById('reloadBtn');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+const contentEl = document.getElementById('content');
+const countPill = document.getElementById('countPill');
+const autoStatusEl = document.getElementById('autoStatus');
+
+dateInput.value = localStorage.getItem('apptbook_date') || todayLocal();
+
+async function sbFetch(path) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Accept': 'application/json'
+    }
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return await res.json();
+}
+
+let staffMap = {};
+
+async function loadStaff() {
+  const rows = await sbFetch('manicurists?select=id,name,sort_order');
+  staffMap = {};
+  for (const r of rows) staffMap[r.id] = r;
+}
+
+async function load() {
+  errorEl.style.display = 'none';
+  loadingEl.style.display = 'block';
+  const date = dateInput.value;
+  localStorage.setItem('apptbook_date', date);
+
+  try {
+    if (Object.keys(staffMap).length === 0) await loadStaff();
+    const appts = await sbFetch(`appointments?select=*&date=eq.${date}`);
+    loadingEl.style.display = 'none';
+    render(appts, date);
+  } catch (e) {
+    loadingEl.style.display = 'none';
+    errorEl.style.display = 'block';
+    errorEl.textContent = 'Failed to load: ' + (e.message || e) + ' — check internet connection.';
+  }
+}
+
+function fmtTime(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':');
+  const hh = parseInt(h, 10);
+  const ampm = hh >= 12 ? 'pm' : 'am';
+  return `${hh % 12 || 12}:${m}${ampm}`;
+}
+
+function fmtPhone(p) {
+  if (!p) return '';
+  const d = String(p).replace(/\D/g, '');
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  if (d.length === 11 && d[0] === '1') return `(${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+  return p;
+}
+
+function svcName(a) {
+  if (Array.isArray(a.services) && a.services.length) {
+    return a.services.map(s => (typeof s === 'string' ? s : (s.name || s.service || ''))).filter(Boolean).join(', ');
+  }
+  return a.service || '';
+}
+
+function statusClass(s) {
+  s = (s || '').toLowerCase();
+  if (s === 'scheduled') return 'status-scheduled';
+  if (s === 'checked-in' || s === 'checked_in') return 'status-checked-in';
+  if (s === 'completed') return 'status-completed';
+  if (s === 'cancelled' || s === 'canceled') return 'status-cancelled';
+  return 'status-other';
+}
+
+function render(rows, date) {
+  countPill.textContent = `${rows.length} appts — loaded ${new Date().toLocaleTimeString()}`;
+
+  if (rows.length === 0) {
+    contentEl.innerHTML = `<div class="empty">No appointments found for ${date}.</div>`;
+    return;
+  }
+
+  const byStaff = {};
+  for (const r of rows) {
+    const s = staffMap[r.manicurist_id];
+    const key = s ? s.name : '(Unassigned)';
+    if (!byStaff[key]) byStaff[key] = { sort: s ? (s.sort_order ?? 999) : 9999, appts: [] };
+    byStaff[key].appts.push(r);
+  }
+
+  const sortedStaff = Object.keys(byStaff).sort((a, b) => {
+    if (byStaff[a].sort !== byStaff[b].sort) return byStaff[a].sort - byStaff[b].sort;
+    return a.localeCompare(b);
+  });
+
+  let html = '';
+  for (const staff of sortedStaff) {
+    const appts = byStaff[staff].appts.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    html += `<div class="staff-section">
+      <div class="staff-header"><span>${escapeHtml(staff)}</span><span>${appts.length} appt${appts.length === 1 ? '' : 's'}</span></div>`;
+    for (const a of appts) {
+      const noteHtml = a.notes ? `<div class="note">${escapeHtml(a.notes)}</div>` : '';
+      const cautionFlag = a.caution ? ' ⚠️' : '';
+      const walkIn = a.is_walk_in ? ' [WALK-IN]' : '';
+      html += `<div class="appt-row">
+        <div class="appt-time">${fmtTime(a.time)}</div>
+        <div>
+          <div class="appt-client">${escapeHtml(a.client_name || '(no name)')}${cautionFlag}${walkIn}</div>
+          <div class="appt-service">${escapeHtml(svcName(a))}</div>
+          ${noteHtml}
+        </div>
+        <div class="appt-phone">${escapeHtml(fmtPhone(a.client_phone))}</div>
+        <div class="status ${statusClass(a.status)}">${escapeHtml(a.status || '')}</div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+  contentEl.innerHTML = html;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+dateInput.addEventListener('change', load);
+reloadBtn.addEventListener('click', load);
+
+let countdown = 30;
+setInterval(() => {
+  countdown--;
+  autoStatusEl.textContent = `auto-refresh in ${countdown}s`;
+  if (countdown <= 0) { countdown = 30; load(); }
+}, 1000);
+
+load();
+</script>
+</body>
+</html>
