@@ -149,6 +149,11 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     originalAdjustment: number;
     /** Current draft durationAdjustment the +/- buttons mutate. */
     draftAdjustment: number;
+    /** The manicurist column the nudged block is rendered in. Used when the
+     *  block has no explicit ServiceRequest yet so the synthesized entry keeps
+     *  the block in THIS column instead of orphaning it (empty manicuristIds =
+     *  "unassigned" → the renderer hides it). */
+    colManicuristId: string | null;
     rect: { top: number; left: number; width: number; height: number };
   } | null>(null);
   // dblclick fires AFTER click on the same target — we hold the click for a
@@ -176,10 +181,14 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     const appt = state.appointments.find((a) => a.id === p.apptId);
     if (!appt) return;
     const existing = appt.serviceRequests ?? [];
-    // Find the specific ServiceRequest entry by (service, occurrence). If
-    // none exists, we synthesize one — manicuristIds=[] keeps the implicit
-    // routing intact (the renderer falls back to appt.manicuristId for
-    // entries with empty manicuristIds), so we change ONLY duration.
+    // Find the specific ServiceRequest entry by (service, occurrence). If none
+    // exists, we synthesize one. IMPORTANT: it must carry the block's current
+    // column manicurist, NOT empty manicuristIds — the renderer treats an
+    // explicit empty-manicuristIds entry as "unassigned" and HIDES the block
+    // (it does NOT fall back to appt.manicuristId for empty entries; that
+    // fallback only applies when there's no ServiceRequest at all). Pushing
+    // [] here is what made a shortened service vanish from the book.
+    // (Per Tony 2026-06-07 — same orphan class as the modal fix b0f5920.)
     let matchedCount = 0;
     let touched = false;
     const nextRequests = existing.map((r) => {
@@ -199,11 +208,13 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     });
     if (!touched) {
       // No matching ServiceRequest existed for this (service, occurrence).
-      // Insert one. clientRequest is intentionally left undefined so we
-      // don't false-flag this as a customer-requested manicurist.
+      // Insert one carrying the block's CURRENT column manicurist so it keeps
+      // rendering in place (empty manicuristIds would hide it). clientRequest
+      // is intentionally left undefined so we don't false-flag this as a
+      // customer-requested manicurist or change the turn value.
       nextRequests.push({
         service: p.serviceName as ServiceType,
-        manicuristIds: [],
+        manicuristIds: p.colManicuristId ? [p.colManicuristId] : [],
         durationAdjustment: p.draftAdjustment === 0 ? undefined : p.draftAdjustment,
       });
     }
@@ -1567,6 +1578,7 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                     baseDuration: baseDur,
                     originalAdjustment: matched?.durationAdjustment ?? 0,
                     draftAdjustment: matched?.durationAdjustment ?? 0,
+                    colManicuristId,
                     rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
                   });
                 }, 220);
