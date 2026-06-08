@@ -256,3 +256,94 @@ export async function lookupGiftCardBalance(
   const balanceCents = Math.max(0, originalCents - usedCents);
   return { found: true, originalCents, usedCents, balanceCents };
 }
+
+// ── full detail for the redemption dialog ────────────────────────────────────
+//
+// Like lookupGiftCardBalance but also returns the purchase date/buyer and the
+// list of prior redemptions (date, amount, ticket #) so the redeem dialog can
+// show the cashier the cert's full history before they apply an amount.
+export interface GiftCardRedemption {
+  date: string | null;          // YYYY-MM-DD business date
+  amountCents: number;
+  ticketNumber: number | null;
+}
+export interface GiftCardDetail {
+  found: boolean;
+  lookupError?: boolean;
+  originalCents: number;
+  purchaseDate: string | null;          // YYYY-MM-DD business date
+  purchaseClientName: string | null;
+  usedCents: number;
+  balanceCents: number;
+  redemptions: GiftCardRedemption[];
+}
+
+export async function lookupGiftCardDetail(
+  rawSerial: string,
+  excludeTicketId?: string | null,
+): Promise<GiftCardDetail> {
+  const norm = normalizeSerial(rawSerial);
+  const empty: GiftCardDetail = {
+    found: false, originalCents: 0, purchaseDate: null, purchaseClientName: null,
+    usedCents: 0, balanceCents: 0, redemptions: [],
+  };
+  if (!norm) return empty;
+  const padded = norm.padStart(5, '0');
+
+  const { data: saleRows, error: saleErr } = await supabase
+    .from('ticket_items')
+    .select('id, name, ext_price_cents, tickets(status, business_date, client_name, opened_at)')
+    .eq('kind', 'gift_card_sale')
+    .or(`name.ilike.%#${norm},name.ilike.%#${padded}`);
+  if (saleErr) {
+    console.warn('[giftCertificates] lookupGiftCardDetail sale fetch:', saleErr.message);
+    return { ...empty, lookupError: true };
+  }
+  type SaleTk = { status?: string; business_date?: string; client_name?: string; opened_at?: string };
+  const matchingSales = (saleRows ?? []).filter((r) => {
+    const row = r as { name?: string; tickets?: SaleTk | SaleTk[] | null };
+    const tk = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
+    if (tk?.status === 'voided') return false;
+    const { norm: rNorm } = serialFromLineName(row.name ?? '');
+    return rNorm === norm;
+  });
+  if (matchingSales.length === 0) return empty;
+
+  const originalCents = matchingSales.reduce(
+    (s, r) => s + Number((r as { ext_price_cents: number | string }).ext_price_cents || 0), 0,
+  );
+  let purchaseDate: string | null = null;
+  let purchaseClientName: string | null = null;
+  let earliest = Infinity;
+  for (const r of matchingSales) {
+    const row = r as { tickets?: SaleTk | SaleTk[] | null };
+    const tk = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
+    if (!tk) continue;
+    const t = tk.opened_at ? new Date(tk.opened_at).getTime() : Infinity;
+    if (t < earliest) { earliest = t; purchaseDate = tk.business_date ?? null; purchaseClientName = tk.client_name ?? null; }
+  }
+
+  let q = supabase
+    .from('payments')
+    .select('amount_cents, gift_card_code, ticket_id, captured_at, tickets(business_date, ticket_number)')
+    .eq('method', 'gift')
+    .or(`gift_card_code.ilike.%${norm},gift_card_code.ilike.%${padded}`);
+  if (excludeTicketId) q = q.neq('ticket_id', excludeTicketId);
+  const { data: redRows, error: redErr } = await q;
+  if (redErr) {
+    console.warn('[giftCertificates] lookupGiftCardDetail redemptions fetch:', redErr.message);
+    return { found: true, originalCents, purchaseDate, purchaseClientName, usedCents: 0, balanceCents: originalCents, redemptions: [], lookupError: true };
+  }
+  type RedTk = { business_date?: string; ticket_number?: number };
+  const redemptions: GiftCardRedemption[] = (redRows ?? [])
+    .filter((r) => normalizeSerial((r as { gift_card_code: string | null }).gift_card_code) === norm)
+    .map((r) => {
+      const row = r as { amount_cents: number | string; tickets?: RedTk | RedTk[] | null };
+      const tk = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
+      return { date: tk?.business_date ?? null, amountCents: Number(row.amount_cents || 0), ticketNumber: tk?.ticket_number ?? null };
+    })
+    .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+  const usedCents = redemptions.reduce((s, r) => s + r.amountCents, 0);
+  const balanceCents = Math.max(0, originalCents - usedCents);
+  return { found: true, originalCents, purchaseDate, purchaseClientName, usedCents, balanceCents, redemptions };
+}

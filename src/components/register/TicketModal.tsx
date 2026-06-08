@@ -38,6 +38,7 @@ import {
 } from '../../lib/tickets';
 import { fetchOpenShift } from '../../lib/shifts';
 import GiftCardSaleModal from './GiftCardSaleModal';
+import GiftRedeemModal from './GiftRedeemModal';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { supabase } from '../../lib/supabase';
@@ -718,6 +719,10 @@ export default function TicketModal({
 
   const [dbMaxSerial, setDbMaxSerial] = useState<number | null>(null);
   const [giftModalSerial, setGiftModalSerial] = useState<string | null>(null);
+  // Gift-certificate REDEMPTION dialog (distinct from the gift-card SALE modal
+  // above). Opened from the "Gift" tender button; on save it pushes a gift
+  // pending payment row. (Per Tony 2026-06-08.)
+  const [showGiftRedeem, setShowGiftRedeem] = useState(false);
 
   // Pre-fetch the salon-wide max gift serial when this ticket modal opens.
   // Idempotent in the React sense — if the fetch fails we leave dbMaxSerial
@@ -2325,7 +2330,7 @@ canEdit && (
                   <div className="grid grid-cols-3 gap-1.5">
                     <PayBtn label="Cash" tone="cash" onClick={() => addPending('cash')} />
                     <PayBtn label="Card" tone="card" onClick={() => addPending('visa_mc')} />
-                    <PayBtn label="Gift" tone="gift" onClick={() => addPending('gift')} />
+                    <PayBtn label="Gift" tone="gift" onClick={() => setShowGiftRedeem(true)} />
                   </div>
                   {pending.length > 0 && (
                     <div className="border border-gray-200 rounded-xl divide-y divide-gray-100">
@@ -2583,6 +2588,18 @@ canEdit && (
           serial={giftModalSerial}
           onClose={() => setGiftModalSerial(null)}
           onAdd={(serial, valueCents, staff) => addGiftLine(serial, valueCents, staff)}
+        />
+      )}
+      {showGiftRedeem && (
+        <GiftRedeemModal
+          ticketId={ticket.id}
+          dueCents={dueCents}
+          onClose={() => setShowGiftRedeem(false)}
+          onApply={(code, amountCents) => {
+            setPending((prev) => [...prev, { method: 'gift', giftCardCode: code, amountInput: (amountCents / 100).toFixed(2) }]);
+            void refreshGiftBalance(code);
+            setShowGiftRedeem(false);
+          }}
         />
       )}
       <ReceptionistPinGate
