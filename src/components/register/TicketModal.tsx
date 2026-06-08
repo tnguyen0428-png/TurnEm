@@ -835,6 +835,32 @@ export default function TicketModal({
     return (lookup.balanceCents / 100).toFixed(2);
   }
 
+  // Hard guard: a gift certificate can't be redeemed for more than its
+  // remaining balance. capGiftAmountToBalance above is only a SOFT input clamp
+  // — it passes the value through while the balance is still loading/unknown,
+  // and canProcess checks only the grand total — so a $35 cert was redeemed
+  // for $65 (Bella, ticket #40, 6/7). This re-checks every gift pending row at
+  // save/process time, summing per serial so two rows on one cert can't
+  // jointly overdraw it. Returns an error string to show, or null when OK.
+  async function giftOverdraftError(): Promise<string | null> {
+    const bySerial = new Map<string, { amountCents: number; label: string }>();
+    for (const p of pending) {
+      if (p.method !== 'gift') continue;
+      const norm = normalizeSerial(p.giftCardCode ?? '');
+      if (!norm) return 'Enter the gift certificate number for the gift payment.';
+      const amt = parseDollarsToCents(p.amountInput);
+      const prev = bySerial.get(norm);
+      bySerial.set(norm, { amountCents: (prev?.amountCents ?? 0) + amt, label: (p.giftCardCode ?? norm).trim() });
+    }
+    for (const [norm, g] of bySerial) {
+      const bal = await lookupGiftCardBalance(norm, ticket.id);
+      if (bal.found && g.amountCents > bal.balanceCents) {
+        return `Gift cert #${g.label} only has ${formatMoneyCents(bal.balanceCents)} left — you applied ${formatMoneyCents(g.amountCents)}. Lower it and put the remainder on another tender.`;
+      }
+    }
+    return null;
+  }
+
   // ─── Save (without closing) ───────────────────────────────────────────────
   const [busy, setBusy] = useState<'idle' | 'saving' | 'processing' | 'voiding'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -1671,6 +1697,10 @@ export default function TicketModal({
       setError(`Payments ${formatMoneyCents(pendingPaidCents)} ≠ total ${formatMoneyCents(totalCents)}.`);
       return;
     }
+    // Block an over-balance gift redemption before anything is committed.
+    setBusy('processing');
+    const giftErr = await giftOverdraftError();
+    if (giftErr) { setBusy('idle'); setError(giftErr); return; }
     // Save edits first so payment is captured against current totals.
     const saved = await doSave();
     if (!saved) return;
@@ -2449,6 +2479,9 @@ canEdit && (
                   // saved payment shows as collected right away, and RegisterScreen's
                   // payments-table subscription refetches so the captured-payments
                   // panel updates. (Per Tony 2026-06-06.)
+                  // Block an over-balance gift redemption before saving it.
+                  const giftErr = await giftOverdraftError();
+                  if (giftErr) { setError(giftErr); return; }
                   const s = await doSave();
                   if (!s) return;
                   const payRes = await replaceTicketPayments(ticket.id, pending.map((p) => ({
