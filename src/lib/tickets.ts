@@ -2121,20 +2121,32 @@ export async function updateOpenTicket(input: UpdateOpenTicketInput): Promise<Ti
       // via UPDATE — they don't go through this disambiguation since
       // their qid was already legal when first inserted.
       const newItems = input.items.filter((it) => !it.id);
-      const qeOccurrences = new Map<string, number>();
-      for (const it of newItems) {
-        if (it.queueEntryId != null) {
-          qeOccurrences.set(it.queueEntryId, (qeOccurrences.get(it.queueEntryId) ?? 0) + 1);
-        }
+      // Seed the in-use set with qids ALREADY held by existing (persisted)
+      // lines on this ticket. Those rows keep their stored queue_entry_id via
+      // the UPDATE branch below, so a NEW line carrying the same qid would
+      // violate uniq_ticket_items_per_entry (ticket_id, queue_entry_id) and
+      // reject the whole insert. This bites WALK-IN tickets specifically: the
+      // original line stores the BARE visit id — exactly what the modal's
+      // add-line fallback (ticket.queueEntryId) also produces — so adding a
+      // second service collided. Previously only collisions AMONG new lines
+      // were suffixed; a new-vs-existing collision slipped through and the
+      // save failed silently (e.g. adding a Pedicure to walk-in ticket #18).
+      const usedQids = new Set<string>();
+      for (const it of input.items) {
+        if (it.id && it.queueEntryId != null) usedQids.add(it.queueEntryId);
       }
-      const qeUsed = new Map<string, number>();
       const disambiguated = new Map<typeof newItems[number], string | null>();
       for (const it of newItems) {
         let qe: string | null = it.queueEntryId ?? null;
-        if (qe != null && (qeOccurrences.get(qe) ?? 0) > 1) {
-          const used = (qeUsed.get(qe) ?? 0) + 1;
-          qeUsed.set(qe, used);
-          qe = `${qe}#${used}`;
+        if (qe != null) {
+          if (usedQids.has(qe)) {
+            // Next free `#N` suffix on the base qid. lineUidForQid turns this
+            // into a deterministic, distinct line_uid (`q:<visit>:_:<N>`).
+            let n = 1;
+            while (usedQids.has(`${qe}#${n}`)) n++;
+            qe = `${qe}#${n}`;
+          }
+          usedQids.add(qe);
         }
         disambiguated.set(it, qe);
       }

@@ -489,8 +489,34 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         ),
       };
 
-    case 'ADD_CLIENT':
-      return { ...state, queue: [...state.queue, action.client] };
+    case 'ADD_CLIENT': {
+      const nextQueue = [...state.queue, action.client];
+      // When a cashier adds a service line to an OPEN ticket and assigns a
+      // tech, TicketModal.ensureManicuristBusyForAddedLine creates an
+      // "add-child" queue entry (id `${visit}-add-${staff}`, inProgress,
+      // assigned) to flip that tech's card to BUSY. Give that added service a
+      // visible slot in the appointment book too — a synth walk-in block in
+      // the assigned tech's column — so it shows up the way a freshly-assigned
+      // walk-in does (per Tony, 2026-06-08). The block id is `walkin:${id}`,
+      // so the destructive delete guards (which only ever drop `walkin:`-
+      // prefixed blocks) clean it up when the add-child is removed. Idempotent
+      // by appt id: a re-fired ADD_CLIENT for the same add-child won't stack.
+      const c = action.client;
+      const isAddChild =
+        !!c.parentQueueId &&
+        typeof c.id === 'string' && c.id.includes('-add-') &&
+        c.status === 'inProgress' &&
+        !!c.assignedManicuristId &&
+        !c.originalAppointment;
+      if (isAddChild && !state.appointments.some((a) => a.id === `walkin:${c.id}`)) {
+        const synth = synthWalkInAppt(
+          c, c.assignedManicuristId!, state.appointments,
+          state.salonServices, state.manicurists,
+        );
+        return { ...state, queue: nextQueue, appointments: [...state.appointments, synth] };
+      }
+      return { ...state, queue: nextQueue };
+    }
 
     case 'UPDATE_CLIENT': {
       const existing = state.queue.find((c) => c.id === action.id);
@@ -608,6 +634,13 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // appointment assignment (per Tony, 2026-06-06); the id-prefix guard
       // makes sure that flag can never cause a genuine appt to be destroyed.
       const shouldDeleteAppt = !!(linkedAppt && linkedAppt.isWalkIn && linkedAppt.id.startsWith('walkin:'));
+      // An add-child carries no originalAppointment pointer, so the synth
+      // walk-in slot we created for it in ADD_CLIENT (id `walkin:${entryId}`)
+      // isn't caught by the linkedApptId path above. Drop it here by its
+      // deterministic id — but only while it's still an unconfirmed walk-in
+      // block (isWalkIn true); if the receptionist drag-confirmed it,
+      // executeDrop cleared the flag and it stays as a real placement.
+      const addChildSynthId = `walkin:${action.id}`;
       // Phantom-pointer prevention: any manicurist whose currentClient was
       // pointing at this entry must be freed up. Without this, removing a
       // queue entry via REMOVE_CLIENT (e.g. TicketModal's add-child sweep
@@ -628,9 +661,11 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         queue: state.queue.filter((c) => c.id !== action.id),
-        appointments: shouldDeleteAppt
-          ? state.appointments.filter((a) => a.id !== linkedApptId)
-          : state.appointments,
+        appointments: state.appointments.filter((a) => {
+          if (shouldDeleteAppt && a.id === linkedApptId) return false;
+          if (a.id === addChildSynthId && a.isWalkIn) return false;
+          return true;
+        }),
         manicurists,
       };
     }

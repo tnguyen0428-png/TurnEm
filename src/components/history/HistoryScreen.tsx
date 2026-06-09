@@ -15,6 +15,7 @@ import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import { PinVerifyModal } from '../shared/AdminPinGate';
 import EditCompletedModal from '../modals/EditCompletedModal';
 import { formatTime, getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { CompletedEntry } from '../../types';
@@ -351,6 +352,7 @@ function HistoryTable({ entries, onEdit }: HistoryTableProps) {
 export default function HistoryScreen() {
   const { state, dispatch, saveTodayHistory } = useApp();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showClearPin, setShowClearPin] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
@@ -806,12 +808,24 @@ export default function HistoryScreen() {
           confirmLabel="Clear All"
           danger
           onConfirm={() => {
-            dispatch({ type: 'CLEAR_HISTORY' });
+            // Require the admin PIN before clearing — a plain confirm was too
+            // easy to trigger accidentally and wiped a full day of turns.
             setShowClearConfirm(false);
+            setShowClearPin(true);
           }}
           onCancel={() => setShowClearConfirm(false)}
         />
       )}
+
+      <PinVerifyModal
+        isOpen={showClearPin}
+        title="Enter Admin PIN to Clear"
+        onSuccess={() => {
+          dispatch({ type: 'CLEAR_HISTORY' });
+          setShowClearPin(false);
+        }}
+        onCancel={() => setShowClearPin(false)}
+      />
     </div>
     </div>
   );
