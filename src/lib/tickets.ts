@@ -367,37 +367,63 @@ async function fetchTicket(ticketId: string): Promise<Ticket | null> {
 // rows of the migration ticket and zero rows for every other open ticket on
 // the same day, leaving the Register's SERVICES column blank.
 const PAGE_SIZE = 1000;
-async function fetchItemsForTicketIds(ids: string[]): Promise<DbTicketItem[]> {
-  if (ids.length === 0) return [];
-  const out: DbTicketItem[] = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from('ticket_items')
-      .select('*')
-      .in('ticket_id', ids)
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) { console.error('[tickets] fetchItemsForTicketIds:', error.message); return out; }
-    const rows = (data ?? []) as DbTicketItem[];
-    out.push(...rows);
-    if (rows.length < PAGE_SIZE) break;
-  }
+
+// Max ticket_ids per `.in(...)` filter. Supabase sends the filter in the URL
+// query string (ticket_id=in.(uuid,uuid,…)); a wide report range yields
+// thousands of ids (~37 chars each), which overflows the gateway URL limit and
+// fails the WHOLE request — so items/payments came back empty and Service /
+// Gift / Payment totals showed $0 on custom ranges. Batching keeps every URL
+// small; batches run in parallel and each is still paginated past 1000 rows.
+const ID_BATCH_SIZE = 200;
+
+function chunkIds(ids: string[], size: number): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
   return out;
 }
+
+async function fetchItemsForTicketIds(ids: string[]): Promise<DbTicketItem[]> {
+  if (ids.length === 0) return [];
+  const batches = await Promise.all(
+    chunkIds(ids, ID_BATCH_SIZE).map(async (batch) => {
+      const rows: DbTicketItem[] = [];
+      for (let offset = 0; ; offset += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from('ticket_items')
+          .select('*')
+          .in('ticket_id', batch)
+          .range(offset, offset + PAGE_SIZE - 1);
+        if (error) { console.error('[tickets] fetchItemsForTicketIds:', error.message); break; }
+        const page = (data ?? []) as DbTicketItem[];
+        rows.push(...page);
+        if (page.length < PAGE_SIZE) break;
+      }
+      return rows;
+    }),
+  );
+  return batches.flat();
+}
+
 async function fetchPaymentsForTicketIds(ids: string[]): Promise<DbPayment[]> {
   if (ids.length === 0) return [];
-  const out: DbPayment[] = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from('payments')
-      .select('*')
-      .in('ticket_id', ids)
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) { console.error('[tickets] fetchPaymentsForTicketIds:', error.message); return out; }
-    const rows = (data ?? []) as DbPayment[];
-    out.push(...rows);
-    if (rows.length < PAGE_SIZE) break;
-  }
-  return out;
+  const batches = await Promise.all(
+    chunkIds(ids, ID_BATCH_SIZE).map(async (batch) => {
+      const rows: DbPayment[] = [];
+      for (let offset = 0; ; offset += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from('payments')
+          .select('*')
+          .in('ticket_id', batch)
+          .range(offset, offset + PAGE_SIZE - 1);
+        if (error) { console.error('[tickets] fetchPaymentsForTicketIds:', error.message); break; }
+        const page = (data ?? []) as DbPayment[];
+        rows.push(...page);
+        if (page.length < PAGE_SIZE) break;
+      }
+      return rows;
+    }),
+  );
+  return batches.flat();
 }
 
 export async function fetchTicketsForDate(
