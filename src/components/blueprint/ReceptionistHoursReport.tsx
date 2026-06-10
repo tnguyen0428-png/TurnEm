@@ -155,6 +155,47 @@ function daysFromSessions(sessions: ClockSession[]): DayRow[] {
   return Array.from(map.values()).sort((a, b) => a.dayMs - b.dayMs); // earliest day on top
 }
 
+// ── Overtime breakdown ───────────────────────────────────────────────────────
+//
+// California-style split with no pyramiding:
+//   • Daily OT  = hours past 8 in a single workday.
+//   • Weekly OT = hours past 40 in a workweek (Sun–Sat), counting only the
+//                 straight-time hours (so hours already paid as daily OT are
+//                 not counted again toward the 40).
+//   • Regular   = everything else.
+// Computed per calendar week so a multi-week range sums correctly. When a
+// custom range cuts a week, only the in-range days count toward that week's 40.
+const MS_PER_HOUR = 3_600_000;
+const DAILY_OT_MS = 8 * MS_PER_HOUR;
+const WEEKLY_OT_MS = 40 * MS_PER_HOUR;
+
+interface OtBreakdown { regularMs: number; otMs: number; }
+
+function overtimeBreakdown(dayRows: DayRow[]): OtBreakdown {
+  const weeks = new Map<number, DayRow[]>();
+  for (const d of dayRows) {
+    const ws = startOfWeek(new Date(d.dayMs));
+    const list = weeks.get(ws) ?? [];
+    list.push(d);
+    weeks.set(ws, list);
+  }
+  let regularMs = 0;
+  let otMs = 0;
+  for (const days of weeks.values()) {
+    let weekStraight = 0;   // straight-time hours this week (after daily OT removed)
+    let weekDailyOt = 0;
+    for (const d of days) {
+      const dailyOt = Math.max(0, d.workedMs - DAILY_OT_MS);
+      weekDailyOt += dailyOt;
+      weekStraight += d.workedMs - dailyOt;
+    }
+    const weeklyOt = Math.max(0, weekStraight - WEEKLY_OT_MS);
+    regularMs += weekStraight - weeklyOt;
+    otMs += weekDailyOt + weeklyOt;
+  }
+  return { regularMs, otMs };
+}
+
 // ── Shift rows (for the ALL CLOCK ENTRIES list) ──────────────────────────────
 //
 // One row per shift = one clock-in / clock-out pair (a ClockSession). A shift
@@ -775,13 +816,14 @@ function ReceptionistDetailModal({
   }, [onClose]);
 
   // Days within the active view range, this receptionist only.
-  const { rows, rangeMs } = useMemo(() => {
+  const { rows, rangeMs, regularMs, otMs } = useMemo(() => {
     const evs = events.filter(
       (e) => e.staffId === staffId && e.timestamp >= from && e.timestamp <= to,
     );
     const dayRows = daysFromSessions(sessionsFromEvents(evs));
     const total = dayRows.reduce((sum, d) => sum + d.workedMs, 0);
-    return { rows: dayRows, rangeMs: total };
+    const { regularMs, otMs } = overtimeBreakdown(dayRows);
+    return { rows: dayRows, rangeMs: total, regularMs, otMs };
   }, [events, staffId, from, to]);
 
   return (
@@ -807,40 +849,66 @@ function ReceptionistDetailModal({
               <span>Out</span>
               <span className="text-right">Total</span>
             </div>
-            {rows.map((d) => (
-              <div
-                key={d.dayKey}
-                className="grid grid-cols-[1fr_110px_110px_80px] gap-2 px-3 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
-              >
-                <span className="font-mono text-xs font-semibold text-gray-900">{formatDate(d.dayMs)}</span>
-                <span className="font-mono text-xs">
-                  {d.firstIn != null ? (
-                    <span className="inline-flex items-center gap-1 text-amber-700"><Sun size={11} /> {formatTime(d.firstIn)}</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-red-500"><AlertTriangle size={11} /> —</span>
-                  )}
-                </span>
-                <span className="font-mono text-xs">
-                  {d.lastOut != null ? (
-                    <span className="inline-flex items-center gap-1 text-indigo-700"><Moon size={11} /> {formatTime(d.lastOut)}</span>
-                  ) : d.hasOpen ? (
-                    <span className="text-amber-600">in progress</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-red-500"><AlertTriangle size={11} /> —</span>
-                  )}
-                </span>
-                <span className="font-mono text-xs font-bold text-gray-900 text-right">
-                  {formatDuration(d.workedMs > 0 ? d.workedMs : null)}
-                </span>
-              </div>
-            ))}
+            {rows.map((d) => {
+              // Per-day OT is the daily portion only (hours past 8 that day);
+              // weekly OT can't be pinned to a single day, so the authoritative
+              // total split lives in the summary below.
+              const dailyOt = Math.max(0, d.workedMs - DAILY_OT_MS);
+              return (
+                <div
+                  key={d.dayKey}
+                  className="grid grid-cols-[1fr_110px_110px_80px] gap-2 px-3 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
+                >
+                  <span className="font-mono text-xs font-semibold text-gray-900">
+                    {formatDate(d.dayMs)}
+                    {dailyOt > 0 && (
+                      <span className="ml-1.5 px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-bold text-[8px] tracking-wider align-middle">OT</span>
+                    )}
+                  </span>
+                  <span className="font-mono text-xs">
+                    {d.firstIn != null ? (
+                      <span className="inline-flex items-center gap-1 text-amber-700"><Sun size={11} /> {formatTime(d.firstIn)}</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-red-500"><AlertTriangle size={11} /> —</span>
+                    )}
+                  </span>
+                  <span className="font-mono text-xs">
+                    {d.lastOut != null ? (
+                      <span className="inline-flex items-center gap-1 text-indigo-700"><Moon size={11} /> {formatTime(d.lastOut)}</span>
+                    ) : d.hasOpen ? (
+                      <span className="text-amber-600">in progress</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-red-500"><AlertTriangle size={11} /> —</span>
+                    )}
+                  </span>
+                  <span className="font-mono text-xs text-right">
+                    <span className="font-bold text-gray-900">{formatDuration(d.workedMs > 0 ? d.workedMs : null)}</span>
+                    {dailyOt > 0 && (
+                      <span className="block text-[9px] font-semibold text-amber-700">+{formatDuration(dailyOt)} OT</span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
 
-        <div className="flex items-center justify-between mt-4 px-1">
-          <span className="font-mono text-xs font-bold tracking-wider text-gray-500 uppercase">Range total</span>
-          <span className="font-mono text-lg font-bold text-gray-900">{formatDuration(rangeMs > 0 ? rangeMs : null)}</span>
+        {/* Regular vs overtime split (CA: daily >8h + weekly >40h, no pyramiding) */}
+        <div className="mt-4 rounded-xl border border-gray-100 overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-50">
+            <span className="font-mono text-[11px] font-bold tracking-wider text-gray-500 uppercase">Regular</span>
+            <span className="font-mono text-sm font-semibold text-gray-900">{formatDuration(regularMs > 0 ? regularMs : null)}</span>
+          </div>
+          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-50 bg-amber-50/40">
+            <span className="font-mono text-[11px] font-bold tracking-wider text-amber-700 uppercase">Overtime</span>
+            <span className="font-mono text-sm font-semibold text-amber-700">{formatDuration(otMs > 0 ? otMs : null)}</span>
+          </div>
+          <div className="flex items-center justify-between px-3 py-2.5 bg-gray-50">
+            <span className="font-mono text-xs font-bold tracking-wider text-gray-600 uppercase">Range total</span>
+            <span className="font-mono text-lg font-bold text-gray-900">{formatDuration(rangeMs > 0 ? rangeMs : null)}</span>
+          </div>
         </div>
+        <p className="font-mono text-[9px] text-gray-400 mt-2 px-1">OT = hours past 8/day plus hours past 40/week (straight-time only), per CA rules.</p>
       </div>
     </div>
   );
