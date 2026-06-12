@@ -1833,6 +1833,38 @@ export default function TicketModal({
           dispatch({ type: 'COMPLETE_SERVICE', manicuristId: m.id });
         }
       }
+      // ── Turn-credit consistency heal ──────────────────────────────────
+      // When a split service is reassigned to a different tech, its child
+      // queue id still encodes the ORIGINAL tech (`${visit}-mani-<orig>`) and
+      // the COMPLETE_SERVICE dispatches above credit whoever is *holding* the
+      // entry now. That holder can differ from the staff on the receipt line —
+      // the register-confirmed truth — which silently mis-credits the turn
+      // (Megan #6 2026-06-11: History credited LISA while the ticket and appt
+      // book both showed LEO; also Samantha 6/7, Stephanie 6/2). The completed
+      // row's id equals the line's queueEntryId, so detect the divergence from
+      // the live holder and force the credit back to the receipt line.
+      // UPDATE_COMPLETED is processed AFTER the COMPLETE_SERVICE dispatches
+      // above and moves totalTurns between techs correctly. Only single-staff
+      // service lines are healed; legit reassignments (receipt line already
+      // matches the holder) are left untouched.
+      for (const it of ticket.items ?? []) {
+        if (it.kind !== 'service' || !it.queueEntryId || !it.staff1Id || it.staff2Id) continue;
+        const holder = state.manicurists.find((m) => m.currentClient === it.queueEntryId);
+        if (!holder || holder.id === it.staff1Id) continue;
+        console.warn(
+          `[ticket] turn-credit mismatch on ${it.queueEntryId}: held by ${holder.name} but receipt line is ${it.staff1Name} — crediting the receipt line`,
+        );
+        dispatch({
+          type: 'UPDATE_COMPLETED',
+          id: it.queueEntryId,
+          updates: {
+            manicuristId: it.staff1Id,
+            manicuristName: it.staff1Name,
+            manicuristColor: it.staff1Color,
+          },
+          skipEditFlag: true,
+        });
+      }
       for (const q of state.queue) {
         if (q.id.startsWith(addChildPrefix)) {
           dispatch({ type: 'REMOVE_CLIENT', id: q.id });
