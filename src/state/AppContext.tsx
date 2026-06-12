@@ -2118,8 +2118,18 @@ async function syncCompleted(
       console.warn(`[syncCompleted] skipped ${skipped} unconfirmed completed delete(s) — left in DB to self-heal (not a user/clear delete)`);
     }
     if (idsToDelete.length > 0) {
-      const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', idsToDelete));
-      if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+      // Batch the IN() list. A single .in('id', [...]) with a large id list builds
+      // one giant `id=in.(...)` query string; on a busy-day Clear / nightly reset
+      // that overflows the gateway URL limit and the WHOLE request fails with a 400
+      // (the "Sync failed — data may not be saved" banner, even though it's a delete
+      // and nothing is lost). Deleting in chunks of 200 keeps each request URL small.
+      // Same fix as the sales-report ticket-id batching (ID_BATCH_SIZE in lib/tickets.ts).
+      const DELETE_BATCH_SIZE = 200;
+      for (let i = 0; i < idsToDelete.length; i += DELETE_BATCH_SIZE) {
+        const slice = idsToDelete.slice(i, i + DELETE_BATCH_SIZE);
+        const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', slice));
+        if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+      }
     }
   }
 
