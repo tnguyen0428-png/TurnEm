@@ -1836,23 +1836,41 @@ export default function TicketModal({
       // ── Turn-credit consistency heal ──────────────────────────────────
       // When a split service is reassigned to a different tech, its child
       // queue id still encodes the ORIGINAL tech (`${visit}-mani-<orig>`) and
-      // the COMPLETE_SERVICE dispatches above credit whoever is *holding* the
-      // entry now. That holder can differ from the staff on the receipt line —
-      // the register-confirmed truth — which silently mis-credits the turn
-      // (Megan #6 2026-06-11: History credited LISA while the ticket and appt
-      // book both showed LEO; also Samantha 6/7, Stephanie 6/2). The completed
-      // row's id equals the line's queueEntryId, so detect the divergence from
-      // the live holder and force the credit back to the receipt line.
-      // UPDATE_COMPLETED is processed AFTER the COMPLETE_SERVICE dispatches
-      // above and moves totalTurns between techs correctly. Only single-staff
-      // service lines are healed; legit reassignments (receipt line already
-      // matches the holder) are left untouched.
+      // COMPLETE_SERVICE credits whoever is *holding* the entry, which can
+      // differ from the staff on the receipt line — the register-confirmed
+      // truth. That silently mis-credits the turn (Megan #6 2026-06-11: LISA
+      // vs LEO; Samantha 6/7; Stephanie 6/2; Kylie #27 2026-06-12: JOE vs LEO).
+      //
+      // The completed_services row's id equals the line's queueEntryId, and
+      // turn totals are derived from state.completed, so the fix is to force
+      // the completed row's tech back to the receipt line.
+      //
+      // IMPORTANT — why we no longer key off the live holder: the previous
+      // version only healed when a manicurist was STILL holding the slot at
+      // checkout (`m.currentClient === queueEntryId`). But the wrong credit is
+      // baked into state.completed the moment the service is completed, which is
+      // usually BEFORE checkout. Once the slot is released the holder is gone
+      // (null), so the heal no-op'd and the bad credit stood — exactly how
+      // Kylie #27 slipped through after the 3d72003 fix shipped. We now derive
+      // the currently-credited tech from the completed row first (holder only
+      // as a fallback for a service finalized in this same checkout, whose
+      // completed row isn't in this closure's state yet), so the heal fires
+      // whether or not anyone still holds the slot.
+      //
+      // Only single-staff service lines are healed; two-staff lines split
+      // credit and are left to their own logic. Voided rows contribute no
+      // turns and are left untouched.
       for (const it of ticket.items ?? []) {
         if (it.kind !== 'service' || !it.queueEntryId || !it.staff1Id || it.staff2Id) continue;
+        const existing = state.completed.find((c) => c.id === it.queueEntryId);
+        if (existing?.voided) continue;
         const holder = state.manicurists.find((m) => m.currentClient === it.queueEntryId);
-        if (!holder || holder.id === it.staff1Id) continue;
+        // Who the turn currently lands on: the completed row if it exists,
+        // otherwise the tech finalizing it in this same checkout.
+        const creditedId = existing?.manicuristId ?? holder?.id;
+        if (!creditedId || creditedId === it.staff1Id) continue;
         console.warn(
-          `[ticket] turn-credit mismatch on ${it.queueEntryId}: held by ${holder.name} but receipt line is ${it.staff1Name} — crediting the receipt line`,
+          `[ticket] turn-credit mismatch on ${it.queueEntryId}: credited to ${existing?.manicuristName ?? holder?.name} but receipt line is ${it.staff1Name} — crediting the receipt line`,
         );
         dispatch({
           type: 'UPDATE_COMPLETED',
