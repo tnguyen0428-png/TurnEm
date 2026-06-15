@@ -163,6 +163,13 @@ export default function RegisterScreen() {
     [shifts],
   );
 
+  // The day hasn't been started until a drawer is opened. When viewing TODAY
+  // and there's no shift at all yet (none open AND none already closed), block
+  // the register behind a "start the day" prompt so tickets can't be rung up
+  // against an uncounted/uninitialized drawer. A previously-closed shift means
+  // the day was run, so we don't block (header OPEN SHIFT button still works).
+  const needsShiftOpen = isToday && !shift && closedShifts.length === 0;
+
   const [openTicket, setOpenTicket] = useState<Ticket | null>(null);
 
   // Keep the currently-open ticket modal in sync with the freshly-fetched
@@ -329,6 +336,24 @@ export default function RegisterScreen() {
           onClose={() => { setOpenTicket(null); void refresh(true); void refreshShift(); }}
           onChanged={(saved) => setOpenTicket(saved)}
         />
+      )}
+      {needsShiftOpen && !showOpenShift && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 flex flex-col items-center text-center gap-4 animate-modal-in">
+            <div className="h-14 w-14 rounded-full bg-gray-900 text-white flex items-center justify-center">
+              <Unlock size={26} />
+            </div>
+            <h2 className="font-bebas text-3xl tracking-widest text-gray-900">START THE DAY</h2>
+            <p className="font-mono text-sm text-gray-500">
+              No shift is open yet. Count the drawer and open the shift before
+              ringing up any tickets.
+            </p>
+            <button onClick={() => setShowOpenShift(true)}
+              className="mt-2 h-12 px-6 flex items-center gap-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800 font-mono text-sm font-bold">
+              <Unlock size={16} /> OPEN SHIFT
+            </button>
+          </div>
+        </div>
       )}
       {showOpenShift && (
         <OpenShiftModal

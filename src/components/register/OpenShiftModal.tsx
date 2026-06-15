@@ -58,8 +58,12 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened }: Pro
       setError('Incorrect PIN.');
       return;
     }
-    setBusy(true);
     const cents = totalFromCount(count);
+    if (cents <= 0) {
+      setError('Count the drawer first — the opening cash total can’t be $0.');
+      return;
+    }
+    setBusy(true);
     const shift = await openShift(cents, count, matched.id);
     setBusy(false);
     if (!shift) {
@@ -70,7 +74,7 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened }: Pro
   }
 
   const totalCents = totalFromCount(count);
-  const canOpen = !busy && pin.length > 0;
+  const canOpen = !busy && pin.length > 0 && totalCents > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">

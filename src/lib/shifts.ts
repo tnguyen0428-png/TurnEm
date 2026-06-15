@@ -150,6 +150,13 @@ export async function openShift(
   openingCount: Record<string, number> = {},
   receptionistId?: string | null,
 ): Promise<Shift | null> {
+  // Never open a drawer without a counted starting float. A $0 / uncounted
+  // open understates expected cash all day and surfaces as a phantom "over"
+  // at close (observed 6/14: opening entered as $0, drawer read +$440 over).
+  if (!Number.isFinite(openingCashCents) || openingCashCents <= 0) {
+    console.warn('[shifts] openShift refused: opening cash must be counted (> $0)');
+    return null;
+  }
   const businessDate = getTodayLA();
   // Dedupe against TODAY's open shift only. A stale unfinished shift from
   // yesterday should not block opening today's drawer.
