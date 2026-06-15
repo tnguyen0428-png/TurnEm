@@ -1183,6 +1183,13 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         // Link back to the appointment book entry so the register can flip the
         // appt to 'completed' (black) when the ticket is closed.
         originalAppointmentId: client.originalAppointment?.id,
+        // Freeze the crediting manicurist's clock-in time onto the entry so the
+        // History "Turns per Manicurist" line-up can be replayed in clock-in
+        // order on past days. saveTodayHistory refreshes this from the live
+        // clock-in at save (capturing any drag-reorders); this completion-time
+        // stamp is the baseline that survives even if the device never saves
+        // and the nightly archive picks the entry up after a daily reset.
+        manicuristClockInTime: manicurist.clockInTime ?? null,
       };
       // Idempotent merge: if a row with this id already exists in completed
       // (e.g. a remote echo or a duplicate dispatch), replace it in place

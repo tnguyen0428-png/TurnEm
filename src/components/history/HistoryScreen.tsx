@@ -514,7 +514,14 @@ export default function HistoryScreen() {
       }
     }
     // Past day view (or today with no data at all): build from displayed entries.
-    const map = new Map<string, TurnsRowEntry>();
+    // Order is FROZEN to the clock-in sequence captured when the day was saved
+    // (CompletedEntry.manicuristClockInTime), so the line-up is replayed exactly
+    // as it stood — never re-derived from the live roster or re-sorted by
+    // anything else. Legacy entries from before that field existed carry no
+    // stamp (sortKey stays Infinity); because the sort is stable, those days
+    // keep their original saved (first-appearance) order untouched.
+    type PastRow = TurnsRowEntry & { sortKey: number };
+    const map = new Map<string, PastRow>();
     for (const e of displayedEntries) {
       if (!map.has(e.manicuristId)) {
         map.set(e.manicuristId, {
@@ -523,11 +530,17 @@ export default function HistoryScreen() {
           turns: 0,
           color: e.manicuristColor,
           clockInTime: '',
+          sortKey: Number.POSITIVE_INFINITY,
         });
       }
-      if (!e.voided) map.get(e.manicuristId)!.turns += e.turnValue;
+      const row = map.get(e.manicuristId)!;
+      if (!e.voided) row.turns += e.turnValue;
+      const t = e.manicuristClockInTime;
+      if (typeof t === 'number' && t < row.sortKey) row.sortKey = t;
     }
-    return Array.from(map.values());
+    return Array.from(map.values())
+      .sort((a, b) => a.sortKey - b.sortKey)
+      .map(({ sortKey: _k, ...rest }) => { void _k; return rest; });
   }, [viewingPastDay, state.manicurists, displayedEntries]);
 
   const maxTurns = useMemo(

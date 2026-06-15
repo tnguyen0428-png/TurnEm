@@ -112,6 +112,14 @@ export interface CompletedEntry {
    *  Always trust this over the catalog when present, since it reflects any
    *  cashier price overrides or discounts applied at checkout. */
   priceCents?: number | null;
+  /** ms epoch of the crediting manicurist's clock-in for the day this entry
+   *  belongs to. Captured at COMPLETE_SERVICE and refreshed from the live
+   *  clock-in (incl. any drag-reorders) when the day is saved, so the History
+   *  "Turns per Manicurist" line-up can be frozen in clock-in order on past
+   *  days instead of relying on the saved entry array order. Null/undefined on
+   *  legacy rows from before this field existed — past-day ordering falls back
+   *  to the saved array (first-appearance) order in that case. */
+  manicuristClockInTime?: number | null;
 }
 
 // ── POS / Register ───────────────────────────────────────────────────────────

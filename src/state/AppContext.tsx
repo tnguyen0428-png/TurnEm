@@ -862,7 +862,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     for (const m of manicuristsRef.current) {
       if (m.clockInTime !== null) clockInOrder.set(m.id, m.clockInTime);
     }
-    const sortedEntries = [...completed].sort((a, b) => {
+    // Freeze each entry's crediting-manicurist clock-in time onto the entry
+    // itself (refreshing the COMPLETE_SERVICE baseline with the live value so
+    // any drag-reorders made during the day are captured). The past-day History
+    // "Turns per Manicurist" view orders by this stored value, so the line-up is
+    // replayed in clock-in order regardless of the saved entry array order.
+    const stampedCompleted = completed.map((e) => ({
+      ...e,
+      manicuristClockInTime:
+        clockInOrder.get(e.manicuristId) ?? e.manicuristClockInTime ?? null,
+    }));
+    const sortedEntries = [...stampedCompleted].sort((a, b) => {
       const aTime = clockInOrder.get(a.manicuristId) ?? Number.POSITIVE_INFINITY;
       const bTime = clockInOrder.get(b.manicuristId) ?? Number.POSITIVE_INFINITY;
       return aTime - bTime;
