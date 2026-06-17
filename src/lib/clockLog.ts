@@ -68,6 +68,26 @@ export async function getAllEvents(): Promise<ClockEvent[]> {
   return (data ?? []).map((r) => fromDb(r as DbClockEvent));
 }
 
+/**
+ * Events for a single staff member, optionally only those at/after `sinceMs`.
+ * Powers the receptionist's own clock-in/out weekly summary, which only ever
+ * looks back two weeks — so callers pass `sinceMs` to keep the payload tiny.
+ */
+export async function getEventsForStaff(
+  staffId: string,
+  sinceMs?: number,
+): Promise<ClockEvent[]> {
+  let q = supabase
+    .from('clock_events')
+    .select('*')
+    .eq('staff_id', staffId)
+    .order('event_time', { ascending: false });
+  if (sinceMs != null) q = q.gte('event_time', new Date(sinceMs).toISOString());
+  const { data, error } = await q;
+  if (error) { console.error('[clockLog] getEventsForStaff:', error.message); return []; }
+  return (data ?? []).map((r) => fromDb(r as DbClockEvent));
+}
+
 // ── writes ───────────────────────────────────────────────────────────────────
 
 export async function appendEvent(
