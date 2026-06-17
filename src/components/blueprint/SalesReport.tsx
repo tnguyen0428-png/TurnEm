@@ -5,10 +5,13 @@
 // breakdown table.
 
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { Shift, Ticket } from '../../types';
+import { ChevronDown, ChevronRight, X } from 'lucide-react';
+import type { Shift, ShiftMovement, Ticket } from '../../types';
 import { fetchTicketsForRange } from '../../lib/tickets';
-import { fetchShiftsForRange } from '../../lib/shifts';
+import { fetchShiftsForRange, fetchShiftMovements } from '../../lib/shifts';
+import {
+  BILL_DENOMINATIONS_CENTS, COIN_DENOMINATIONS_CENTS, totalFromCount,
+} from '../register/MoneyCountTable';
 import { useApp } from '../../state/AppContext';
 import {
   ReportRangeHeader, useReportRange, formatMoney, formatLongDate, formatTime, eachDateInRange,
@@ -35,6 +38,7 @@ export default function SalesReport() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null);
+  const [selectedShift, setSelectedShift] = useState<Shift | null>(null);
   const { state } = useApp();
 
   useEffect(() => {
@@ -251,11 +255,14 @@ export default function SalesReport() {
                 : '—';
               const variance = s.varianceCents ?? null;
               return (
-                <div
+                <button
                   key={s.id}
-                  className="grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
+                  type="button"
+                  onClick={() => setSelectedShift(s)}
+                  title="View closing details"
+                  className="w-full text-left grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center hover:bg-gray-50 transition-colors cursor-pointer focus:outline-none focus:bg-gray-50"
                 >
-                  <span className="font-mono text-sm text-gray-800">{formatLongDate(s.businessDate)}</span>
+                  <span className="font-mono text-sm text-gray-800 underline decoration-dotted decoration-gray-300 underline-offset-2">{formatLongDate(s.businessDate)}</span>
                   <span className="font-mono text-sm text-gray-700">
                     {new Date(s.openedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                   </span>
@@ -286,7 +293,7 @@ export default function SalesReport() {
                   >
                     {s.status}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -601,6 +608,14 @@ export default function SalesReport() {
           </div>
         </div>
       )}
+
+      {selectedShift && (
+        <ShiftClosingModal
+          shift={selectedShift}
+          nameById={manicuristNameById}
+          onClose={() => setSelectedShift(null)}
+        />
+      )}
     </div>
   );
 }
@@ -628,6 +643,203 @@ function SummaryLine({ label, value, bold }: { label: string; value: string; bol
     <div className="flex items-center justify-between">
       <span className={`font-mono text-xs ${bold ? 'text-gray-700 font-bold' : 'text-gray-500'}`}>{label}</span>
       <span className={`font-mono text-xs ${bold ? 'text-gray-900 font-bold' : 'text-gray-900'}`}>{value}</span>
+    </div>
+  );
+}
+
+// Denomination label, e.g. 10000 → "$100", 25 → "25¢". Mirrors MoneyCountTable.
+function denomLabel(cents: number): string {
+  return cents >= 100 ? `$${cents / 100}` : `${cents}¢`;
+}
+
+function clockTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+// ShiftClosingModal — the drawer-session close-out detail for one shift.
+// Opened when a manager clicks a row in the SHIFTS table. Shows who opened /
+// closed and when, the cash reconciliation (opening → expected → declared →
+// variance + note), the closing denomination count, and any pay-in/out
+// movements during the shift. Open (not-yet-closed) shifts show what's known
+// so far with the close-out fields marked pending.
+function ShiftClosingModal({
+  shift, nameById, onClose,
+}: {
+  shift: Shift;
+  nameById: Map<string, string>;
+  onClose: () => void;
+}) {
+  const [movements, setMovements] = useState<ShiftMovement[] | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchShiftMovements(shift.id).then((rows) => { if (!cancelled) setMovements(rows); });
+    return () => { cancelled = true; };
+  }, [shift.id]);
+
+  const isClosed = shift.status === 'closed';
+  const openedName = shift.openedByReceptionistId
+    ? nameById.get(shift.openedByReceptionistId) ?? '(removed)'
+    : '—';
+  const closedName = shift.closedByReceptionistId
+    ? nameById.get(shift.closedByReceptionistId) ?? '(removed)'
+    : '—';
+
+  const variance = shift.varianceCents;
+  const varianceCls =
+    variance == null ? 'text-gray-400'
+      : variance === 0 ? 'text-gray-700'
+        : variance > 0 ? 'text-emerald-600'
+          : 'text-red-600';
+
+  const denoms = [...BILL_DENOMINATIONS_CENTS, ...COIN_DENOMINATIONS_CENTS]
+    .filter((c) => (shift.closingCount?.[String(c)] ?? 0) > 0);
+  const closingTotal = totalFromCount(shift.closingCount ?? {});
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="font-bebas text-2xl tracking-[1.5px] text-gray-900 leading-none">SHIFT CLOSE-OUT</h2>
+            <p className="font-mono text-xs text-gray-500 mt-1">
+              {formatLongDate(shift.businessDate)} · Drawer {shift.drawerNumber}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`font-mono text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full ${
+                isClosed ? 'bg-gray-100 text-gray-500' : 'bg-emerald-50 text-emerald-600'
+              }`}
+            >
+              {shift.status}
+            </span>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* Open / close meta */}
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
+            <div className="font-mono text-[10px] font-bold text-gray-400 tracking-wider uppercase">Opened</div>
+            <div className="font-mono text-sm font-semibold text-gray-900 mt-0.5">{clockTime(shift.openedAt)}</div>
+            <div className="font-mono text-xs text-gray-600 truncate" title={openedName}>{openedName}</div>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
+            <div className="font-mono text-[10px] font-bold text-gray-400 tracking-wider uppercase">Closed</div>
+            <div className="font-mono text-sm font-semibold text-gray-900 mt-0.5">
+              {shift.closedAt ? clockTime(shift.closedAt) : '—'}
+            </div>
+            <div className="font-mono text-xs text-gray-600 truncate" title={closedName}>
+              {isClosed ? closedName : 'still open'}
+            </div>
+          </div>
+        </div>
+
+        {/* Cash reconciliation */}
+        <div className="rounded-xl border border-gray-100 overflow-hidden mb-4">
+          <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+            <h3 className="font-bebas text-base tracking-[2px] text-gray-700">CASH RECONCILIATION</h3>
+          </div>
+          <div className="px-3 py-3 space-y-1.5">
+            <SummaryLine label="Opening float" value={formatMoney(shift.openingCashCents)} />
+            <SummaryLine
+              label="Expected in drawer"
+              value={shift.expectedCashCents == null ? '—' : formatMoney(shift.expectedCashCents)}
+            />
+            <SummaryLine
+              label="Declared (counted)"
+              value={shift.declaredCashCents == null ? '—' : formatMoney(shift.declaredCashCents)}
+              bold
+            />
+            <div className="flex items-center justify-between pt-1.5 mt-1.5 border-t border-gray-100">
+              <span className="font-mono text-xs font-bold text-gray-700">Variance</span>
+              <span className={`font-mono text-xs font-bold ${varianceCls}`}>
+                {variance == null ? '—' : `${variance > 0 ? '+' : ''}${formatMoney(variance)}`}
+              </span>
+            </div>
+            {variance != null && variance !== 0 && (
+              <div className="font-mono text-[10px] text-gray-400">
+                {variance > 0 ? 'drawer over' : 'drawer short'}
+              </div>
+            )}
+            {shift.varianceNote?.trim() && (
+              <div className="mt-2 rounded-lg bg-amber-50 border border-amber-100 px-2.5 py-2">
+                <div className="font-mono text-[10px] font-bold text-amber-700 tracking-wider uppercase mb-0.5">Note</div>
+                <div className="font-mono text-xs text-amber-900 whitespace-pre-wrap">{shift.varianceNote}</div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Closing denomination count */}
+        <div className="rounded-xl border border-gray-100 overflow-hidden mb-4">
+          <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="font-bebas text-base tracking-[2px] text-gray-700">CLOSING COUNT</h3>
+            <span className="font-mono text-xs font-bold text-gray-900">{formatMoney(closingTotal)}</span>
+          </div>
+          {denoms.length === 0 ? (
+            <div className="px-3 py-4 text-center font-mono text-xs text-gray-400">
+              {isClosed ? 'No denomination count recorded.' : 'Not counted yet — shift still open.'}
+            </div>
+          ) : (
+            <div className="px-3 py-2 grid grid-cols-2 gap-x-6 gap-y-1">
+              {denoms.map((c) => {
+                const qty = shift.closingCount[String(c)] ?? 0;
+                return (
+                  <div key={c} className="flex items-center justify-between">
+                    <span className="font-mono text-xs text-gray-600">{denomLabel(c)} × {qty}</span>
+                    <span className="font-mono text-xs text-gray-900">{formatMoney(c * qty)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Drawer pay-ins / pay-outs */}
+        <div className="rounded-xl border border-gray-100 overflow-hidden">
+          <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+            <h3 className="font-bebas text-base tracking-[2px] text-gray-700">PAY-IN / PAY-OUT</h3>
+          </div>
+          {movements == null ? (
+            <div className="px-3 py-4 text-center font-mono text-xs text-gray-400">Loading…</div>
+          ) : movements.length === 0 ? (
+            <div className="px-3 py-4 text-center font-mono text-xs text-gray-400">No drawer movements.</div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {movements.map((m) => {
+                const isIn = m.kind === 'pay_in';
+                return (
+                  <div key={m.id} className="flex items-center justify-between px-3 py-2">
+                    <div className="min-w-0">
+                      <span className={`font-mono text-[10px] font-bold tracking-wider uppercase ${isIn ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {isIn ? 'Pay-in' : 'Pay-out'}
+                      </span>
+                      <span className="font-mono text-xs text-gray-600 ml-2 truncate" title={m.reason}>{m.reason || '—'}</span>
+                    </div>
+                    <span className={`font-mono text-xs font-semibold ${isIn ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {isIn ? '+' : '−'}{formatMoney(m.amountCents)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
