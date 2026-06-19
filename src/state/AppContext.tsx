@@ -532,7 +532,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       fetchAllRows(() => supabase.from('staff_schedule_overrides').select('*')),
     ]);
 
-    const appointments = (appointmentRows || []).map(mapDbAppointment);
+    let appointments = (appointmentRows || []).map(mapDbAppointment);
     // Only seed defaults when the query itself succeeded and genuinely returned nothing.
     // If serviceError is set it means the DB call failed â we must not overwrite with defaults.
     if (!serviceError && (!serviceRows || serviceRows.length === 0)) {
@@ -701,6 +701,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .upsert({ id: 'singleton', service_priority: localSvc, updated_at: new Date().toISOString() }, { onConflict: 'id' });
       if (migErr) console.error('[loadInitialData] service_priority migration error:', migErr);
       else console.log('[loadInitialData] migrated localStorage service_priority to system_state');
+    }
+
+    // ── Orphan walk-in block sweep (kills regenerating phantoms) ───────────
+    // A synthetic walk-in block has id `walkin:<queueId>`. It's only valid
+    // while its queue entry is live, or once it has a completed_services row
+    // (the darkened history block). If its queue id matches NEITHER, it's an
+    // orphan — left behind when a split/reassign forked the visit's ids, then
+    // re-uploaded forever by whichever device still had the stale queue child
+    // cached (the "phantom Cory in Kimberly's slot" that returned after every
+    // manual delete). This runs at load against the freshly-pulled, authoritative
+    // queue + completed rows, so it can never touch a live walk-in. Scope is
+    // limited to today/yesterday so historical appt-book blocks (whose
+    // completed rows may have been pruned at 14d) are never disturbed.
+    {
+      const todayLA = getTodayLA();
+      const yref = new Date();
+      yref.setDate(yref.getDate() - 1);
+      const recentDates = new Set([todayLA, getLocalDateStr(yref)]);
+      const liveQueueIds = new Set(queue.map((q) => q.id));
+      const completedIds = new Set(completed.map((c) => c.id));
+      const orphanWalkInIds = appointments
+        .filter((a) => a.id.startsWith('walkin:') && recentDates.has(a.date))
+        .filter((a) => {
+          const qid = a.id.slice('walkin:'.length);
+          return !liveQueueIds.has(qid) && !completedIds.has(qid);
+        })
+        .map((a) => a.id);
+      if (orphanWalkInIds.length > 0) {
+        const orphanSet = new Set(orphanWalkInIds);
+        appointments = appointments.filter((a) => !orphanSet.has(a.id));
+        const BATCH = 100;
+        for (let i = 0; i < orphanWalkInIds.length; i += BATCH) {
+          const idSlice = orphanWalkInIds.slice(i, i + BATCH);
+          const { error } = await supabase.from('appointments').delete().in('id', idSlice);
+          if (error) console.warn('[loadInitialData] orphan walk-in sweep failed:', error.message);
+        }
+        console.log(`[loadInitialData] swept ${orphanWalkInIds.length} orphan walk-in block(s)`);
+      }
     }
 
     dispatch({ type: 'LOAD_STATE', state: {
