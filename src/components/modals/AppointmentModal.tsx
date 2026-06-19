@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar, History, Receipt } from 'lucide-react';
 import Modal from '../shared/Modal';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import DatePickerPopover from '../shared/DatePickerPopover';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
+import { formatMoneyCents } from '../../lib/tickets';
 import {
   upsertCustomerFromIntake, toTitleCase, formatPhoneDashed,
   searchCustomers, displayCustomerName, normalizePhone, matchAppointments,
@@ -1680,6 +1681,79 @@ function MatchedCustomerBanner({
   onClear: () => void;
   onDelete: (apptId: string) => void;
 }) {
+  // ── Previous-services history ────────────────────────────────────────────
+  // Lazy-loaded the first time the receptionist opens it. Tickets carry no
+  // phone (always blank) and the salon disambiguates same-name clients with a
+  // numeric suffix in the NAME itself ("Jennifer 2"), so a client's past
+  // visits are matched by exact (case-insensitive) name.
+  type HistItem = { name: string; staff: string | null; kind: string; qty: number; extCents: number | null };
+  type HistVisit = {
+    ticketId: string;
+    ticketNumber: number | null;
+    date: string;
+    services: string[];
+    staff: string[];
+    items: HistItem[];
+    subtotalCents: number | null;
+    discountCents: number | null;
+    taxCents: number | null;
+    tipCents: number | null;
+    totalCents: number | null;
+  };
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyRows, setHistoryRows] = useState<HistVisit[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [viewVisit, setViewVisit] = useState<HistVisit | null>(null);
+
+  async function toggleHistory() {
+    if (historyRows !== null) { setShowHistory((v) => !v); return; }
+    setShowHistory(true);
+    setHistoryLoading(true);
+    try {
+      const name = displayCustomerName(customer).trim();
+      const { data, error } = await supabase
+        .from('tickets')
+        .select('id, ticket_number, business_date, status, subtotal_cents, discount_cents, tax_cents, tip_cents, total_cents, ticket_items(name, staff1_name, kind, quantity, ext_price_cents, sort_order)')
+        .ilike('client_name', name)
+        .neq('status', 'voided')
+        .order('business_date', { ascending: false })
+        .limit(60);
+      if (error) throw error;
+      type TI = { name: string; staff1_name: string | null; kind: string; quantity: number | null; ext_price_cents: number | null; sort_order: number | null };
+      type TRow = {
+        id: string; ticket_number: number | null; business_date: string;
+        subtotal_cents: number | null; discount_cents: number | null; tax_cents: number | null;
+        tip_cents: number | null; total_cents: number | null; ticket_items?: TI[];
+      };
+      const rows = (data ?? [])
+        .map((t) => {
+          const tt = t as TRow;
+          const items = (tt.ticket_items ?? []).slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+          const serviceItems = items.filter((i) => i.kind === 'service');
+          return {
+            ticketId: tt.id,
+            ticketNumber: tt.ticket_number,
+            date: tt.business_date,
+            services: serviceItems.map((i) => i.name),
+            staff: Array.from(new Set(serviceItems.map((i) => i.staff1_name).filter((s): s is string => !!s))),
+            items: items.map((i) => ({ name: i.name, staff: i.staff1_name, kind: i.kind, qty: i.quantity ?? 1, extCents: i.ext_price_cents })),
+            subtotalCents: tt.subtotal_cents,
+            discountCents: tt.discount_cents,
+            taxCents: tt.tax_cents,
+            tipCents: tt.tip_cents,
+            totalCents: tt.total_cents,
+          } as HistVisit;
+        })
+        .filter((r) => r.services.length > 0);
+      setHistoryRows(rows);
+    } catch (e) {
+      console.warn('[appt] client history load failed', e);
+      setHistoryRows([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
   // Build a self-contained printable HTML page and open it in a new window
   // so the salon can hand the client a paper schedule of their upcoming
   // visits. window.print() runs onload; nothing in the parent tab is
@@ -1779,16 +1853,27 @@ ${rows
           >
             Clear
           </button>
-          <button
-            type="button"
-            onClick={handlePrint}
-            disabled={openAppointments.length === 0}
-            title={openAppointments.length === 0 ? 'No upcoming appointments to print' : 'Print upcoming appointments'}
-            aria-label="Print upcoming appointments"
-            className="flex items-center justify-center w-7 h-7 rounded-md text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 disabled:text-gray-300 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
-          >
-            <Printer size={14} />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={toggleHistory}
+              title="View this client's previous services"
+              aria-label="View previous services"
+              className={`flex items-center justify-center w-7 h-7 rounded-md transition-colors ${showHistory ? 'text-emerald-900 bg-emerald-100' : 'text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100'}`}
+            >
+              <History size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={handlePrint}
+              disabled={openAppointments.length === 0}
+              title={openAppointments.length === 0 ? 'No upcoming appointments to print' : 'Print upcoming appointments'}
+              aria-label="Print upcoming appointments"
+              className="flex items-center justify-center w-7 h-7 rounded-md text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 disabled:text-gray-300 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+            >
+              <Printer size={14} />
+            </button>
+          </div>
         </div>
       </div>
       {openAppointments.length > 0 && (
@@ -1831,6 +1916,92 @@ ${rows
             </p>
           )}
         </div>
+      )}
+      {showHistory && (
+        <div className="rounded-lg bg-white border border-emerald-100 overflow-hidden">
+          <div className="px-3 py-1.5 bg-emerald-50/60 border-b border-emerald-100 font-mono text-[10px] tracking-wider font-semibold text-emerald-700 uppercase">
+            Previous services
+          </div>
+          {historyLoading && (
+            <p className="font-mono text-[11px] text-gray-400 px-3 py-3 text-center">Loading history…</p>
+          )}
+          {!historyLoading && historyRows && historyRows.length === 0 && (
+            <p className="font-mono text-[11px] text-gray-400 px-3 py-3 text-center">No previous services on file.</p>
+          )}
+          {!historyLoading && historyRows && historyRows.length > 0 && (
+            <div className="grid grid-cols-[84px_1fr_1fr_28px] gap-2 px-3 py-1.5 bg-emerald-50/40 border-b border-emerald-100 font-mono text-[10px] tracking-wider font-semibold text-emerald-700/80 uppercase">
+              <span>Date</span>
+              <span>Services</span>
+              <span>Staff</span>
+              <span aria-hidden="true" />
+            </div>
+          )}
+          {!historyLoading && historyRows && historyRows.slice(0, 20).map((r, i) => (
+            <div
+              key={`${r.ticketId}-${i}`}
+              className="grid grid-cols-[84px_1fr_1fr_28px] gap-2 px-3 py-2 border-b border-emerald-50 last:border-b-0 items-center"
+            >
+              <span className="font-mono text-xs text-gray-800">{formatDate(r.date)}</span>
+              <span className="font-mono text-xs text-gray-700">{r.services.join(', ') || '—'}</span>
+              <span className="font-mono text-xs text-gray-700">{r.staff.join(', ') || '—'}</span>
+              <button
+                type="button"
+                onClick={() => setViewVisit(r)}
+                title="View full ticket"
+                aria-label="View full ticket"
+                className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+              >
+                <Receipt size={14} />
+              </button>
+            </div>
+          ))}
+          {!historyLoading && historyRows && historyRows.length > 20 && (
+            <p className="font-mono text-[10px] text-gray-400 px-3 py-1 text-center">
+              Showing 20 of {historyRows.length} visits
+            </p>
+          )}
+        </div>
+      )}
+      {viewVisit && (
+        <Modal
+          title={viewVisit.ticketNumber ? `Ticket #${viewVisit.ticketNumber}` : 'Ticket'}
+          onClose={() => setViewVisit(null)}
+          width="max-w-md"
+        >
+          <div className="font-mono">
+            <p className="text-xs text-gray-500 mb-3">
+              {formatDate(viewVisit.date)} · {displayCustomerName(customer)}
+            </p>
+            <div className="border border-gray-100 rounded-lg overflow-hidden">
+              {viewVisit.items.map((it, i) => (
+                <div key={i} className="flex items-center justify-between gap-3 px-3 py-2 border-b border-gray-50 last:border-b-0">
+                  <div className="min-w-0">
+                    <p className="text-sm text-gray-900 truncate">{it.qty > 1 ? `${it.qty}× ` : ''}{it.name}</p>
+                    {it.staff && <p className="text-[11px] text-gray-500">{it.staff}</p>}
+                  </div>
+                  <span className="text-sm text-gray-700 whitespace-nowrap">{it.extCents != null ? formatMoneyCents(it.extCents) : '—'}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 space-y-1 text-sm">
+              {viewVisit.subtotalCents != null && (
+                <div className="flex justify-between text-gray-600"><span>Subtotal</span><span>{formatMoneyCents(viewVisit.subtotalCents)}</span></div>
+              )}
+              {viewVisit.discountCents != null && viewVisit.discountCents > 0 && (
+                <div className="flex justify-between text-gray-600"><span>Discount</span><span>−{formatMoneyCents(viewVisit.discountCents)}</span></div>
+              )}
+              {viewVisit.taxCents != null && viewVisit.taxCents > 0 && (
+                <div className="flex justify-between text-gray-600"><span>Tax</span><span>{formatMoneyCents(viewVisit.taxCents)}</span></div>
+              )}
+              {viewVisit.tipCents != null && viewVisit.tipCents > 0 && (
+                <div className="flex justify-between text-gray-600"><span>Tip</span><span>{formatMoneyCents(viewVisit.tipCents)}</span></div>
+              )}
+              {viewVisit.totalCents != null && (
+                <div className="flex justify-between font-bold text-gray-900 pt-1 border-t border-gray-100"><span>Total</span><span>{formatMoneyCents(viewVisit.totalCents)}</span></div>
+              )}
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );
