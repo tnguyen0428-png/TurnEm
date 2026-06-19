@@ -1056,8 +1056,21 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
 
     case 'CANCEL_SERVICE': {
       const manicurist = state.manicurists.find((m) => m.id === action.manicuristId);
-      if (!manicurist || !manicurist.currentClient) return state;
-      const currentClientId = manicurist.currentClient;
+      if (!manicurist) return state;
+      // Same dropped-write fallback as COMPLETE_SERVICE: a manicurist row can
+      // be 'available'/currentClient=null while their queue entry is still
+      // inProgress (ManicuristPanel.reconcileBusy repaints the card busy, so
+      // CANCEL is visible). Derive the client from the queue so CANCEL never
+      // no-ops. Prefer a real entry over an `-add-` child, mirroring reconcileBusy.
+      let currentClientId = manicurist.currentClient;
+      if (!currentClientId) {
+        const assigned = state.queue.filter(
+          (c) => c.status === 'inProgress' && c.assignedManicuristId === action.manicuristId
+        );
+        const qc = assigned.find((c) => !/-add-/.test(c.id)) ?? assigned[0];
+        currentClientId = qc?.id ?? null;
+      }
+      if (!currentClientId) return state;
       const client = state.queue.find((c) => c.id === currentClientId);
 
       // Add-child detection: synthetic queue entries created by the ticket
@@ -1123,8 +1136,25 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
 
     case 'COMPLETE_SERVICE': {
       const manicurist = state.manicurists.find((m) => m.id === action.manicuristId);
-      if (!manicurist || !manicurist.currentClient) return state;
-      const client = state.queue.find((c) => c.id === manicurist.currentClient);
+      if (!manicurist) return state;
+      // Resolve the in-service client id. Normally it's manicurist.currentClient,
+      // but a dropped status/currentClient write can leave the manicurist row
+      // 'available'/null while their queue entry is still inProgress. In that
+      // case ManicuristPanel.reconcileBusy still paints the card busy (so the
+      // DONE button is visible), yet the old guard `!manicurist.currentClient`
+      // bailed and DONE silently no-op'd (Kelly×Ally, 2026-06-16). Fall back to
+      // the queue entry assigned to this manicurist so DONE always completes.
+      // Prefer a real entry over an add-child, mirroring reconcileBusy.
+      let clientId = manicurist.currentClient;
+      if (!clientId) {
+        const assigned = state.queue.filter(
+          (c) => c.status === 'inProgress' && c.assignedManicuristId === action.manicuristId
+        );
+        const qc = assigned.find((c) => !/-add-/.test(c.id)) ?? assigned[0];
+        clientId = qc?.id ?? null;
+      }
+      if (!clientId) return state;
+      const client = state.queue.find((c) => c.id === clientId);
       const now = Date.now();
       const clientHadWax = client ? clientHasAnyWaxService(client.services, state.salonServices) : false;
       const updatedManicurists = state.manicurists.map((m) =>
@@ -1132,21 +1162,36 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
           ? { ...m, status: 'available' as const, currentClient: null, hasWax: clientHadWax ? true : m.hasWax }
           : m
       );
-      const updatedQueue = state.queue.filter((c) => c.id !== manicurist.currentClient);
+      const updatedQueue = state.queue.filter((c) => c.id !== clientId);
       if (!client) {
         return { ...state, manicurists: updatedManicurists, queue: updatedQueue };
       }
-      // Only mark a service as requested if the completing manicurist was specifically
+      // ── Turn credit follows the ASSIGNED tech, not the completing card ──
+      // The receipt line (ticket_items.staff1_id) is built from the queue
+      // entry's assignedManicuristId (see lib/tickets.ts). Stamping the
+      // completed_services row with `manicurist` — whoever's card pressed DONE
+      // — mis-credits split / deferred services to the wrong tech whenever the
+      // completing card isn't the assigned one (Leo/Jennifer #14, Kim Goodman
+      // #39, Megan #6, Saeah #24, …). Credit the assigned tech instead so the
+      // history row matches the receipt by construction. The completing card is
+      // still freed above (updatedManicurists keys off action.manicuristId).
+      // Falls back to the completer when there's no/unknown assignedManicuristId.
+      const creditMani =
+        (client.assignedManicuristId
+          ? state.manicurists.find((m) => m.id === client.assignedManicuristId)
+          : null) ?? manicurist;
+      const creditId = creditMani.id;
+      // Only mark a service as requested if the credited manicurist was specifically
       // the one requested for it. Without this check, a request for Manicurist X on
       // Service A would incorrectly show an R badge on Manicurist Y's Service B entry.
       const requestedServices = (client.serviceRequests || [])
-        .filter((r) => r.manicuristIds && r.manicuristIds.includes(action.manicuristId))
+        .filter((r) => r.manicuristIds && r.manicuristIds.includes(creditId))
         .map((r) => r.service);
-      // Whole-entry request flag: set when the client was requested AND this manicurist
-      // is the requested one. Covers the SingleServiceAssign path where isRequested is
-      // set but serviceRequests isn't populated per-service.
+      // Whole-entry request flag: set when the client was requested AND the credited
+      // manicurist is the requested one. Covers the SingleServiceAssign path where
+      // isRequested is set but serviceRequests isn't populated per-service.
       const wholeEntryRequested = !!client.isRequested &&
-        client.requestedManicuristId === action.manicuristId;
+        client.requestedManicuristId === creditId;
       // Fallback when a split-and-assign child ended up with no services in
       // its services[] (e.g. the multi-service assign distributed all services
       // to siblings and left this child empty, or a later edit cleared it).
@@ -1155,7 +1200,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // services array, then fall back to the serviceRequests entries that
       // target this manicurist.
       const fallbackServicesFromRequests = (client.serviceRequests || [])
-        .filter((r) => r.manicuristIds && r.manicuristIds.includes(action.manicuristId))
+        .filter((r) => r.manicuristIds && r.manicuristIds.includes(creditId))
         .map((r) => r.service);
       const recordedServices =
         client.services && client.services.length > 0
@@ -1172,9 +1217,9 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         clientName: client.clientName,
         services: recordedServices,
         turnValue: client.turnValue,
-        manicuristId: manicurist.id,
-        manicuristName: manicurist.name,
-        manicuristColor: manicurist.color,
+        manicuristId: creditMani.id,
+        manicuristName: creditMani.name,
+        manicuristColor: creditMani.color,
         startedAt: client.startedAt ?? now,
         completedAt: now,
         requestedServices: requestedServices.length > 0 ? requestedServices : undefined,
@@ -1189,7 +1234,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         // clock-in at save (capturing any drag-reorders); this completion-time
         // stamp is the baseline that survives even if the device never saves
         // and the nightly archive picks the entry up after a daily reset.
-        manicuristClockInTime: manicurist.clockInTime ?? null,
+        manicuristClockInTime: creditMani.clockInTime ?? null,
       };
       // Idempotent merge: if a row with this id already exists in completed
       // (e.g. a remote echo or a duplicate dispatch), replace it in place

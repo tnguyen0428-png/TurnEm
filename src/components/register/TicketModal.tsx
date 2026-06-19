@@ -1774,9 +1774,17 @@ export default function TicketModal({
         apptIdsToComplete.add(ticket.appointmentId);
       }
       if (ticket.queueEntryId) {
-        const completedRow = state.completed.find((c) => c.id === ticket.queueEntryId);
-        if (completedRow?.originalAppointmentId) {
-          apptIdsToComplete.add(completedRow.originalAppointmentId);
+        const vId = ticket.queueEntryId;
+        // Darken EVERY service block on this visit, not just the bare-visit
+        // row. On a multi-tech / split visit each child completes under its own
+        // id (`${visit}-mani-X`, `${visit}-waiting`, `${visit}-add-X`) and
+        // carries its own originalAppointmentId; collecting only the bare-visit
+        // row left the other techs' blocks light (Maddie/Sam #61). Sweep every
+        // completed row belonging to this visit so all blocks darken together.
+        for (const c of state.completed) {
+          if ((c.id === vId || c.id.startsWith(`${vId}-`)) && c.originalAppointmentId) {
+            apptIdsToComplete.add(c.originalAppointmentId);
+          }
         }
       }
       for (const id of apptIdsToComplete) {
@@ -1816,7 +1824,10 @@ export default function TicketModal({
     if (ticket.queueEntryId) {
       const visitId = ticket.queueEntryId;
       const addChildPrefix = `${visitId}-add-`;
-      const splitPrefixes = [`${visitId}-mani-`, `${visitId}-waiting-`];
+      // NOTE: the deferred child id is `${visit}-waiting` (no trailing dash),
+      // so the prefix must be `-waiting` not `-waiting-` — otherwise a held
+      // waiting-child never auto-completes at checkout and lingers in-service.
+      const splitPrefixes = [`${visitId}-mani-`, `${visitId}-waiting`];
       for (const m of state.manicurists) {
         if (!m.currentClient) continue;
         const cc = m.currentClient;
