@@ -1844,56 +1844,22 @@ export default function TicketModal({
           dispatch({ type: 'COMPLETE_SERVICE', manicuristId: m.id });
         }
       }
-      // ── Turn-credit consistency heal ──────────────────────────────────
-      // When a split service is reassigned to a different tech, its child
-      // queue id still encodes the ORIGINAL tech (`${visit}-mani-<orig>`) and
-      // COMPLETE_SERVICE credits whoever is *holding* the entry, which can
-      // differ from the staff on the receipt line — the register-confirmed
-      // truth. That silently mis-credits the turn (Megan #6 2026-06-11: LISA
-      // vs LEO; Samantha 6/7; Stephanie 6/2; Kylie #27 2026-06-12: JOE vs LEO).
-      //
-      // The completed_services row's id equals the line's queueEntryId, and
-      // turn totals are derived from state.completed, so the fix is to force
-      // the completed row's tech back to the receipt line.
-      //
-      // IMPORTANT — why we no longer key off the live holder: the previous
-      // version only healed when a manicurist was STILL holding the slot at
-      // checkout (`m.currentClient === queueEntryId`). But the wrong credit is
-      // baked into state.completed the moment the service is completed, which is
-      // usually BEFORE checkout. Once the slot is released the holder is gone
-      // (null), so the heal no-op'd and the bad credit stood — exactly how
-      // Kylie #27 slipped through after the 3d72003 fix shipped. We now derive
-      // the currently-credited tech from the completed row first (holder only
-      // as a fallback for a service finalized in this same checkout, whose
-      // completed row isn't in this closure's state yet), so the heal fires
-      // whether or not anyone still holds the slot.
-      //
-      // Only single-staff service lines are healed; two-staff lines split
-      // credit and are left to their own logic. Voided rows contribute no
-      // turns and are left untouched.
-      for (const it of ticket.items ?? []) {
-        if (it.kind !== 'service' || !it.queueEntryId || !it.staff1Id || it.staff2Id) continue;
-        const existing = state.completed.find((c) => c.id === it.queueEntryId);
-        if (existing?.voided) continue;
-        const holder = state.manicurists.find((m) => m.currentClient === it.queueEntryId);
-        // Who the turn currently lands on: the completed row if it exists,
-        // otherwise the tech finalizing it in this same checkout.
-        const creditedId = existing?.manicuristId ?? holder?.id;
-        if (!creditedId || creditedId === it.staff1Id) continue;
-        console.warn(
-          `[ticket] turn-credit mismatch on ${it.queueEntryId}: credited to ${existing?.manicuristName ?? holder?.name} but receipt line is ${it.staff1Name} — crediting the receipt line`,
-        );
-        dispatch({
-          type: 'UPDATE_COMPLETED',
-          id: it.queueEntryId,
-          updates: {
-            manicuristId: it.staff1Id,
-            manicuristName: it.staff1Name,
-            manicuristColor: it.staff1Color,
-          },
-          skipEditFlag: true,
-        });
-      }
+      // ── Turn-credit consistency heal: REMOVED 2026-06-19 ──────────────
+      // This loop used to force every completed_services row's tech to match
+      // the receipt line that shared its queueEntryId. It is now both
+      // redundant AND the cause of the "credit flips at payment" bug:
+      //   • COMPLETE_SERVICE credits the ASSIGNED tech at the source, so on a
+      //     clean visit the completed row is already correct — no heal needed.
+      //   • A genuine cashier staff-edit is reallocated reliably by
+      //     reallocateTurnsForStaffChanges (it only fires for a line whose
+      //     staff actually changed, repoints that row AND moves total_turns).
+      // The removed heal matched lines → rows purely by queueEntryId, but
+      // split-child ids get shuffled vs their actual staff, so on a multi-tech
+      // ticket it paired the wrong line to a row and SWAPPED correct credits at
+      // payment (A's turn → B and B's → A in a single close). That is exactly
+      // the "nothing changed during service, but the credit moved after I hit
+      // process" symptom. Do NOT re-add a blanket heal here — fix attribution
+      // at assign/complete (and via reallocateTurnsForStaffChanges) instead.
       for (const q of state.queue) {
         if (q.id.startsWith(addChildPrefix)) {
           dispatch({ type: 'REMOVE_CLIENT', id: q.id });
