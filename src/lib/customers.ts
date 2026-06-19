@@ -362,17 +362,33 @@ export async function upsertCustomerFromIntake(input: {
  * Returns up to `limit` rows ordered by recent updates so frequent visitors
  * float to the top.
  */
-export async function searchCustomers(query: string, limit = 8): Promise<Customer[]> {
+export async function searchCustomers(
+  query: string,
+  limit = 8,
+  field: 'first' | 'last' | 'phone' | 'any' = 'any',
+): Promise<Customer[]> {
   const q = (query ?? '').trim();
   if (!q) return [];
+  // Strip characters that have special meaning inside a PostgREST or()/ilike
+  // filter so they can't break the query or be abused.
+  const esc = q.replace(/[%,()]/g, ' ').trim();
+  if (!esc) return [];
   const phoneDigits = normalizePhone(q);
   let req = supabase.from('customers').select('*').limit(limit);
-  if (phoneDigits.length >= 3) {
+  if (field === 'phone' || (field === 'any' && phoneDigits.length >= 3)) {
     // Phone match — column stores xxx-xxx-xxxx so a substring of just the
-    // digits won't match. Allow either form by also OR'ing the ilike chain.
-    req = req.or(`phone.ilike.%${phoneDigits}%,phone.ilike.%${q}%,first_name.ilike.%${q}%,last_name.ilike.%${q}%`);
+    // digits won't match. Allow either form.
+    req = req.or(`phone.ilike.%${phoneDigits}%,phone.ilike.%${esc}%`);
+  } else if (field === 'last') {
+    // Searching by last name → match the START of last_name only. Prevents a
+    // last-name search ("Carr") from dragging in first names that merely
+    // contain those letters — the clutter the receptionist hit.
+    req = req.ilike('last_name', `${esc}%`);
+  } else if (field === 'first') {
+    req = req.ilike('first_name', `${esc}%`);
   } else {
-    req = req.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%`);
+    // 'any' — prefix-match the start of EITHER name (not a substring anywhere).
+    req = req.or(`first_name.ilike.${esc}%,last_name.ilike.${esc}%`);
   }
   const { data, error } = await req.order('updated_at', { ascending: false });
   if (error) { console.warn('[customers] searchCustomers:', error.message); return []; }

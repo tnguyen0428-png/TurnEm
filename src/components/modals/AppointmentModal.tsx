@@ -171,13 +171,23 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const clientName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim();
   const [clientPhone, setClientPhone] = useState(_draftName?.clientPhone ?? '');
 
-  // Debounced live search for existing customer profiles.
+  // Debounced live search for existing customer profiles. Search the field the
+  // receptionist is actually typing in (phone > last name > first name) and
+  // match by prefix, so a last-name lookup returns last-name matches only — no
+  // first-name clutter.
   useEffect(() => {
-    const q = clientFirstName.trim() || clientLastName.trim() || clientPhone.trim();
+    const fn = clientFirstName.trim();
+    const ln = clientLastName.trim();
+    const ph = clientPhone.trim();
+    let q = '';
+    let field: 'first' | 'last' | 'phone' | 'any' = 'any';
+    if (normalizePhone(ph).length >= 3) { q = ph; field = 'phone'; }
+    else if (ln) { q = ln; field = 'last'; }
+    else if (fn) { q = fn; field = 'first'; }
     if (!q) { setMatches([]); return; }
     let cancelled = false;
     const handle = setTimeout(async () => {
-      const rows = await searchCustomers(q, 6);
+      const rows = await searchCustomers(q, 6, field);
       if (!cancelled) setMatches(rows);
     }, 200);
     return () => { cancelled = true; clearTimeout(handle); };
