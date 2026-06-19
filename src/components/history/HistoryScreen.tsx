@@ -439,18 +439,21 @@ export default function HistoryScreen() {
   // Per-manicurist turn totals.
   //
   // For TODAY:
-  //   - Include every manicurist currently clocked IN (with their live
-  //     totalTurns) AND every manicurist who already did at least one
-  //     service today (so the list doesn't lose people mid-day when they
-  //     clock out).
+  //   - Include every manicurist currently clocked IN AND every manicurist
+  //     who already did at least one service today (so the list doesn't lose
+  //     people mid-day when they clock out).
   //   - Sort EVERYONE by clock-in time so the chronological order is
   //     preserved even after someone clocks out. Clocked-in rows use
   //     their live `clockInTime`; clocked-out rows fall back to the
   //     earliest `startedAt` from their displayedEntries today (the time
   //     of their first completed service is the best proxy for when they
   //     were working).
-  //   - For clocked-out rows we sum non-voided entries since their live
-  //     `totalTurns` may have reset on clock-out.
+  //   - TURN COUNT IS SINGLE-SOURCE: each row's number is the sum of that
+  //     tech's non-voided entries in `displayedEntries` (completed rows PLUS
+  //     in-service synthetic rows) — NOT the separate live `total_turns`
+  //     counter. The two were maintained independently and drifted apart
+  //     (6/18 Mia/Christina/Ly); deriving the count straight from the records
+  //     it sits above keeps the number and the service list in lockstep.
   //
   // For PAST DAYS: build entirely from the day's saved entries.
   const turnsPerManicurist = useMemo<TurnsRowEntry[]>(() => {
@@ -473,7 +476,7 @@ export default function HistoryScreen() {
         byId.set(m.id, {
           id: m.id,
           name: m.name,
-          turns: m.clockedIn ? m.totalTurns : 0,
+          turns: 0,
           color: m.color,
           clockInTime: m.clockedIn ? formatTime(m.clockInTime) : '',
           sortTime: m.clockInTime,
@@ -498,11 +501,15 @@ export default function HistoryScreen() {
         } else if (startTime < byId.get(e.manicuristId)!.sortTime) {
           byId.get(e.manicuristId)!.sortTime = startTime;
         }
-        // Only sum entries for clocked-out rows (clockInTime === '') —
-        // clocked-in rows already have live totalTurns and double-counting
-        // would inflate them.
+        // SINGLE-SOURCE turn count: sum every non-voided entry for EVERY row —
+        // clocked-in and clocked-out alike. displayedEntries already contains
+        // both the completed rows AND the in-service synthetic rows, so this
+        // sum equals completed + in-progress without reading the live
+        // total_turns counter (which drifted out of sync with the records on
+        // 6/18 — Mia/Christina/Ly). The count now always equals the service
+        // list rendered beneath it.
         const existing = byId.get(e.manicuristId)!;
-        if (existing.clockInTime === '' && !e.voided) {
+        if (!e.voided) {
           existing.turns += e.turnValue;
         }
       }
