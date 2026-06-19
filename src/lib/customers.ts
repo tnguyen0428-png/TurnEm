@@ -363,35 +363,59 @@ export async function upsertCustomerFromIntake(input: {
  * float to the top.
  */
 export async function searchCustomers(
-  query: string,
+  criteria: string | { first?: string; last?: string; phone?: string },
   limit = 8,
-  field: 'first' | 'last' | 'phone' | 'any' = 'any',
 ): Promise<Customer[]> {
-  const q = (query ?? '').trim();
-  if (!q) return [];
+  // Back-compat: a bare string is a phone lookup (the only string caller).
+  const c = typeof criteria === 'string' ? { phone: criteria } : criteria;
   // Strip characters that have special meaning inside a PostgREST or()/ilike
   // filter so they can't break the query or be abused.
-  const esc = q.replace(/[%,()]/g, ' ').trim();
-  if (!esc) return [];
-  const phoneDigits = normalizePhone(q);
-  let req = supabase.from('customers').select('*').limit(limit);
-  if (field === 'phone' || (field === 'any' && phoneDigits.length >= 3)) {
-    // Phone match — column stores xxx-xxx-xxxx so a substring of just the
-    // digits won't match. Allow either form.
-    req = req.or(`phone.ilike.%${phoneDigits}%,phone.ilike.%${esc}%`);
-  } else if (field === 'last') {
-    // Searching by last name → match the START of last_name only. Prevents a
-    // last-name search ("Carr") from dragging in first names that merely
-    // contain those letters — the clutter the receptionist hit.
-    req = req.ilike('last_name', `${esc}%`);
-  } else if (field === 'first') {
-    req = req.ilike('first_name', `${esc}%`);
+  const clean = (s: string | undefined) => (s ?? '').replace(/[%,()]/g, ' ').trim();
+  const first = clean(c.first);
+  const last = clean(c.last);
+  const phoneRaw = (c.phone ?? '').trim();
+  const phoneDigits = normalizePhone(phoneRaw);
+
+  let req = supabase.from('customers').select('*').limit(Math.max(limit, 25));
+
+  if (phoneDigits.length >= 3) {
+    // Phone column stores xxx-xxx-xxxx, so a digits-only substring won't match;
+    // allow either form.
+    req = req.or(`phone.ilike.%${phoneDigits}%,phone.ilike.%${clean(phoneRaw)}%`);
+  } else if (first && last) {
+    // BOTH names given → require BOTH to prefix-match, so "Ju" + "Li" finds
+    // "Julie Li…" and excludes a "Li…" last name whose first name isn't "Ju".
+    req = req.ilike('first_name', `${first}%`).ilike('last_name', `${last}%`);
+  } else if (last) {
+    req = req.ilike('last_name', `${last}%`);
+  } else if (first) {
+    req = req.ilike('first_name', `${first}%`);
   } else {
-    // 'any' — prefix-match the start of EITHER name (not a substring anywhere).
-    req = req.or(`first_name.ilike.${esc}%,last_name.ilike.${esc}%`);
+    return [];
   }
+
   const { data, error } = await req.order('updated_at', { ascending: false });
   if (error) { console.warn('[customers] searchCustomers:', error.message); return []; }
-  return (data ?? []).map((r) => fromDb(r as DbCustomer));
+  const rows = (data ?? []).map((r) => fromDb(r as DbCustomer));
+
+  // Closest match on top: an exact first/last beats a prefix, a prefix beats
+  // nothing; ties break toward the shorter (tighter) name, then recency.
+  const fl = first.toLowerCase(), ll = last.toLowerCase();
+  const score = (cust: Customer) => {
+    const f = (cust.firstName ?? '').toLowerCase();
+    const l = (cust.lastName ?? '').toLowerCase();
+    let s = 0;
+    if (fl) s += f === fl ? 4 : f.startsWith(fl) ? 2 : 0;
+    if (ll) s += l === ll ? 4 : l.startsWith(ll) ? 2 : 0;
+    return s;
+  };
+  rows.sort((a, b) => {
+    const d = score(b) - score(a);
+    if (d !== 0) return d;
+    const la = `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim().length;
+    const lb = `${b.firstName ?? ''} ${b.lastName ?? ''}`.trim().length;
+    return la - lb;
+  });
+  return rows.slice(0, limit);
 }
 

@@ -171,23 +171,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const clientName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim();
   const [clientPhone, setClientPhone] = useState(_draftName?.clientPhone ?? '');
 
-  // Debounced live search for existing customer profiles. Search the field the
-  // receptionist is actually typing in (phone > last name > first name) and
-  // match by prefix, so a last-name lookup returns last-name matches only — no
-  // first-name clutter.
+  // Debounced live search for existing customer profiles. Pass first/last/phone
+  // separately so the search can require BOTH names to match when both are
+  // typed ("Ju" + "Li" → Julie, closest on top) and avoid first-name clutter on
+  // a last-name lookup.
   useEffect(() => {
     const fn = clientFirstName.trim();
     const ln = clientLastName.trim();
     const ph = clientPhone.trim();
-    let q = '';
-    let field: 'first' | 'last' | 'phone' | 'any' = 'any';
-    if (normalizePhone(ph).length >= 3) { q = ph; field = 'phone'; }
-    else if (ln) { q = ln; field = 'last'; }
-    else if (fn) { q = fn; field = 'first'; }
-    if (!q) { setMatches([]); return; }
+    if (!fn && !ln && normalizePhone(ph).length < 3) { setMatches([]); return; }
     let cancelled = false;
     const handle = setTimeout(async () => {
-      const rows = await searchCustomers(q, 6, field);
+      const rows = await searchCustomers({ first: fn, last: ln, phone: ph }, 6);
       if (!cancelled) setMatches(rows);
     }, 200);
     return () => { cancelled = true; clearTimeout(handle); };
@@ -331,7 +326,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       // and pre-check the box accordingly.
       const _phoneForLookup = (editing.clientPhone ?? '').trim();
       if (_phoneForLookup) {
-        searchCustomers(_phoneForLookup, 5).then((rows) => {
+        searchCustomers({ phone: _phoneForLookup }, 5).then((rows) => {
           const c = rows.find((r) => normalizePhone(r.phone) === normalizePhone(_phoneForLookup));
           if (!c) return;
           setMatchedCustomer(c);
