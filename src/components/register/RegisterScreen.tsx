@@ -152,8 +152,15 @@ export default function RegisterScreen() {
   }, [dateLA, state.completed, state.salonServices]);
 
   const [shifts, setShifts] = useState<Shift[]>([]);
+  // Gate the "start the day" overlay on the FIRST shift fetch completing.
+  // `shifts` starts empty on every mount, so without this flag, switching back
+  // to the Register tab flashes the START THE DAY prompt for a frame before
+  // fetchShiftsForDate resolves and the real open shift appears.
+  const [shiftsLoaded, setShiftsLoaded] = useState(false);
   const refreshShift = useCallback(async () => {
-    setShifts(await fetchShiftsForDate(dateLA));
+    const rows = await fetchShiftsForDate(dateLA);
+    setShifts(rows);
+    setShiftsLoaded(true);
   }, [dateLA]);
   useEffect(() => { void refreshShift(); }, [refreshShift]);
   const shift = useMemo(() => shifts.find((s) => s.status === 'open') ?? null, [shifts]);
@@ -168,7 +175,7 @@ export default function RegisterScreen() {
   // the register behind a "start the day" prompt so tickets can't be rung up
   // against an uncounted/uninitialized drawer. A previously-closed shift means
   // the day was run, so we don't block (header OPEN SHIFT button still works).
-  const needsShiftOpen = isToday && !shift && closedShifts.length === 0;
+  const needsShiftOpen = shiftsLoaded && isToday && !shift && closedShifts.length === 0;
 
   const [openTicket, setOpenTicket] = useState<Ticket | null>(null);
 
