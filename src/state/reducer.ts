@@ -730,20 +730,19 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const synthAppt = !client.originalAppointment || needsReSynth
         ? synthWalkInAppt(client, action.manicuristId, state.appointments, state.salonServices, state.manicurists)
         : null;
-      // Appointment-assignment placement (per Tony, 2026-06-20 — supersedes the
-      // 2026-06-08 "requests stay put" rule): when a receptionist ACTIVELY
-      // assigns an appt off the book, the block relocates into the ASSIGNED
-      // tech's column at the current time, parking at that tech's 8 AM column
-      // top if the now-slot overlaps an existing booking — REGARDLESS of whether
-      // it was a customer request. Rationale: once the client is seated and
-      // assigned, the booked time/column is stale; staff need to see the live
-      // placement in the assignee's column, not the original reservation slot.
-      // We do NOT set the isWalkIn flag here (per Tony 2026-06-20: the flashing
-      // "A" badge doesn't matter) — the block just moves and keeps its normal
-      // appt treatment (a request keeps its R badge + lock). The booked slot is
-      // preserved until this active assign — an un-assigned request still sits
-      // in its reserved spot.
-      const assignedApptPlacement = existingAppt
+      // Appointment-assignment placement (per Tony, 2026-06-20, refined later
+      // same day): when a receptionist ACTIVELY assigns a NON-REQUEST appt off
+      // the book, the block relocates into the ASSIGNED tech's column at the
+      // current time, parking at that tech's 8 AM column top if the now-slot
+      // overlaps an existing booking. Rationale: a parked/non-request booking's
+      // time+column is just a tentative placement, so once the client is seated
+      // staff need the live placement in the assignee's column.
+      // CUSTOMER REQUESTS are LEFT IN THEIR BOOKED SLOT, untouched (per Tony
+      // 2026-06-20: "do NOT move the request appt slots when assigned"). The
+      // reserved time/column is meaningful for a request and must stay put even
+      // after assignment — only non-requests move. We do NOT set the isWalkIn
+      // flag here (the flashing "A" badge doesn't matter).
+      const assignedApptPlacement = existingAppt && !client.isRequested
         ? pickWalkInStyleTime(
             client, action.manicuristId, state.appointments,
             state.salonServices, state.manicurists, new Date(now),
