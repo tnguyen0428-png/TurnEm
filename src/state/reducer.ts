@@ -759,6 +759,23 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                     manicuristId: action.manicuristId,
                     time: assignedApptPlacement.time,
                     sameTime: assignedApptPlacement.alignedWithBuddy,
+                    // CRITICAL for the block to actually relocate: the appt-book
+                    // renderer resolves each block's column from
+                    // serviceRequests[].manicuristIds[0] BEFORE falling back to
+                    // the top-level manicuristId. A non-request appt parked in a
+                    // column (dragged for visual scheduling) carries per-service
+                    // manicuristIds pointing at that parked column, so updating
+                    // only manicuristId above left the block sitting in the old
+                    // column — the receptionist had to drag it by hand
+                    // (Tony 2026-06-20). Re-point every request to the assignee
+                    // and clear the parked startTime so the services stack from
+                    // the new appt.time. clientRequest is preserved untouched, so
+                    // a customer request keeps its R badge.
+                    serviceRequests: (a.serviceRequests ?? []).map((r) => ({
+                      ...r,
+                      manicuristIds: [action.manicuristId],
+                      startTime: undefined,
+                    })),
                   }
                 : a,
             )
