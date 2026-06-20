@@ -2685,6 +2685,23 @@ export async function voidTicket(
         }
       }
 
+      // 2b. Mark every row for this visit voided=true BEFORE deleting. If the
+      //     delete below fails (network blip), the rows survive as voided=true
+      //     instead of as live credited work, so a later retry — or the
+      //     load-time half-applied-void reconciliation sweep in AppContext —
+      //     skips them in the refund loop above (`if (r.voided) continue`) and
+      //     can NEVER refund the same turn twice. The retry just re-deletes.
+      //     Without this, a refund-succeeded-but-delete-failed void left
+      //     non-voided rows that a second cleanup pass would double-credit-back
+      //     (the only double-refund hole in the void path). (2026-06-20)
+      const { error: voidMarkErr } = await supabase
+        .from('completed_services')
+        .update({ voided: true })
+        .or(`id.eq.${visitId},id.like.${visitId}-%`);
+      if (voidMarkErr) {
+        console.warn('[tickets] voidTicket completed_services void-mark:', voidMarkErr.message);
+      }
+
       // 3. Delete the completed_services rows for this visit. Doing this
       //    AFTER the rollback above ensures we still have the turn_value /
       //    manicurist_id information we need to compute the deltas. The
