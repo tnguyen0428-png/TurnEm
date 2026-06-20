@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket } from '../lib/tickets';
+import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket, voidTicket } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -597,7 +597,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       manicurists = defaultManicurists;
     }
     const queue = (queueRows || []).map(mapDbQueueEntry);
-    const completed = (completedRows || []).map((row: Record<string, unknown>) => {
+    let completed = (completedRows || []).map((row: Record<string, unknown>) => {
       const dbSvcs = row.services as string[] | null;
       const fallbackSvc = row.service as string;
       const services = (dbSvcs && dbSvcs.length > 0 ? dbSvcs : [fallbackSvc]).filter(Boolean) as ServiceType[];
@@ -701,6 +701,76 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .upsert({ id: 'singleton', service_priority: localSvc, updated_at: new Date().toISOString() }, { onConflict: 'id' });
       if (migErr) console.error('[loadInitialData] service_priority migration error:', migErr);
       else console.log('[loadInitialData] migrated localStorage service_priority to system_state');
+    }
+
+    // ── Half-applied void reconciliation (finishes interrupted voids) ──────
+    // A void is performed in two pieces that can desync: voidTicket() flips
+    // tickets.status='voided' FIRST, then refunds turns + deletes the visit's
+    // completed_services rows; the TicketModal caller then clears the queue
+    // entry + walk-in appt. If voidTicket returned false AFTER the status flip
+    // already committed, OR the ticket's queue_entry_id was null, the cleanup
+    // never ran — leaving a ticket marked 'voided' whose turn credit and
+    // walk-in block survive (Teresa #14, 2026-06-19; Panda's phantom 0.5).
+    //
+    // This load-time pass finishes any such half-applied void idempotently. It
+    // re-runs voidTicket (whose payments-delete + turn-rollback + completed-
+    // delete are all idempotent and keyed off the visit id) for every recently-
+    // voided ticket that STILL has live completed_services rows, then strips
+    // those rows from the in-memory `completed` array. Because the reducer
+    // wraps every action in convergeTotalTurns (which recomputes each
+    // manicurist's total from `completed` + `queue`), dropping the rows here
+    // auto-corrects the floor-card turn count in local state, while voidTicket
+    // persists the same correction to the DB (total_turns + row deletion). The
+    // orphan walk-in sweep that follows then removes the now-stale walkin:
+    // block, since its completed id is gone and its queue entry is dead.
+    //
+    // Idempotent + safe: skips tickets whose visit has no surviving completed
+    // rows (already clean) and never flips a status itself. Bounded to voids
+    // closed since yesterday so it's a tiny query that can't touch historical
+    // tickets (whose completed rows were pruned at 14d anyway).
+    {
+      const yref = new Date();
+      yref.setDate(yref.getDate() - 1);
+      const sinceIso = `${getLocalDateStr(yref)}T00:00:00`;
+      const { data: voidedTickets, error: vtErr } = await supabase
+        .from('tickets')
+        .select('id, queue_entry_id, void_reason')
+        .eq('status', 'voided')
+        .gte('closed_at', sinceIso);
+      if (vtErr) {
+        console.warn('[loadInitialData] void reconciliation fetch failed:', vtErr.message);
+      } else if (voidedTickets && voidedTickets.length > 0) {
+        const hasLiveRows = (visitId: string) =>
+          completed.some((c) => c.id === visitId || c.id.startsWith(`${visitId}-`));
+        const reconciledVisitIds: string[] = [];
+        for (const t of voidedTickets as Array<{
+          id: string;
+          queue_entry_id: string | null;
+          void_reason: string | null;
+        }>) {
+          const visitId = t.queue_entry_id;
+          if (!visitId) continue;          // no visit link → nothing keyed to refund
+          if (!hasLiveRows(visitId)) continue; // already fully cleaned → idempotent skip
+          const ok = await voidTicket(
+            t.id,
+            t.void_reason ?? 'reconcile: finish interrupted void',
+          );
+          if (!ok) {
+            console.warn('[loadInitialData] void reconcile: voidTicket retry returned false for', t.id);
+            continue;
+          }
+          reconciledVisitIds.push(visitId);
+        }
+        if (reconciledVisitIds.length > 0) {
+          completed = completed.filter(
+            (c) => !reconciledVisitIds.some((v) => c.id === v || c.id.startsWith(`${v}-`)),
+          );
+          console.log(
+            `[loadInitialData] reconciled ${reconciledVisitIds.length} half-applied void(s):`,
+            reconciledVisitIds,
+          );
+        }
+      }
     }
 
     // ── Orphan walk-in block sweep (kills regenerating phantoms) ───────────
