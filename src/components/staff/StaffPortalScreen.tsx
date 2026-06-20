@@ -146,6 +146,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 completedAt: new Date(r.completed_at).getTime(),
                 turnValue: Number(r.turn_value) || 0,
                 requestedServices: r.requested_services || [],
+                // Carry the audit/display flags the POS History uses so the
+                // staff list and turn count match the admin view. CRITICAL:
+                // `voided` MUST be mapped — recomputeTotalTurns skips rows where
+                // voided is truthy, but an UNMAPPED voided reads as `undefined`
+                // (falsy), so voided rows were silently counted and listed as
+                // normal services. That's why Panda showed 5.0 (4.5 real + a
+                // 0.5 voided "LATE" row) instead of 4.5.
+                isAppointment: !!r.is_appointment,
+                isRequested: !!r.is_requested,
+                edited: !!r.edited,
+                voided: !!r.voided,
                 // Real checkout price written by trg_sync_completed_service_prices
                 // on ticket close. Preferred over catalog price in entryTotalDollars.
                 priceCents: r.price_cents == null ? null : Number(r.price_cents),
@@ -949,7 +960,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               <p className="font-mono text-xs font-semibold text-gray-900">Services</p>
               <span className="font-mono text-[10px] text-gray-400 font-semibold">
                 {(isToday ? completedToday : historyEntries).reduce(
-                  (sum, e) => sum + (e.services?.length || 1),
+                  (sum, e) => sum + (e.voided ? 0 : (e.services?.length || 1)),
                   0,
                 )} completed
               </span>
@@ -1005,13 +1016,19 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               <div className="divide-y divide-gray-50">
                 {entries.map((entry) => {
                   const total = entryTotalDollars(entry);
+                  const isVoided = !!entry.voided;
                   return (
-                    <div key={entry.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                    <div key={entry.id} className={`px-4 py-3 flex items-center justify-between gap-3 ${isVoided ? 'opacity-60' : ''}`}>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-mono text-sm font-bold text-gray-900 mr-0.5 truncate max-w-[140px]">
                             {firstName(entry.clientName)}
                           </span>
+                          {isVoided && (
+                            <span className="font-mono text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200 rounded-full px-1.5 py-0.5 tracking-wider">
+                              VOID
+                            </span>
+                          )}
                           {entry.services.map((s, i) => {
                             const isRequested = entry.requestedServices?.includes(s);
                             return (
@@ -1029,7 +1046,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                           })}
                         </div>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className="font-mono text-[10px] text-gray-600 font-semibold">
+                          <span className={`font-mono text-[10px] font-semibold ${isVoided ? 'text-gray-400 line-through' : 'text-gray-600'}`}>
                             {entry.turnValue} turns
                           </span>
                           {entry.completedAt == null ? (
@@ -1057,7 +1074,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                     Total
                   </span>
                   <span className="font-mono text-base font-bold text-gray-900 tabular-nums">
-                    ${entries.reduce((sum, e) => sum + entryTotalDollars(e), 0).toFixed(0)}
+                    ${entries.reduce((sum, e) => sum + (e.voided ? 0 : entryTotalDollars(e)), 0).toFixed(0)}
                   </span>
                 </div>
               </div>
