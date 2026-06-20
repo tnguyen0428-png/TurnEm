@@ -730,21 +730,20 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const synthAppt = !client.originalAppointment || needsReSynth
         ? synthWalkInAppt(client, action.manicuristId, state.appointments, state.salonServices, state.manicurists)
         : null;
-      // Appointment-assignment placement (per Tony, 2026-06-08): placement on
-      // assignment depends on whether the appt is a customer REQUEST.
-      //   • Request (client.isRequested) → the client booked this tech at this
-      //     time, so the block STAYS in its booked slot. We leave the appt row
-      //     untouched (original time + column). No walk-in placement, no "W".
-      //   • Non-request → handled "the way a walk-in is handled": drop the
-      //     block into the ASSIGNED tech's column at the current time, parking
-      //     at that tech's 8 AM column top if the slot overlaps an existing
-      //     booking. We reuse the isWalkIn flag so the block gets the amber "W"
-      //     parked treatment and is draggable to confirm placement (executeDrop
-      //     clears the flag). Safe because the destructive delete paths
-      //     (REMOVE_CLIENT, CANCEL_SERVICE, AppContext delete-sync) only ever
-      //     delete *synthetic* walk-ins (id prefixed `walkin:`), so a real
-      //     booking carrying isWalkIn=true can never be auto-deleted.
-      const assignedApptPlacement = existingAppt && !client.isRequested
+      // Appointment-assignment placement (per Tony, 2026-06-20 — supersedes the
+      // 2026-06-08 "requests stay put" rule): when a receptionist ACTIVELY
+      // assigns an appt off the book, the block relocates into the ASSIGNED
+      // tech's column at the current time, parking at that tech's 8 AM column
+      // top if the now-slot overlaps an existing booking — REGARDLESS of whether
+      // it was a customer request. Rationale: once the client is seated and
+      // assigned, the booked time/column is stale; staff need to see the live
+      // placement in the assignee's column, not the original reservation slot.
+      // We do NOT set the isWalkIn flag here (per Tony 2026-06-20: the flashing
+      // "A" badge doesn't matter) — the block just moves and keeps its normal
+      // appt treatment (a request keeps its R badge + lock). The booked slot is
+      // preserved until this active assign — an un-assigned request still sits
+      // in its reserved spot.
+      const assignedApptPlacement = existingAppt
         ? pickWalkInStyleTime(
             client, action.manicuristId, state.appointments,
             state.salonServices, state.manicurists, new Date(now),
@@ -760,12 +759,11 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                     manicuristId: action.manicuristId,
                     time: assignedApptPlacement.time,
                     sameTime: assignedApptPlacement.alignedWithBuddy,
-                    isWalkIn: true,
                   }
                 : a,
             )
-          // Request appt (assignedApptPlacement === null) → leave the book
-          // exactly as booked. Also the fall-through when there is no appt.
+          // No linked appt (assignedApptPlacement === null and no synth) →
+          // nothing to move; leave appointments untouched.
           : state.appointments;
       return {
         ...state,
