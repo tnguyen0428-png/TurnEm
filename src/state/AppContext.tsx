@@ -1837,11 +1837,21 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // appears here is "removed because completed", not orphaned.
   const completedIds = new Set(completed.map((c) => c.id));
 
-  // Deletes: rows in prev that are no longer in current state. Use .in() to batch.
+  // Deletes: rows in prev that are no longer in current state. Batch the IN()
+  // list — a single .delete().in('id', [...]) with the whole previous-day queue
+  // (100-175 ids on a busy day) builds a multi-thousand-char URL the server
+  // rejects as too long (400), which fired a spurious "Sync failed" banner every
+  // morning at the daily reset even though the data was already safely archived.
+  // Chunks of 200 keep each request URL small. Same fix as the completed_services
+  // and sales-report ticket-id batching.
   const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
   if (removedIds.length > 0) {
-    const { error } = await withRetry(() => supabase.from('queue_entries').delete().in('id', removedIds));
-    if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    const QUEUE_DELETE_BATCH = 200;
+    for (let i = 0; i < removedIds.length; i += QUEUE_DELETE_BATCH) {
+      const slice = removedIds.slice(i, i + QUEUE_DELETE_BATCH);
+      const { error } = await withRetry(() => supabase.from('queue_entries').delete().in('id', slice));
+      if (error) { console.error('[syncQueue] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    }
   }
 
   // Upserts: only rows that are new or whose tracked fields changed. Batched into
