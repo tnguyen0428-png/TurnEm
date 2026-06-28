@@ -786,9 +786,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // completed rows may have been pruned at 14d) are never disturbed.
     {
       const todayLA = getTodayLA();
-      const yref = new Date();
-      yref.setDate(yref.getDate() - 1);
-      const recentDates = new Set([todayLA, getLocalDateStr(yref)]);
+      // TODAY ONLY. The previous version also swept "yesterday", but the nightly
+      // archive deletes past-day completed_services rows (moved to daily_history),
+      // so by load time there is no completed row left to prove a yesterday walk-in
+      // block is real — every legit prior-day walk-in looked like an orphan and got
+      // deleted (data loss 6/18+). Today's completed rows are still live, so the
+      // orphan check is only sound for today; the regenerating phantom also
+      // re-uploads against today's stale queue id, so today-only still kills it.
+      const recentDates = new Set([todayLA]);
       const liveQueueIds = new Set(queue.map((q) => q.id));
       const completedIds = new Set(completed.map((c) => c.id));
       const orphanWalkInIds = appointments
