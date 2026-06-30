@@ -1,4 +1,4 @@
-import type { AppState, Appointment, CompletedEntry, Manicurist, QueueEntry } from '../types';
+import type { AppState, Appointment, CompletedEntry, Manicurist, QueueEntry, ServiceRequest, ServiceType } from '../types';
 import type { AppAction } from './actions';
 import { clientHasAnyWaxService } from '../utils/salonRules';
 import { isFourthPositionSpecialService } from '../utils/priority';
@@ -1020,6 +1020,58 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         synthApptByChildId.set(e.id, appt);
         apptAcc.push(appt);
       }
+      // ── On-the-book split: fan the existing block across both columns ──
+      // When the parent client was booked as an appointment, the split
+      // children inherit originalAppointment, so NO synth block is made above
+      // (the `if (e.originalAppointment) continue;` skip). That left the one
+      // existing block sitting in its originally-booked column — staff had to
+      // drag it by hand when 2 services went to 2 techs (Tony 2026-06-29).
+      // The appt-book renderer resolves each service's column from
+      // serviceRequests[].manicuristIds[0] BEFORE falling back to the
+      // top-level manicuristId, so we re-point every assigned service's
+      // manicuristIds to its child's tech and clear the parked startTime.
+      // Mirrors the ASSIGN_CLIENT relocate branch, but per-service across
+      // multiple techs instead of moving the whole block to one column.
+      const svcTechByAppt = new Map<string, { service: string; tech: string }[]>();
+      for (const e of newEntries) {
+        if (!e.assignedManicuristId) continue;
+        if (synthApptByChildId.has(e.id)) continue; // walk-in child got its own block
+        const apptId = e.originalAppointment?.id;
+        if (!apptId) continue;
+        const list = svcTechByAppt.get(apptId) ?? [];
+        for (const svc of e.services) list.push({ service: svc, tech: e.assignedManicuristId });
+        svcTechByAppt.set(apptId, list);
+      }
+      const relocatedAppts = svcTechByAppt.size > 0
+        ? apptAcc.map((a) => {
+            const assigns = svcTechByAppt.get(a.id);
+            if (!assigns) return a;
+            // Per service name, a FIFO queue of techs to apply (handles the
+            // rare duplicate-service case deterministically).
+            const pending = new Map<string, string[]>();
+            for (const { service, tech } of assigns) {
+              const q = pending.get(service) ?? [];
+              q.push(tech);
+              pending.set(service, q);
+            }
+            // Re-point existing per-service requests first (in order),
+            // preserving clientRequest / durationAdjustment.
+            const nextReqs: ServiceRequest[] = (a.serviceRequests ?? []).map((r) => {
+              const q = pending.get(r.service);
+              if (!q || q.length === 0) return r;
+              const tech = q.shift()!;
+              return { ...r, manicuristIds: [tech], startTime: undefined };
+            });
+            // Any service whose tech is still pending had no existing request
+            // entry — append one so the block fans into that tech's column.
+            for (const [service, q] of pending) {
+              for (const tech of q) {
+                nextReqs.push({ service: service as ServiceType, manicuristIds: [tech], startTime: undefined });
+              }
+            }
+            return { ...a, serviceRequests: nextReqs };
+          })
+        : apptAcc;
       const queueById = new Map(filteredQueue.map((c) => [c.id, c]));
       for (const e of newEntries) {
         const synth = synthApptByChildId.get(e.id);
@@ -1027,7 +1079,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       }
       return {
         ...state,
-        appointments: apptAcc,
+        appointments: relocatedAppts,
         queue: Array.from(queueById.values()),
         manicurists: state.manicurists.map((m) => {
           const delta = turnDeltaByStaff.get(m.id) ?? 0;
