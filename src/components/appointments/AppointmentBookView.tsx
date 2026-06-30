@@ -791,7 +791,31 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
   }
 
   function getApptSvcs(appt: Appointment): string[] {
-    return (appt.services?.length ? appt.services : [appt.service as string]).filter(Boolean);
+    // `services[]` is the legacy per-slot summary, but it can drift out of
+    // sync with `service_requests` — e.g. a checkout add-line clobbered a
+    // booked party's services[] down to a single entry while service_requests
+    // still held all four slots (Sara Feaver 6/30: Kelly/Katelyn/Macy slots
+    // vanished from the book after checkout). service_requests is the per-slot
+    // source of truth (a booked multi-tech party renders ALL its slots from
+    // this one appt row), so we never let a slot that exists there go
+    // unrendered: keep services[] as the base, then append any service_request
+    // not already represented in it (count-aware). Normal appts where
+    // services[] and service_requests line up 1:1 are unchanged — nothing
+    // gets appended.
+    const base = (appt.services?.length ? appt.services : [appt.service as string]).filter(Boolean);
+    const reqs = appt.serviceRequests ?? [];
+    if (reqs.length === 0) return base;
+    const result = [...base];
+    const remaining = new Map<string, number>();
+    for (const s of base) remaining.set(s, (remaining.get(s) ?? 0) + 1);
+    for (const r of reqs) {
+      const name = r.service;
+      if (!name) continue;
+      const left = remaining.get(name) ?? 0;
+      if (left > 0) { remaining.set(name, left - 1); continue; } // already in services[]
+      result.push(name); // uncovered slot from service_requests — render it
+    }
+    return result;
   }
 
   function getServiceBlocks(mId: string | null): ServiceBlock[] {
