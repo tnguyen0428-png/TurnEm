@@ -770,11 +770,24 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                     // and clear the parked startTime so the services stack from
                     // the new appt.time. clientRequest is preserved untouched, so
                     // a customer request keeps its R badge.
-                    serviceRequests: (a.serviceRequests ?? []).map((r) => ({
-                      ...r,
-                      manicuristIds: [action.manicuristId],
-                      startTime: undefined,
-                    })),
+                    // BUT leave slots deliberately placed with a DIFFERENT tech
+                    // alone (keep their manicuristIds AND startTime). A multi-
+                    // tech booking — built by dragging each service block into a
+                    // separate manicurist's column — has serviceRequests pointing
+                    // at several different techs. Blindly mapping every one onto
+                    // action.manicuristId collapsed them all onto the single
+                    // assigned tech, clumped at one time (Carrie 2026-06-30: Gel
+                    // Mani/Gel Pedi/Gel Mani/Pedicure spread across mani-3/5/6/8
+                    // all jumped to the last-assigned tech when the final slot
+                    // was assigned from the queue). Only slots following the
+                    // appt's primary column (or unassigned) move with the
+                    // assignment; the rest hold their column + startTime.
+                    serviceRequests: (a.serviceRequests ?? []).map((r) => {
+                      const rMani = r.manicuristIds?.[0] ?? null;
+                      const primaryCol = a.manicuristId ?? null;
+                      if (rMani && primaryCol && rMani !== primaryCol) return r;
+                      return { ...r, manicuristIds: [action.manicuristId], startTime: undefined };
+                    }),
                   }
                 : a,
             )
