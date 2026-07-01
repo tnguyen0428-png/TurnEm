@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
-import { Plus, LogIn, UserPlus } from 'lucide-react';
+import { Plus, LogIn, UserPlus, LayoutGrid, ListOrdered } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import ManicuristCard from './ManicuristCard';
 import { SharedAutoFitProvider } from '../shared/SharedAutoFitText';
 import { getSubscribedManicuristIds } from '../../utils/pushNotifications';
+import { formatTime } from '../../utils/time';
 
 export default function ManicuristPanel() {
   const { state, dispatch } = useApp();
   const [showMenu, setShowMenu] = useState(false);
+  const [view, setView] = useState<'queue' | 'list'>('queue');
   const [pushSubIds, setPushSubIds] = useState<Set<string>>(new Set());
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -113,6 +115,14 @@ export default function ManicuristPanel() {
     return 0;
   });
 
+  // Clock-in-order list view (mirrors History "Turns per Manicurist"): rows in
+  // the order staff clocked in today, earliest first. clockInTime is a Date.now()
+  // timestamp; nulls (shouldn't happen for clocked-in) sink to the bottom.
+  const clockInOrder = [...clockedIn].sort(
+    (a, b) => (a.clockInTime ?? Infinity) - (b.clockInTime ?? Infinity)
+  );
+  const maxTurns = clockInOrder.reduce((mx, m) => Math.max(mx, m.totalTurns), 0);
+
   const waxServiceNames = new Set(
     state.salonServices.filter((s) => s.category === 'Wax Services').map((s) => s.name)
   );
@@ -156,7 +166,28 @@ export default function ManicuristPanel() {
             </span>
           )}
         </div>
-        <div className="relative">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setView('queue')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-mono text-[11px] font-semibold transition-all ${
+                view === 'queue' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <LayoutGrid size={12} />
+              QUEUE
+            </button>
+            <button
+              onClick={() => setView('list')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-mono text-[11px] font-semibold transition-all ${
+                view === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <ListOrdered size={12} />
+              CLOCK-IN LIST
+            </button>
+          </div>
+          <div className="relative">
           <button
             ref={buttonRef}
             onClick={() => setShowMenu(!showMenu)}
@@ -222,6 +253,7 @@ export default function ManicuristPanel() {
               </button>
             </div>
           )}
+          </div>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -234,6 +266,56 @@ export default function ManicuristPanel() {
             <p className="font-mono text-[11px] text-gray-400">
               Tap + ADD to clock in staff or add a new manicurist
             </p>
+          </div>
+        ) : view === 'list' ? (
+          <div className="p-2 space-y-1.5">
+            <div className="flex items-center justify-between px-3 pb-1">
+              <span className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider">
+                CLOCK-IN ORDER · TODAY
+              </span>
+              <span className="font-mono text-[10px] text-gray-400">turns</span>
+            </div>
+            {clockInOrder.map((m, idx) => {
+              const widthPct =
+                maxTurns > 0 ? Math.max((m.totalTurns / maxTurns) * 100, m.totalTurns > 0 ? 4 : 0) : 0;
+              return (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-3 px-3 py-2 bg-white rounded-xl border border-gray-100"
+                >
+                  <span className="w-4 text-center font-mono text-[11px] font-bold text-gray-300 flex-shrink-0">
+                    {idx + 1}
+                  </span>
+                  <span
+                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: m.color }}
+                  />
+                  <div className="w-24 flex-shrink-0 min-w-0">
+                    <p className="font-mono text-xs font-bold text-gray-900 truncate leading-tight">
+                      {m.name}
+                    </p>
+                    {m.clockInTime != null && (
+                      <p className="font-mono text-[9px] text-gray-400 truncate leading-tight">
+                        {formatTime(m.clockInTime)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex-1 h-5 rounded-md overflow-hidden bg-gray-50 min-w-0 flex items-center">
+                    <div
+                      className="h-full rounded-md transition-all duration-200 flex items-center justify-end pr-1.5"
+                      style={{ width: `${widthPct}%`, minWidth: '1.9rem', backgroundColor: m.color }}
+                    >
+                      <span className="font-mono text-[10px] font-bold text-white leading-none">
+                        {m.totalTurns.toFixed(1)}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="font-mono text-xs font-semibold text-gray-700 w-10 text-right flex-shrink-0">
+                    {m.totalTurns.toFixed(1)}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <SharedAutoFitProvider
