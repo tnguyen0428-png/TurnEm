@@ -23,6 +23,9 @@ interface Props {
    *  is passed back as the second arg to onConfirm. */
   showReason?: boolean;
   reasonPlaceholder?: string;
+  /** When true (only meaningful alongside showReason), a blank reason blocks
+   *  submit instead of silently passing through as ''. */
+  reasonRequired?: boolean;
   confirmLabel: string;
   /** Tone of the confirm button. 'danger' = red, 'primary' = gray-900. */
   tone?: 'danger' | 'primary';
@@ -40,6 +43,7 @@ export default function ReceptionistPinGate({
   subtitle,
   showReason = false,
   reasonPlaceholder = 'Reason (optional)',
+  reasonRequired = false,
   confirmLabel,
   tone = 'primary',
   receptionists,
@@ -91,6 +95,10 @@ export default function ReceptionistPinGate({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (reasonRequired && !reason.trim()) {
+      setError('Enter a reason.');
+      return;
+    }
     if (pinOnly) {
       // Identify receptionist purely by PIN. First match wins; this works
       // because PINs are personal credentials (unique per receptionist).
@@ -147,7 +155,9 @@ export default function ReceptionistPinGate({
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {showReason && (
             <label className="flex flex-col gap-1">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Reason</span>
+              <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500">
+                Reason{reasonRequired && <span className="text-red-500"> *</span>}
+              </span>
               <input
                 type="text"
                 value={reason}
@@ -196,7 +206,10 @@ export default function ReceptionistPinGate({
             </button>
             <button
               type="submit"
-              disabled={pinOnly ? pin.length === 0 : (!receptionistId || pin.length === 0)}
+              disabled={
+                (reasonRequired && !reason.trim()) ||
+                (pinOnly ? pin.length === 0 : (!receptionistId || pin.length === 0))
+              }
               className={`px-4 py-1.5 rounded-lg font-mono text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 tone === 'danger'
                   ? 'bg-red-600 text-white hover:bg-red-700'

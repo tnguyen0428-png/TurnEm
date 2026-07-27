@@ -2634,7 +2634,8 @@ canEdit && (
         title="VOID TICKET"
         subtitle={`Voiding Ticket #${ticket.ticketNumber}. This can't be undone.`}
         showReason
-        reasonPlaceholder="Reason (optional)"
+        reasonPlaceholder="e.g. duplicate ticket, customer changed mind"
+        reasonRequired
         confirmLabel="VOID"
         tone="danger"
         receptionists={state.manicurists.filter((m) => m.isReceptionist)}
