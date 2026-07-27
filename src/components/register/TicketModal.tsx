@@ -2042,7 +2042,12 @@ export default function TicketModal({
               <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-mono text-xs font-bold tracking-wider">EDITING</span>
             )}
             {isVoided && (
-              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-mono text-xs font-bold tracking-wider">VOID</span>
+              <span className="flex items-center gap-1.5 min-w-0">
+                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-mono text-xs font-bold tracking-wider flex-shrink-0">VOID</span>
+                {ticket.voidReason && (
+                  <span className="font-mono text-xs text-gray-500 italic truncate">— {ticket.voidReason}</span>
+                )}
+              </span>
             )}
             {isOpen && (
               <span className="px-2 py-0.5 rounded-full bg-pink-100 text-pink-600 font-mono text-xs font-bold tracking-wider">OPEN</span>
