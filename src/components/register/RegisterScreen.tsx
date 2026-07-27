@@ -493,7 +493,14 @@ function TicketList({
               const seen = new Set<string>();
               const list: { id: string; name: string; color: string }[] = [];
               for (const it of t.items) {
-                if (it.kind !== 'service') continue;
+                // Service lines credit the manicurist who did the work; gift
+                // certificate lines credit the receptionist who sold the
+                // card (GiftCardSaleModal stamps staff1 for exactly this).
+                // A ticket that's ONLY a gift card sale has no service line
+                // at all, so excluding gift_card_sale here left the Staff
+                // column blank even though the seller is right there on the
+                // line — Tony 2026-07-28.
+                if (it.kind !== 'service' && it.kind !== 'gift_card_sale') continue;
                 const key = (it.staff1Id ?? '') + '|' + (it.staff1Name ?? '');
                 if (seen.has(key) || !it.staff1Name) continue;
                 seen.add(key);
