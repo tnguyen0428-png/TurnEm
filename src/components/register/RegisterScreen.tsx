@@ -2,7 +2,7 @@
 // (Closed-shift viewing wired in.)
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Receipt, ChevronLeft, ChevronRight, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer } from 'lucide-react';
+import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import {
@@ -20,6 +20,7 @@ import OpenShiftModal from './OpenShiftModal';
 import CloseShiftScreen from './CloseShiftScreen';
 import ReceptionistClockModal from './ReceptionistClockModal';
 import { printReceipt } from './printReceipt';
+import DatePickerPopover from '../shared/DatePickerPopover';
 
 // Sort dimensions applied across all three ticket lists.
 type SortKey = 'time' | 'total' | 'number' | 'client' | 'staff';
@@ -38,6 +39,7 @@ export default function RegisterScreen() {
 
   const [dateLA, setDateLA] = useState<string>(getTodayLA());
   const isToday = dateLA === getTodayLA();
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -257,6 +259,20 @@ export default function RegisterScreen() {
               className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-30">
               <ChevronRight size={14} />
             </button>
+            <div className="relative">
+              <button onClick={() => setDatePickerOpen((v) => !v)} title="Pick a date"
+                className="p-1.5 rounded-lg border border-gray-200 text-pink-500 hover:bg-white">
+                <Calendar size={14} />
+              </button>
+              {datePickerOpen && (
+                <DatePickerPopover
+                  value={dateLA}
+                  today={getTodayLA()}
+                  onChange={(d) => { if (d <= getTodayLA()) setDateLA(d); }}
+                  onClose={() => setDatePickerOpen(false)}
+                />
+              )}
+            </div>
           </div>
           <button onClick={() => void refresh()}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-white font-mono text-[10px] font-semibold tracking-wider"
