@@ -419,3 +419,22 @@ export async function searchCustomers(
   return rows.slice(0, limit);
 }
 
+/**
+ * Look up a customer's saved permanent note by phone — used to gate the
+ * check-in note popup (AppointmentBookView.addApptToQueue,
+ * AppointmentsScreen.handleCheckIn) so staff see it before the appointment
+ * actually lands in the live queue. Returns null when there's no confident
+ * phone match or the matched customer has no note.
+ */
+export async function getPermanentNoteByPhone(
+  phone: string | null | undefined,
+): Promise<{ name: string; note: string } | null> {
+  const raw = (phone ?? '').trim();
+  if (normalizePhone(raw).length < 7) return null; // too short to match confidently
+  const rows = await searchCustomers({ phone: raw }, 5);
+  const match = rows.find((r) => normalizePhone(r.phone) === normalizePhone(raw));
+  const note = (match?.notes ?? '').trim();
+  if (!match || !note) return null;
+  return { name: displayCustomerName(match), note };
+}
+

@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { CalendarCheck, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { SERVICE_CATEGORIES } from '../../constants/services';
-import { toTitleCase } from '../../lib/customers';
+import { toTitleCase, searchCustomers } from '../../lib/customers';
+import CustomerNoteAlert from '../shared/CustomerNoteAlert';
 import type { SalonService, ServiceType, Manicurist, ServiceRequest } from '../../types';
 
 interface SelectedService {
@@ -27,6 +28,10 @@ interface ClientFormProps {
   manicurists: Manicurist[];
   submitLabel: string;
   onSubmit: (data: ClientFormData) => void;
+  // Pop a customer's saved permanent note the moment the typed name exactly
+  // matches an existing profile. Opt-in (only AddClientModal's walk-in
+  // check-in passes this) so EditClientModal's flow is unchanged.
+  matchCustomerNotes?: boolean;
 }
 
 export default function ClientForm({
@@ -37,6 +42,7 @@ export default function ClientForm({
   manicurists,
   submitLabel,
   onSubmit,
+  matchCustomerNotes = false,
 }: ClientFormProps) {
   // Split incoming initialName on the first space so an edit of an existing
   // record ("Sarah Klein Doe") puts "Sarah" in First and "Klein Doe" in Last.
@@ -58,6 +64,36 @@ export default function ClientForm({
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  // Permanent-note popup for the walk-in check-in flow (see matchCustomerNotes
+  // prop). There's no phone field here to disambiguate same-named customers
+  // like AppointmentModal does, so this fires on an exact case-insensitive
+  // first+last match rather than offering a click-to-pick list — walk-in
+  // check-in needs to stay fast while a client is standing at the counter.
+  const [noteAlert, setNoteAlert] = useState<{ name: string; note: string } | null>(null);
+  const [lastAlertedKey, setLastAlertedKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!matchCustomerNotes) return;
+    const first = clientFirstName.trim();
+    const last = clientLastName.trim();
+    if (!first || !last) return;
+    const key = `${first.toLowerCase()}|${last.toLowerCase()}`;
+    if (key === lastAlertedKey) return; // already alerted (or checked) for this exact name
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      const rows = await searchCustomers({ first, last }, 5);
+      if (cancelled) return;
+      setLastAlertedKey(key);
+      const match = rows.find(
+        (r) => r.firstName.toLowerCase() === first.toLowerCase() && r.lastName.toLowerCase() === last.toLowerCase(),
+      );
+      const stored = (match?.notes ?? '').trim();
+      if (match && stored) {
+        setNoteAlert({ name: `${match.firstName} ${match.lastName}`.trim(), note: stored });
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [matchCustomerNotes, clientFirstName, clientLastName, lastAlertedKey]);
 
   const clockedInStaff = manicurists.filter((m) => m.clockedIn);
 
@@ -154,6 +190,7 @@ export default function ClientForm({
   }
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-5">
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -387,5 +424,13 @@ export default function ClientForm({
           `(${selectedServices.length} service${selectedServices.length > 1 ? 's' : ''})`}
       </button>
     </form>
+    {noteAlert && (
+      <CustomerNoteAlert
+        name={noteAlert.name}
+        note={noteAlert.note}
+        onDismiss={() => setNoteAlert(null)}
+      />
+    )}
+    </>
   );
 }

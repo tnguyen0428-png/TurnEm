@@ -9,9 +9,11 @@ import { useApp } from '../../state/AppContext';
 import Badge from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
+import CustomerNoteAlert from '../shared/CustomerNoteAlert';
 import AppointmentBookView from './AppointmentBookView';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import { getTodayLA, formatTimeOfDay } from '../../utils/time';
+import { getPermanentNoteByPhone } from '../../lib/customers';
 import type { Appointment, QueueEntry, ServiceType } from '../../types';
 
 const STATUS_CONFIG: Record<Appointment['status'], { label: string; variant: 'green' | 'blue' | 'amber' | 'pink' | 'red' | 'gray' }> = {
@@ -55,6 +57,13 @@ export default function AppointmentsScreen() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [expanded, setExpanded] = useState(true);
+
+  // Permanent-note popup for check-in. handleCheckIn looks the customer up by
+  // phone before adding them to the queue; if they have a saved note, the
+  // check-in is held (as a closure) until the popup is dismissed. Mirrors
+  // AppointmentBookView.addApptToQueue.
+  const [noteAlert, setNoteAlert] = useState<{ name: string; note: string } | null>(null);
+  const pendingCheckInRef = useRef<(() => void) | null>(null);
 
   const filtered = state.appointments
     .filter((a) => {
@@ -103,46 +112,58 @@ export default function AppointmentsScreen() {
   }
 
   function handleCheckIn(appt: Appointment) {
-    // Keep the appointment in the book; mark it 'checked-in' so the book view
-    // can recolor the block based on the linked queue entry's lifecycle
-    // (light gray waiting → gray in service → black after checkout).
-    dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'checked-in' } });
-    const services = appt.services?.length ? appt.services : [appt.service as ServiceType];
-    // CRITICAL: only ServiceRequests with clientRequest === true represent an actual
-    // request from the customer. Anything else is just a salon-placed parking slot in
-    // the calendar column (e.g. dragged into Z-Test 2's column for visual scheduling)
-    // and must NOT be carried into the queue as a request — assignment for those is
-    // determined when the customer arrives. We strip manicuristIds from non-request
-    // entries so downstream queue/turn logic doesn't show them with a REQ badge or
-    // "WAITING FOR" chip. Mirrors addApptToQueue in AppointmentBookView.
-    const rawRequests = appt.serviceRequests?.length
-      ? appt.serviceRequests
-      : []; // top-level appt.manicuristId is a column placement, not a client request
-    const serviceRequests = rawRequests.map((r) =>
-      r.clientRequest === true ? r : { ...r, manicuristIds: [] }
-    );
-    const isRequested = serviceRequests.some((r) => r.clientRequest === true && r.manicuristIds.length > 0);
-    const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
-    const turnValue = services.reduce((sum, svc) => {
-      const s = state.salonServices.find((ss) => ss.name === svc);
-      const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc] ?? 1;
-      const hasReq = serviceRequests.some((r) => r.service === svc && r.clientRequest === true && r.manicuristIds.length > 0);
-      return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
-    }, 0);
-    const newClient: QueueEntry = {
-      id: crypto.randomUUID(),
-      clientName: appt.clientName || 'Walk-in',
-      services, turnValue, serviceRequests,
-      requestedManicuristId: firstRequestedId,
-      isRequested, isAppointment: true,
-      assignedManicuristId: null, status: 'waiting',
-      arrivedAt: Date.now(), startedAt: null, completedAt: null, extraTimeMs: 0,
-      // Snapshot the original appointment so the queue card's Revert button can
-      // restore the appointment exactly as it was (including non-request salon
-      // assignments stripped above).
-      originalAppointment: appt,
+    const commit = () => {
+      // Keep the appointment in the book; mark it 'checked-in' so the book view
+      // can recolor the block based on the linked queue entry's lifecycle
+      // (light gray waiting → gray in service → black after checkout).
+      dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'checked-in' } });
+      const services = appt.services?.length ? appt.services : [appt.service as ServiceType];
+      // CRITICAL: only ServiceRequests with clientRequest === true represent an actual
+      // request from the customer. Anything else is just a salon-placed parking slot in
+      // the calendar column (e.g. dragged into Z-Test 2's column for visual scheduling)
+      // and must NOT be carried into the queue as a request — assignment for those is
+      // determined when the customer arrives. We strip manicuristIds from non-request
+      // entries so downstream queue/turn logic doesn't show them with a REQ badge or
+      // "WAITING FOR" chip. Mirrors addApptToQueue in AppointmentBookView.
+      const rawRequests = appt.serviceRequests?.length
+        ? appt.serviceRequests
+        : []; // top-level appt.manicuristId is a column placement, not a client request
+      const serviceRequests = rawRequests.map((r) =>
+        r.clientRequest === true ? r : { ...r, manicuristIds: [] }
+      );
+      const isRequested = serviceRequests.some((r) => r.clientRequest === true && r.manicuristIds.length > 0);
+      const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
+      const turnValue = services.reduce((sum, svc) => {
+        const s = state.salonServices.find((ss) => ss.name === svc);
+        const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc] ?? 1;
+        const hasReq = serviceRequests.some((r) => r.service === svc && r.clientRequest === true && r.manicuristIds.length > 0);
+        return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
+      }, 0);
+      const newClient: QueueEntry = {
+        id: crypto.randomUUID(),
+        clientName: appt.clientName || 'Walk-in',
+        services, turnValue, serviceRequests,
+        requestedManicuristId: firstRequestedId,
+        isRequested, isAppointment: true,
+        assignedManicuristId: null, status: 'waiting',
+        arrivedAt: Date.now(), startedAt: null, completedAt: null, extraTimeMs: 0,
+        // Snapshot the original appointment so the queue card's Revert button can
+        // restore the appointment exactly as it was (including non-request salon
+        // assignments stripped above).
+        originalAppointment: appt,
+      };
+      dispatch({ type: 'ADD_CLIENT', client: newClient });
     };
-    dispatch({ type: 'ADD_CLIENT', client: newClient });
+    // Hold the check-in until the receptionist has seen the customer's saved
+    // note. No note on file → check in immediately, no behavior change.
+    void getPermanentNoteByPhone(appt.clientPhone).then((hit) => {
+      if (hit) {
+        pendingCheckInRef.current = commit;
+        setNoteAlert(hit);
+      } else {
+        commit();
+      }
+    });
   }
 
   function openNewAppointment() {
@@ -348,6 +369,17 @@ export default function AppointmentsScreen() {
           receptionists={state.manicurists.filter((m) => m.isReceptionist)}
           onCancel={() => setPendingOpen(null)}
           onConfirm={(receptionistId) => commitOpenModal(receptionistId)}
+        />
+      )}
+      {noteAlert && (
+        <CustomerNoteAlert
+          name={noteAlert.name}
+          note={noteAlert.note}
+          onDismiss={() => {
+            setNoteAlert(null);
+            pendingCheckInRef.current?.();
+            pendingCheckInRef.current = null;
+          }}
         />
       )}
       </div>

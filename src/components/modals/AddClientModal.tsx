@@ -100,6 +100,7 @@ export default function AddClientModal() {
           manicurists={state.manicurists}
           submitLabel="ADD TO QUEUE"
           onSubmit={handleSubmit}
+          matchCustomerNotes
         />
       </Modal>
       {pendingDup && (

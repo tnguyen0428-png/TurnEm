@@ -7,6 +7,8 @@ import { formatTimeOfDay, getTodayLA } from '../../utils/time';
 import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType } from '../../types';
 import DayScheduleOverrideModal from './DayScheduleOverrideModal';
 import { resolveScheduleForDate } from '../../utils/schedule';
+import { getPermanentNoteByPhone } from '../../lib/customers';
+import CustomerNoteAlert from '../shared/CustomerNoteAlert';
 
 const START_HOUR   = 8;
 const END_HOUR     = 20;
@@ -120,6 +122,13 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
 
   const [cannotParkMsg, setCannotParkMsg] = useState<string | null>(null);
   const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
+
+  // Permanent-note popup for check-in. addApptToQueue looks up the customer
+  // by phone before actually adding them to the queue; if they have a saved
+  // note, the check-in is held here (as a closure) until the popup is
+  // dismissed, so staff see it before the client lands on the floor.
+  const [noteAlert, setNoteAlert] = useState<{ name: string; note: string } | null>(null);
+  const pendingCheckInRef = useRef<(() => void) | null>(null);
 
   // Click-to-edit on off-hours overlay: opens DayScheduleOverrideModal for
   // the technician + the specific date that was clicked. Writes a per-date
@@ -1001,43 +1010,57 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
 
   function addApptToQueue(e: React.MouseEvent, appt: Appointment) {
     e.stopPropagation();
-    // Keep the appointment in the book; flag it as 'checked-in' so the block
-    // renderer can recolor it (light gray while waiting, gray while in service,
-    // black after checkout). The Revert button on the queue card flips this
-    // back to 'scheduled'.
-    dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'checked-in' } });
-    const services = getApptSvcs(appt) as ServiceType[];
-    // CRITICAL: only ServiceRequests with clientRequest === true represent an actual
-    // request from the customer. Anything else is just a salon-placed parking slot in
-    // the calendar column (e.g. dragged into Brian's column for visual scheduling) and
-    // must NOT be carried into the queue as a request — assignment for those is
-    // determined when the customer arrives. We strip manicuristIds from non-request
-    // entries so downstream queue/turn logic doesn't treat them as requests.
-    const rawRequests = appt.serviceRequests || [];
-    const serviceRequests: ServiceRequest[] = rawRequests.map((r) =>
-      r.clientRequest === true ? r : { ...r, manicuristIds: [] }
-    );
-    const isRequested      = serviceRequests.some((r) => r.clientRequest === true && r.manicuristIds.length > 0);
-    const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
-    const turnValue = services.reduce((sum, svc) => {
-      const s = state.salonServices.find((ss) => ss.name === svc);
-      const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc] ?? 1;
-      const hasReq = serviceRequests.some((r) => r.service === svc && r.clientRequest === true && r.manicuristIds.length > 0);
-      return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
-    }, 0);
-    dispatch({ type: 'ADD_CLIENT', client: {
-      id: crypto.randomUUID(), clientName: appt.clientName || 'Walk-in',
-      services, turnValue, serviceRequests, requestedManicuristId: firstRequestedId,
-      isRequested, isAppointment: true, assignedManicuristId: null, status: 'waiting',
-      arrivedAt: Date.now(), startedAt: null, completedAt: null, extraTimeMs: 0,
-      // Snapshot the original appointment so the Revert button on the queue card
-      // can restore it back into its exact slot (date, time, column, per-service
-      // placements). The snapshot keeps the original serviceRequests with their
-      // manicuristIds intact — distinct from the queue's `serviceRequests` above
-      // which has parked-column manicuristIds cleared so the queue doesn't see
-      // them as requests.
-      originalAppointment: appt,
-    } as QueueEntry });
+    const commit = () => {
+      // Keep the appointment in the book; flag it as 'checked-in' so the block
+      // renderer can recolor it (light gray while waiting, gray while in service,
+      // black after checkout). The Revert button on the queue card flips this
+      // back to 'scheduled'.
+      dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: { status: 'checked-in' } });
+      const services = getApptSvcs(appt) as ServiceType[];
+      // CRITICAL: only ServiceRequests with clientRequest === true represent an actual
+      // request from the customer. Anything else is just a salon-placed parking slot in
+      // the calendar column (e.g. dragged into Brian's column for visual scheduling) and
+      // must NOT be carried into the queue as a request — assignment for those is
+      // determined when the customer arrives. We strip manicuristIds from non-request
+      // entries so downstream queue/turn logic doesn't treat them as requests.
+      const rawRequests = appt.serviceRequests || [];
+      const serviceRequests: ServiceRequest[] = rawRequests.map((r) =>
+        r.clientRequest === true ? r : { ...r, manicuristIds: [] }
+      );
+      const isRequested      = serviceRequests.some((r) => r.clientRequest === true && r.manicuristIds.length > 0);
+      const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
+      const turnValue = services.reduce((sum, svc) => {
+        const s = state.salonServices.find((ss) => ss.name === svc);
+        const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc] ?? 1;
+        const hasReq = serviceRequests.some((r) => r.service === svc && r.clientRequest === true && r.manicuristIds.length > 0);
+        return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
+      }, 0);
+      dispatch({ type: 'ADD_CLIENT', client: {
+        id: crypto.randomUUID(), clientName: appt.clientName || 'Walk-in',
+        services, turnValue, serviceRequests, requestedManicuristId: firstRequestedId,
+        isRequested, isAppointment: true, assignedManicuristId: null, status: 'waiting',
+        arrivedAt: Date.now(), startedAt: null, completedAt: null, extraTimeMs: 0,
+        // Snapshot the original appointment so the Revert button on the queue card
+        // can restore it back into its exact slot (date, time, column, per-service
+        // placements). The snapshot keeps the original serviceRequests with their
+        // manicuristIds intact — distinct from the queue's `serviceRequests` above
+        // which has parked-column manicuristIds cleared so the queue doesn't see
+        // them as requests.
+        originalAppointment: appt,
+      } as QueueEntry });
+    };
+    // Hold the check-in until the receptionist has seen the customer's saved
+    // note (Tony 2026-07-27: notes were getting missed because they only
+    // silently pre-filled a form field). No note on file → check in immediately,
+    // no behavior change.
+    void getPermanentNoteByPhone(appt.clientPhone).then((hit) => {
+      if (hit) {
+        pendingCheckInRef.current = commit;
+        setNoteAlert(hit);
+      } else {
+        commit();
+      }
+    });
   }
 
   function executeDrop(info: DragInfo, mId: string | null, slot: number) {
@@ -2157,6 +2180,18 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           </div>
         );
       })()}
+
+      {noteAlert && (
+        <CustomerNoteAlert
+          name={noteAlert.name}
+          note={noteAlert.note}
+          onDismiss={() => {
+            setNoteAlert(null);
+            pendingCheckInRef.current?.();
+            pendingCheckInRef.current = null;
+          }}
+        />
+      )}
     </>
   );
 }
