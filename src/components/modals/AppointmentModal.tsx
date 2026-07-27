@@ -1818,11 +1818,20 @@ function MatchedCustomerBanner({
         </tr>`;
       })
       .join('');
+    // Same salon branding as the register receipt (printReceipt.ts) — the
+    // AQUA nails bar logo lives in public/AQUA_logo_FINAL.jpg. Falls back to
+    // text if the image fails to load.
+    const LOGO_URL = '/AQUA_logo_FINAL.jpg';
     const html = `<!doctype html>
 <html><head><meta charset="utf-8"/>
 <title>Upcoming Appointments — ${esc(displayCustomerName(customer))}</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 32px; color: #111827; }
+  .logo { text-align: center; margin: 0 0 16px; }
+  .logo img { max-height: 110px; max-width: 90%; display: inline-block; }
+  .salon, .salon-sub { display: none; text-align: center; }
+  .show-fallback .salon { display: block; font-size: 1.6rem; font-weight: bold; letter-spacing: 0.2em; color: #2dd4cc; }
+  .show-fallback .salon-sub { display: block; font-size: 1rem; color: #555; margin-bottom: 0.5rem; letter-spacing: 0.05em; }
   h1 { font-size: 22px; margin: 0 0 4px 0; }
   .meta { color: #6b7280; font-size: 13px; margin-bottom: 24px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -1833,22 +1842,45 @@ function MatchedCustomerBanner({
   @media print { body { padding: 16px; } }
 </style></head>
 <body>
+<div class="logo"><img src="${LOGO_URL}" alt="AQUA" onerror="this.style.display='none'; document.body.classList.add('show-fallback');" /></div>
+<div class="salon">AQUA</div>
+<div class="salon-sub">nails bar</div>
 <h1>${esc(displayCustomerName(customer))}</h1>
 <div class="meta">${esc(customer.phone || 'no phone on file')} · ${openAppointments.length} upcoming appointment${openAppointments.length === 1 ? '' : 's'}</div>
 ${rows
   ? `<table><thead><tr><th>Date</th><th>Time</th><th>Services</th><th>Staff</th></tr></thead><tbody>${rows}</tbody></table>`
   : '<div class="empty">No upcoming appointments.</div>'}
-<script>window.addEventListener('load', () => { setTimeout(() => window.print(), 100); });</script>
 </body></html>`;
-    const win = window.open('', '_blank', 'noopener,noreferrer,width=720,height=900');
+    // No noopener/noreferrer here — this window is blank same-origin content
+    // we immediately fill via document.write below, not a link to a
+    // third-party site, so there's no opener/referrer to protect against.
+    // Passing noopener made window.open() ALWAYS return null (per spec, a
+    // noopener'd window has no WindowProxy to hand back), which meant every
+    // print attempt fell into the "popup blocked" fallback below — a giant
+    // data: URL that Chrome renders as a blank page. Removing it lets the
+    // normal path succeed and reserves the fallback for genuine popup blocks.
+    const win = window.open('', '_blank', 'width=720,height=900');
     if (!win) {
-      // Popup blocked — fall back to a data URL the user can print from.
+      // Popup actually blocked — fall back to a data URL the user can print from.
       window.open('data:text/html;charset=utf-8,' + encodeURIComponent(html), '_blank');
       return;
     }
     win.document.open();
     win.document.write(html);
     win.document.close();
+    // Wait for the logo image to load (or fail) before firing the print
+    // dialog so it's actually included in the printed output — mirrors
+    // printReceipt.ts. Falls back to a safety timer in case the load event
+    // never fires (e.g. the image is already cached).
+    let printed = false;
+    const doPrint = () => {
+      if (printed) return;
+      printed = true;
+      win.focus();
+      win.print();
+    };
+    win.addEventListener('load', () => setTimeout(doPrint, 100));
+    setTimeout(doPrint, 600);
   }
   function formatDate(iso: string): string {
     const d = new Date(iso + 'T12:00:00');
