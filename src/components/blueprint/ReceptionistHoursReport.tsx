@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Pencil, Trash2, Sun, Moon, X, Plus, Lock, AlertTriangle,
+  Pencil, Trash2, Sun, Moon, X, Plus, Lock, AlertTriangle, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
@@ -48,18 +48,21 @@ function startOfWeek(d: Date): number {
   x.setHours(0, 0, 0, 0);
   return x.getTime();
 }
+function endOfWeek(d: Date): number {
+  return endOfDay(new Date(startOfWeek(d) + 6 * 24 * 60 * 60 * 1000));
+}
 function startOfMonth(d: Date): number {
   const x = new Date(d.getFullYear(), d.getMonth(), 1);
   return x.getTime();
 }
 
-function rangeBounds(range: ViewRange, customFrom: string, customTo: string): [number, number] {
+function rangeBounds(range: ViewRange, customFrom: string, customTo: string, weekAnchorMs: number): [number, number] {
   const now = new Date();
   switch (range) {
     case 'today':
       return [startOfDay(now), endOfDay(now)];
     case 'week':
-      return [startOfWeek(now), endOfDay(now)];
+      return [startOfWeek(new Date(weekAnchorMs)), endOfWeek(new Date(weekAnchorMs))];
     case 'month':
       return [startOfMonth(now), endOfDay(now)];
     case 'all':
@@ -222,7 +225,7 @@ function shiftKey(s: ShiftRow): string {
 function rangeLabelFor(range: ViewRange, customFrom: string, customTo: string, from: number, to: number): string {
   switch (range) {
     case 'today': return 'Today';
-    case 'week': return 'This week';
+    case 'week': return `Week of ${formatWeekRange(from)}`;
     case 'month': return 'This month';
     case 'all': return 'All time';
     case 'custom': {
@@ -269,6 +272,11 @@ export default function ReceptionistHoursReport() {
   // Filters
   const [staffFilter, setStaffFilter] = useState<string>('all'); // 'all' | staffId
   const [range, setRange] = useState<ViewRange>('today');
+  // Anchor date for WEEK mode — lets the receptionist tab page back/forward
+  // through past weeks like the Manicurists tab's weekly range does, instead
+  // of being locked to "this week to date". Resets to now whenever the WEEK
+  // filter button itself is clicked.
+  const [weekAnchor, setWeekAnchor] = useState<number>(() => Date.now());
   // Clicking a TOTALS row opens a per-receptionist daily breakdown popup.
   const [detail, setDetail] = useState<{ staffId: string; name: string } | null>(null);
   const [customFrom, setCustomFrom] = useState<string>('');
@@ -298,7 +306,10 @@ export default function ReceptionistHoursReport() {
     return () => clearInterval(t);
   }, [reload]);
 
-  const [from, to] = useMemo(() => rangeBounds(range, customFrom, customTo), [range, customFrom, customTo]);
+  const [from, to] = useMemo(
+    () => rangeBounds(range, customFrom, customTo, weekAnchor),
+    [range, customFrom, customTo, weekAnchor],
+  );
 
   // Only show events for actual receptionists. (A staff member may have been
   // demoted; those events still appear because we filter by name on the row,
@@ -400,7 +411,7 @@ export default function ReceptionistHoursReport() {
             {(['today', 'week', 'month', 'all', 'custom'] as ViewRange[]).map((r) => (
               <button
                 key={r}
-                onClick={() => setRange(r)}
+                onClick={() => { setRange(r); if (r === 'week') setWeekAnchor(Date.now()); }}
                 className={`px-3 py-2 rounded-lg font-mono text-[11px] font-semibold tracking-wider transition-colors ${
                   range === r ? 'bg-gray-900 text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'
                 }`}
@@ -413,6 +424,30 @@ export default function ReceptionistHoursReport() {
             ))}
           </div>
         </div>
+        {range === 'week' && (
+          <div>
+            <label className="block font-mono text-[10px] font-bold text-gray-400 tracking-wider mb-1">WEEK</label>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setWeekAnchor((a) => a - 7 * 24 * 60 * 60 * 1000)}
+                className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                title="Previous week"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="px-2 font-mono text-sm font-semibold text-gray-700 whitespace-nowrap">
+                {formatWeekRange(from)}
+              </span>
+              <button
+                onClick={() => setWeekAnchor((a) => a + 7 * 24 * 60 * 60 * 1000)}
+                className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                title="Next week"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+        )}
         {range === 'custom' && (
           <div className="flex items-end gap-2">
             <div>
@@ -497,7 +532,7 @@ export default function ReceptionistHoursReport() {
               <div key={wk.weekStart}>
                 {/* Week band: date range + shift count + delete-whole-week */}
                 <div className="flex items-center justify-between px-4 py-2 bg-gray-100/70 border-b border-gray-100">
-                  <span className="font-mono text-[11px] font-bold tracking-wider text-gray-600">
+                  <span className="font-mono text-sm font-bold tracking-wider text-gray-600">
                     WEEK OF {formatWeekRange(wk.weekStart).toUpperCase()}
                     <span className="ml-2 font-normal text-gray-400">
                       {wk.shifts.length} {wk.shifts.length === 1 ? 'shift' : 'shifts'}
@@ -523,7 +558,7 @@ export default function ReceptionistHoursReport() {
                     >
                       <span className="font-mono text-sm text-gray-900 truncate">
                         <span className="font-semibold">{s.staffName}</span>
-                        <span className="text-gray-400 text-xs"> · {formatDate(s.anchorMs)}</span>
+                        <span className="text-gray-500 text-sm"> · {formatDate(s.anchorMs)}</span>
                       </span>
                       <span className="font-mono text-xs">
                         {!missingIn ? (
@@ -835,7 +870,7 @@ function ReceptionistDetailModal({
             <X size={18} />
           </button>
         </div>
-        <p className="font-mono text-[10px] text-gray-400 mb-4">{rangeLabel} — daily clock in / out</p>
+        <p className="font-mono text-xs text-gray-400 mb-4">{rangeLabel} — daily clock in / out</p>
 
         {rows.length === 0 ? (
           <div className="py-10 text-center font-mono text-xs text-gray-400">
@@ -859,7 +894,7 @@ function ReceptionistDetailModal({
                   key={d.dayKey}
                   className="grid grid-cols-[1fr_110px_110px_80px] gap-2 px-3 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
                 >
-                  <span className="font-mono text-xs font-semibold text-gray-900">
+                  <span className="font-mono text-sm font-semibold text-gray-900">
                     {formatDate(d.dayMs)}
                     {dailyOt > 0 && (
                       <span className="ml-1.5 px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-bold text-[8px] tracking-wider align-middle">OT</span>

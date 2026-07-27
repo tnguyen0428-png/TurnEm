@@ -155,7 +155,6 @@ export function ReportRangeHeader({
     <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-end gap-4">
       <div>
         <h2 className="font-bebas text-2xl tracking-[2px] text-gray-900">{title}</h2>
-        <p className="font-mono text-[10px] text-gray-400 mt-0.5">{rangeLabel(range)}</p>
       </div>
 
       <div className="flex items-end gap-2">
@@ -176,22 +175,33 @@ export function ReportRangeHeader({
           </div>
         </div>
 
+        {/* Inline "< label >" date navigator — arrows flank the current
+            period's label instead of sitting bare, matching the Receptionist
+            hours report's weekly navigator (Tony 2026-07-28). */}
         {range.kind !== 'custom' && (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => onRangeChange(shiftRange(range, -1))}
-              className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
-              title="Previous"
-            >
-              <ChevronLeft size={14} />
-            </button>
-            <button
-              onClick={() => onRangeChange(shiftRange(range, 1))}
-              className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
-              title="Next"
-            >
-              <ChevronRight size={14} />
-            </button>
+          <div>
+            <label className="block font-mono text-[10px] font-bold text-gray-400 tracking-wider mb-1">
+              {range.kind === 'weekly' ? 'WEEK' : 'DATE'}
+            </label>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => onRangeChange(shiftRange(range, -1))}
+                className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                title="Previous"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="px-2 font-mono text-sm font-semibold text-gray-700 whitespace-nowrap">
+                {rangeLabel(range)}
+              </span>
+              <button
+                onClick={() => onRangeChange(shiftRange(range, 1))}
+                className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                title="Next"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
           </div>
         )}
 
