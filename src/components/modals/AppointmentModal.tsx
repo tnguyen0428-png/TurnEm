@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar, History, Receipt } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar, History, Receipt, StickyNote } from 'lucide-react';
 import Modal from '../shared/Modal';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import DatePickerPopover from '../shared/DatePickerPopover';
@@ -116,6 +116,12 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // or phone. Clicking one fills the form and pins the matched profile.
   const [matches, setMatches] = useState<Customer[]>([]);
   const [matchedCustomer, setMatchedCustomer] = useState<Customer | null>(null);
+  // Permanent-note popup — surfaced the moment a customer with a saved note
+  // is matched (dropdown pick in add mode, phone lookup in edit mode), so
+  // staff see it before finishing the booking instead of it just quietly
+  // pre-filling the NOTES textarea further down the form where it's easy to
+  // miss (Tony 2026-07-27: notes were getting silently skipped).
+  const [noteAlert, setNoteAlert] = useState<{ name: string; note: string } | null>(null);
   // Pending delete for one of the matched-customer's upcoming appointments.
   // Holds the appt id while the ConfirmDialog is shown; cleared on confirm
   // (after dispatch) or cancel. Lets the receptionist scrub stale future
@@ -244,6 +250,19 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     setNotes(stored);
     setPermanentNote(true);
   }, [mode, matchedCustomer, notes]);
+
+  // Pop the note alert the moment a DIFFERENT matched customer carries a
+  // saved permanent note — keyed on id (not the object) so re-renders of the
+  // same match don't re-trigger it, but clearing and re-picking the same
+  // customer does. Covers both the add-mode dropdown pick and the edit-mode
+  // phone lookup.
+  useEffect(() => {
+    if (!matchedCustomer) return;
+    const stored = (matchedCustomer.notes ?? '').trim();
+    if (!stored) return;
+    setNoteAlert({ name: displayCustomerName(matchedCustomer), note: stored });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchedCustomer?.id]);
   const [sameTime, setSameTime] = useState(false);
   // Standing-appointment series. When `isStandingAppt` is checked the cashier
   // also picks an interval (in days) and an end date; on save we book the
@@ -1600,6 +1619,35 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           </div>
         </div>
       )}
+    {noteAlert && (
+      <div
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+        onClick={() => setNoteAlert(null)}
+      >
+        <div
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in border-2 border-amber-300"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <StickyNote size={18} className="text-amber-500 flex-shrink-0" />
+            <p className="font-mono text-[11px] font-bold tracking-wider text-amber-700 uppercase">
+              Note on file — {noteAlert.name}
+            </p>
+          </div>
+          <p className="text-gray-800 font-mono text-sm leading-relaxed mb-6 whitespace-pre-wrap">
+            {noteAlert.note}
+          </p>
+          <div className="flex justify-end">
+            <button
+              onClick={() => setNoteAlert(null)}
+              className="px-4 py-2 rounded-lg text-sm font-mono font-semibold text-white bg-amber-500 hover:bg-amber-600 transition-colors"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     {pendingAutoAssign && !pendingAutoAssign.approved && (
       <ConfirmDialog
         message={`Can't find enough free skilled manicurists for ${pendingAutoAssign.servicesLabel} at ${pendingAutoAssign.timeLabel} (one per service, no overlaps). Book as unassigned? You can drag each service to a manicurist's column later.`}
