@@ -137,9 +137,14 @@ function CustomerListView({
     const q = query.trim().toLowerCase();
     if (!q) return customers;
     const qDigits = normalizePhone(q);
+    // Match each typed word independently rather than requiring the whole
+    // query to be one contiguous substring of "first last" — a middle name/
+    // initial in first_name, or typing the name in "last first" order,
+    // otherwise fails to match a customer who's genuinely in the list.
+    const words = q.split(/\s+/).filter(Boolean);
     return customers.filter((c) => {
       const name = `${c.firstName} ${c.lastName}`.toLowerCase();
-      if (name.includes(q)) return true;
+      if (words.every((w) => name.includes(w))) return true;
       if (qDigits && normalizePhone(c.phone).includes(qDigits)) return true;
       if ((c.email || '').toLowerCase().includes(q)) return true;
       return false;

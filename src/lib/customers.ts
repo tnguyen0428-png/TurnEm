@@ -74,14 +74,32 @@ export function formatPhoneDashed(raw: string): string {
   return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
+// Supabase/PostgREST caps any unbounded select() at 1000 rows by default.
+// With 2000+ customers, a plain select silently truncated the list to
+// roughly the first alphabetical half by first name — anyone past that
+// (e.g. "Sandra Meachum") was never loaded into Blueprint's Customers
+// screen at all, so the search box (which only filters what's already in
+// memory) could never find them no matter what was typed. Page through in
+// batches until a page comes back short of the page size.
+const FETCH_CUSTOMERS_PAGE_SIZE = 1000;
+
 export async function fetchCustomers(): Promise<Customer[]> {
-  const { data, error } = await supabase
-    .from('customers')
-    .select('*')
-    .order('first_name', { ascending: true })
-    .order('last_name', { ascending: true });
-  if (error) { console.error('[customers] fetchCustomers:', error.message); return []; }
-  return (data ?? []).map((r) => fromDb(r as DbCustomer));
+  const all: Customer[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('*')
+      .order('first_name', { ascending: true })
+      .order('last_name', { ascending: true })
+      .range(from, from + FETCH_CUSTOMERS_PAGE_SIZE - 1);
+    if (error) { console.error('[customers] fetchCustomers:', error.message); break; }
+    const rows = data ?? [];
+    all.push(...rows.map((r) => fromDb(r as DbCustomer)));
+    if (rows.length < FETCH_CUSTOMERS_PAGE_SIZE) break;
+    from += FETCH_CUSTOMERS_PAGE_SIZE;
+  }
+  return all;
 }
 
 export async function fetchCustomer(id: string): Promise<Customer | null> {
