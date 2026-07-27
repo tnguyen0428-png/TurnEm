@@ -375,6 +375,31 @@ export const INITIAL_STATE: AppState = {
   loaded: false,
 };
 
+// A queue sub-entry id must never carry a repeated "-waiting" suffix
+// (`${visit}-waiting-waiting`, or worse on a third round). That pattern
+// means a caller re-ran assignment on an already-"-waiting" leftover bucket
+// and appended a fresh "-waiting" instead of reusing the bucket's own id —
+// confirmed in production (ticket_items.queue_entry_id LIKE
+// '%waiting-waiting%', ticket #28 2026-07-26): the malformed id orphaned a
+// newly-added tech's line from turn crediting. MultiServiceAssign is the
+// only caller that appends "-waiting", and it now reuses the existing
+// bucket id instead of stacking — this is a last-resort tripwire so any
+// other/future caller that reintroduces the pattern is caught loudly and
+// self-heals (collapsed to a single suffix) rather than silently writing
+// corrupt data to Supabase.
+function sanitizeQueueEntryId(id: string): string {
+  const collapsed = id.replace(/(-waiting){2,}$/, '-waiting');
+  if (collapsed !== id) {
+    console.error(
+      `[reducer] refusing to persist malformed queue entry id "${id}" ` +
+      `(repeated "-waiting" suffix) — collapsed to "${collapsed}". This ` +
+      `means a caller re-ran assignment on an already-"-waiting" bucket ` +
+      `without reusing its id.`,
+    );
+  }
+  return collapsed;
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   // Run the per-action case, then converge totalTurns from the source-of-
   // truth arrays. The wrapper means individual cases no longer have to be
@@ -920,6 +945,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const newEntries = action.entries.map(({ client, manicuristId }) => {
         const base = {
           ...client,
+          id: sanitizeQueueEntryId(client.id),
           parentQueueId: action.originalId,
           // Children inherit parent's originalAppointment unless the caller
           // explicitly supplied one on the child entry.
@@ -1255,10 +1281,27 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // history row matches the receipt by construction. The completing card is
       // still freed above (updatedManicurists keys off action.manicuristId).
       // Falls back to the completer when there's no/unknown assignedManicuristId.
-      const creditMani =
-        (client.assignedManicuristId
-          ? state.manicurists.find((m) => m.id === client.assignedManicuristId)
-          : null) ?? manicurist;
+      const resolvedAssignee = client.assignedManicuristId
+        ? state.manicurists.find((m) => m.id === client.assignedManicuristId)
+        : null;
+      // A SET but UNRESOLVABLE assignedManicuristId (as opposed to a queue
+      // entry that legitimately has none yet) means the entry's assignment
+      // went stale between being assigned and being completed — the exact
+      // mechanism behind a completed_services row silently crediting the
+      // wrong (often placeholder) tech at turn_value 0 instead of who
+      // actually did the work (ticket #28, 2026-07-26: DANNY's line credited
+      // to "TEMPS"). Log loudly so this is traceable instead of a silent
+      // misattribution.
+      if (client.assignedManicuristId && !resolvedAssignee) {
+        console.error(
+          `[reducer] COMPLETE_SERVICE: queue entry ${client.id} has ` +
+          `assignedManicuristId "${client.assignedManicuristId}" which doesn't ` +
+          `match any known manicurist — falling back to crediting the ` +
+          `completing card (${manicurist.id}/${manicurist.name}) instead. ` +
+          `Turn credit for this service may be misattributed.`,
+        );
+      }
+      const creditMani = resolvedAssignee ?? manicurist;
       const creditId = creditMani.id;
       // Only mark a service as requested if the credited manicurist was specifically
       // the one requested for it. Without this check, a request for Manicurist X on

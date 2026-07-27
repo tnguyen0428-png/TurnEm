@@ -237,8 +237,21 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       const turnValue = waitingServices.reduce((sum, s) => sum + getTurnValueForService(s), 0);
       // Deterministic id — there's only one "waiting bucket" per parent, so
       // ${parent.id}-waiting collapses any double-fires to a single row.
+      //
+      // BUT: `client` here can itself already BE a previously-created waiting
+      // bucket (a receptionist re-opening the "still needs a tech" queue card
+      // to assign whoever just became available, leaving the rest waiting
+      // again — the normal "add a tech mid-ticket" flow). Blindly appending
+      // another literal "-waiting" onto an id that already ends in "-waiting"
+      // produces a malformed `${visit}-waiting-waiting` id (and would grow to
+      // `-waiting-waiting-waiting` on a third round). Confirmed in production
+      // (ticket_items.queue_entry_id LIKE '%waiting-waiting%', ticket #28
+      // 2026-07-26) — the malformed id orphaned the newly-added tech's line
+      // from turn crediting. Reuse the existing bucket id instead so repeated
+      // rounds stay idempotent at a single "-waiting" suffix.
+      const bucketId = client.id.endsWith('-waiting') ? client.id : `${client.id}-waiting`;
       const entry: QueueEntry = {
-        id: `${client.id}-waiting`,
+        id: bucketId,
         clientName: client.clientName,
         services: waitingServices,
         turnValue,
