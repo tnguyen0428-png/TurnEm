@@ -929,31 +929,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const c of staleQueue) {
         await supabase.from('queue_entries').delete().eq('id', c.id);
       }
-      // Only delete completed_services rows for dates whose archive succeeded.
-      // Rows for failed-archive dates stay in DB so the next startup retries.
-      const idsToDelete: string[] = [];
-      for (const [d, entries] of byDate) {
-        if (!archivedDates.has(d)) continue;
-        for (const e of entries) idsToDelete.push(e.id);
-      }
-      if (idsToDelete.length > 0) {
-        const { error: deleteErr } = await supabase.from('completed_services').delete().in('id', idsToDelete);
-        if (deleteErr) console.error('[startup] failed to delete archived completed_services:', deleteErr);
-      }
 
-      dispatch({ type: 'DAILY_RESET' });
-
-      // Update system_state ONLY if every date archived successfully. If any
-      // failed, leave last_archive_date stale so the next startup retries.
+      // Only proceed to DAILY_RESET (which clears completed_services via
+      // admin_clear_day — see callAdminClearDay) when every date archived
+      // successfully. admin_clear_day wipes the WHOLE table, not just the
+      // successfully-archived ids, so it must not run while a date's archive
+      // is still pending — that data would be lost before ever being saved.
+      // If any date failed, skip the reset entirely and leave both the DB
+      // rows and local state alone so the next startup retries the archive.
+      //
+      // Previously this deleted only the successfully-archived ids directly
+      // (`.delete().in('id', idsToDelete)`), but that call was silently
+      // rejected by the `guard_completed_services_delete` trigger (it has no
+      // way to set `app.allow_clear`) and DAILY_RESET was dispatched
+      // unconditionally regardless of archive success — the exact "Sync
+      // failed" banner recurring every device/every morning (2026-07-27).
       const allArchived = byDate.size === 0 || Array.from(byDate.keys()).every(d => archivedDates.has(d));
       if (allArchived) {
+        dispatch({ type: 'DAILY_RESET' });
         const { error: ssErr } = await supabase
           .from('system_state')
           .upsert({ id: 'singleton', last_archive_date: today, updated_at: new Date().toISOString() }, { onConflict: 'id' });
         if (ssErr) console.error('[startup] failed to update system_state:', ssErr);
         else console.log('[startup] system_state updated to', today);
       } else {
-        console.warn('[startup] some dates failed to archive - leaving system_state stale for retry');
+        console.warn('[startup] some dates failed to archive - skipping reset, leaving state stale for retry');
       }
     } else if (lastArchiveDate && lastArchiveDate < today) {
       // system_state is stale but no stale entries found in DB â the reset DID clear the DB
@@ -2214,6 +2214,32 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   }
 }
 
+// Bulk-clearing completed_services (History "Clear" button, or the
+// automated post-save DAILY_RESET) goes through this RPC instead of a plain
+// `.delete()`. A `guard_completed_services_delete` trigger on the table
+// rejects any delete of a row completed within the last 7 days unless the
+// deleting transaction has set `app.allow_clear = on` — added after a prior
+// accidental-clear incident, but the client's delete calls were never
+// updated to match, so every automated/manual bulk clear was silently
+// failing this guard and surfacing as a "Sync failed" banner on every device,
+// repeatedly (confirmed via Postgres logs: the exact guard exception firing
+// dozens of times/day, 2026-07-27). `admin_clear_day` is a SECURITY DEFINER
+// RPC that archives today's turns into daily_history and clears
+// completed_services with the guard bypassed for its own transaction only.
+async function callAdminClearDay(): Promise<{ ok: boolean; error?: string }> {
+  const { data: sysRow, error: sysErr } = await supabase
+    .from('system_state')
+    .select('admin_passcode')
+    .eq('id', 'singleton')
+    .maybeSingle();
+  const passcode = (sysRow as { admin_passcode?: string } | null)?.admin_passcode;
+  if (sysErr || !passcode) {
+    return { ok: false, error: sysErr?.message ?? 'admin passcode not configured' };
+  }
+  const { error } = await supabase.rpc('admin_clear_day', { p_passcode: passcode });
+  return { ok: !error, error: error?.message };
+}
+
 async function syncCompleted(
   completed: AppState['completed'],
   prev: AppState['completed'],
@@ -2240,28 +2266,36 @@ async function syncCompleted(
   const removedIds = prev.filter((c) => !currentIds.has(c.id)).map((c) => c.id);
   if (removedIds.length > 0) {
     const allowBulk = bulkClearRef.current;
-    const idsToDelete = allowBulk
-      ? removedIds
-      : removedIds.filter((id) => explicitDeleteIds.has(id));
     // Consume the intent markers we just honored so the set can't grow unbounded.
     for (const id of removedIds) explicitDeleteIds.delete(id);
     if (allowBulk) bulkClearRef.current = false;
-    const skipped = removedIds.length - idsToDelete.length;
-    if (skipped > 0) {
-      console.warn(`[syncCompleted] skipped ${skipped} unconfirmed completed delete(s) — left in DB to self-heal (not a user/clear delete)`);
-    }
-    if (idsToDelete.length > 0) {
-      // Batch the IN() list. A single .in('id', [...]) with a large id list builds
-      // one giant `id=in.(...)` query string; on a busy-day Clear / nightly reset
-      // that overflows the gateway URL limit and the WHOLE request fails with a 400
-      // (the "Sync failed — data may not be saved" banner, even though it's a delete
-      // and nothing is lost). Deleting in chunks of 200 keeps each request URL small.
-      // Same fix as the sales-report ticket-id batching (ID_BATCH_SIZE in lib/tickets.ts).
-      const DELETE_BATCH_SIZE = 200;
-      for (let i = 0; i < idsToDelete.length; i += DELETE_BATCH_SIZE) {
-        const slice = idsToDelete.slice(i, i + DELETE_BATCH_SIZE);
-        const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', slice));
-        if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+    if (allowBulk) {
+      // Bulk clear (Clear button / DAILY_RESET) must go through admin_clear_day —
+      // see callAdminClearDay for why a plain .delete().in(...) here always fails.
+      const { ok, error } = await callAdminClearDay();
+      if (!ok) {
+        console.error('[syncCompleted] admin_clear_day failed:', error);
+        onError('Sync failed — data may not be saved. Check connection.');
+      }
+    } else {
+      const idsToDelete = removedIds.filter((id) => explicitDeleteIds.has(id));
+      const skipped = removedIds.length - idsToDelete.length;
+      if (skipped > 0) {
+        console.warn(`[syncCompleted] skipped ${skipped} unconfirmed completed delete(s) — left in DB to self-heal (not a user/clear delete)`);
+      }
+      if (idsToDelete.length > 0) {
+        // Batch the IN() list. A single .in('id', [...]) with a large id list builds
+        // one giant `id=in.(...)` query string; on a busy-day Clear / nightly reset
+        // that overflows the gateway URL limit and the WHOLE request fails with a 400
+        // (the "Sync failed — data may not be saved" banner, even though it's a delete
+        // and nothing is lost). Deleting in chunks of 200 keeps each request URL small.
+        // Same fix as the sales-report ticket-id batching (ID_BATCH_SIZE in lib/tickets.ts).
+        const DELETE_BATCH_SIZE = 200;
+        for (let i = 0; i < idsToDelete.length; i += DELETE_BATCH_SIZE) {
+          const slice = idsToDelete.slice(i, i + DELETE_BATCH_SIZE);
+          const { error } = await withRetry(() => supabase.from('completed_services').delete().in('id', slice));
+          if (error) { console.error('[syncCompleted] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+        }
       }
     }
   }
