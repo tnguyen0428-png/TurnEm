@@ -974,9 +974,24 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
           clientId: action.originalId,
         });
       }
+      // Match the preservation rule in the queue-filter below: prior-round
+      // inProgress siblings under a `-waiting` bucket roll survive this
+      // dispatch, so they must NOT be entered into beforeByChildId — otherwise
+      // the delta loop reverses their credit and marks their staff as
+      // stalePointerStaff, clearing currentClient / status on staff who are
+      // actually still busy. The queue-filter guard alone isn't enough.
+      const preRollIsWaitingBucket = action.originalId.endsWith('-waiting');
+      const preRollNewEntryIds = new Set(action.entries.map((e) => e.client.id));
       for (const c of state.queue) {
         if (c.id === action.originalId) continue;
         if (c.parentQueueId === action.originalId && c.assignedManicuristId) {
+          if (
+            preRollIsWaitingBucket &&
+            c.status === 'inProgress' &&
+            !preRollNewEntryIds.has(c.id)
+          ) {
+            continue;
+          }
           beforeByChildId.set(c.id, {
             staffId: c.assignedManicuristId,
             turns: Number(c.turnValue) || 0,
@@ -1039,10 +1054,31 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // exactly the "shows BOTH manicurists" symptom seen on ticket #16.
       // syncQueue's orphan-cleanup pass picks up these removed children and
       // strips their lines off the ticket.
+      //
+      // EXCEPTION: a self-parented `-waiting` bucket accumulates siblings
+      // across multiple assignment rounds — each round of MultiServiceAssign
+      // on the bucket pulls one or more services out to a tech via
+      // `${bucket}-mani-N` and reuses the bucket id for the remaining
+      // services (see MultiServiceAssign line 252). Those prior-round
+      // sibling children are inProgress with a real manicurist but are
+      // INVISIBLE to the current round's modal (which only sees the
+      // bucket's current services[]). If we drop them here they lose their
+      // queue row, their ticket line, and their turn credit — the exact
+      // symptom seen on Pat (2026-07-29) and Chloe (2026-07-29): TOMMY /
+      // DANNY / KELLY / MACY silently disappeared when a later round
+      // assigned a different bucket service. Confirmed root cause: the
+      // bucket flow's split children share `parentQueueId === bucket` with
+      // siblings from earlier rounds, so this filter caught them.
+      const isWaitingBucketRoll = action.originalId.endsWith('-waiting');
       const newEntryIds = new Set(newEntries.map((e) => e.id));
       const filteredQueue = state.queue.filter((c) => {
         if (c.id === action.originalId) return false;
-        if (c.parentQueueId === action.originalId && !newEntryIds.has(c.id)) return false;
+        if (c.parentQueueId === action.originalId && !newEntryIds.has(c.id)) {
+          if (isWaitingBucketRoll && c.status === 'inProgress' && c.assignedManicuristId) {
+            return true;
+          }
+          return false;
+        }
         return true;
       });
       // Walk-in flow: synthesize one appt-book block per assigned split

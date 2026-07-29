@@ -453,6 +453,14 @@ export default function TicketModal({
     // No existing entry for this (visit, staff) — create a brand-new
     // add-child. Use a deterministic id so re-runs don't pile up duplicates.
     const addChildId = `${visitId}-add-${line.staff1Id}`;
+    // Credit turn value from the catalog. The pre-convergeTotalTurns design
+    // parked add-children at turnValue=0 and relied on a separate credit
+    // path at checkout, but recomputeTotalTurns now derives totals from
+    // queue.turnValue + completed.turnValue and skips anything at 0 — so an
+    // add-child at 0 silently never credits its tech, even after the
+    // service is completed (MACY's Dip Manicure, Pat 2026-07-29).
+    const svcCat = state.salonServices.find((s) => s.name === svcName);
+    const svcTurnValue = Number(svcCat?.turnValue ?? 0);
     dispatch({
       type: 'ADD_CLIENT',
       client: {
@@ -460,7 +468,7 @@ export default function TicketModal({
         parentQueueId: visitId,
         clientName: clientName || ticket.clientName || 'Walk-in',
         services: [svcName as ServiceType],
-        turnValue: 0,
+        turnValue: svcTurnValue,
         serviceRequests: [],
         requestedManicuristId: null,
         isRequested: false,
@@ -487,7 +495,7 @@ export default function TicketModal({
       client_name: clientName || ticket.clientName || 'Walk-in',
       service: svcName,
       services: [svcName],
-      turn_value: 0,
+      turn_value: svcTurnValue,
       service_requests: [],
       requested_manicurist_id: null,
       is_requested: false,
