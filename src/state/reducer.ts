@@ -318,6 +318,17 @@ function synthWalkInAppt(
   const { time, alignedWithBuddy } = pickWalkInStyleTime(
     client, manicuristId, appts, salonServices, manicurists, now,
   );
+  // Drop any serviceRequests whose service isn't in the entry's CURRENT
+  // services[]. Without this, a ticket-side service edit (e.g. Manicure →
+  // Gel Manicure) that renames services[] but only appends a new entry to
+  // serviceRequests leaves the stale entry behind — synthWalkInAppt copies
+  // both, and the appt book renders one block per request (Connie 2026-07-29:
+  // ghost Manicure/08:00 block appeared on TOMMY's column alongside the real
+  // 16:45 Gel Manicure). Filtering by current services[] keeps the block
+  // faithful to the queue entry's real state.
+  const filteredRequests = (client.serviceRequests || []).filter((r) =>
+    client.services.includes(r.service),
+  );
   return {
     // Stable, deterministic id derived from the queue entry instead of a fresh
     // random uuid. The walk-in block is a *synthesized* placeholder, and several
@@ -336,7 +347,7 @@ function synthWalkInAppt(
     clientPhone: '',
     service: client.services[0] || '',
     services: client.services,
-    serviceRequests: client.serviceRequests || [],
+    serviceRequests: filteredRequests,
     manicuristId,
     date,
     time,
