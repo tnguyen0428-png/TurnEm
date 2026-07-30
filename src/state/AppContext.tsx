@@ -888,6 +888,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!byDate.has(d)) byDate.set(d, []);
         byDate.get(d)!.push(c);
       }
+      // This startup path is the fallback for a MISSED 11pm auto-archive (the
+      // register/browser wasn't open at rollover). Because DAILY_RESET never
+      // ran for the missed day, `manicurists` here still carries THAT day's
+      // final clock-in times (clockInTime is a single live field, not
+      // per-day). Mirror saveTodayHistory's stamping so "Turns per
+      // Manicurist" on the archived day sorts by clock-in order instead of
+      // whatever manicuristClockInTime happened to be frozen at each entry's
+      // completion time (missing entirely for rows pulled fresh from the DB
+      // via mapDbCompleted, which doesn't carry that field at all). Only
+      // valid for the MOST RECENT stale date — if multiple days were missed,
+      // clockInTime only reflects the last one, so earlier dates are left as
+      // they were archived (same fallback behavior as before this fix).
+      const clockInOrder = new Map<string, number>();
+      for (const m of manicurists) {
+        if (m.clockInTime !== null) clockInOrder.set(m.id, m.clockInTime);
+      }
+      const sortedStaleDates = Array.from(byDate.keys()).sort();
+      const mostRecentStaleDate = sortedStaleDates.length > 0
+        ? sortedStaleDates[sortedStaleDates.length - 1]
+        : null;
       // Track which date archives committed successfully so we only delete
       // their rows from completed_services. If a date's upsert errors, leave
       // its rows in place so a future startup retries the archive.
@@ -896,14 +916,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const [date, entries] of byDate) {
         const existingIdx = updatedHistory.findIndex(h => h.date === date);
         const existing = existingIdx >= 0 ? updatedHistory[existingIdx] : null;
+        const stampedEntries = date === mostRecentStaleDate
+          ? entries.map((e) => ({
+              ...e,
+              manicuristClockInTime: clockInOrder.get(e.manicuristId) ?? e.manicuristClockInTime ?? null,
+            }))
+          : entries;
         // De-dupe by entry id when merging so re-runs of this path can't
         // double-count the same completed_service rows.
         const seenIds = new Set<string>();
         const mergedEntries: CompletedEntry[] = [];
-        for (const e of [...(existing?.entries ?? []), ...entries]) {
+        for (const e of [...(existing?.entries ?? []), ...stampedEntries]) {
           if (seenIds.has(e.id)) continue;
           seenIds.add(e.id);
           mergedEntries.push(e);
+        }
+        if (date === mostRecentStaleDate) {
+          mergedEntries.sort((a, b) => {
+            const aTime = clockInOrder.get(a.manicuristId) ?? a.manicuristClockInTime ?? Number.POSITIVE_INFINITY;
+            const bTime = clockInOrder.get(b.manicuristId) ?? b.manicuristClockInTime ?? Number.POSITIVE_INFINITY;
+            return aTime - bTime;
+          });
         }
         const historyEntry: DailyHistory = {
           id: existing?.id ?? crypto.randomUUID(),
