@@ -798,6 +798,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const completedIds = new Set(completed.map((c) => c.id));
       const orphanWalkInIds = appointments
         .filter((a) => a.id.startsWith('walkin:') && recentDates.has(a.date))
+        // A block already marked 'completed' is proven real work — the ticket
+        // closed and (per the tickets_complete_appointment_on_close DB trigger)
+        // flipped this exact row's status server-side. Never sweep it, even if
+        // the queue-entry-removal and completed_services-insert writes (two
+        // separate Supabase calls, not one transaction) haven't both landed by
+        // the time this load's queue/completed snapshots were fetched — that
+        // race silently deleted legitimately-finished walk-ins (Stephanie /
+        // Katelyn Gel Polish Hand and Erin / Ly Manicure, 2026-07-30: both had
+        // real completed_services rows in History but the appt-book block was
+        // gone) whenever a page happened to reload in that narrow gap.
+        .filter((a) => a.status !== 'completed')
         .filter((a) => {
           const qid = a.id.slice('walkin:'.length);
           return !liveQueueIds.has(qid) && !completedIds.has(qid);
