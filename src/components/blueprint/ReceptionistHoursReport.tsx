@@ -486,11 +486,13 @@ export default function ReceptionistHoursReport() {
             <p className="font-mono text-[10px] text-gray-400 mt-0.5">Sum of completed shifts in range — tap a name for the day-by-day breakdown</p>
           </div>
           <div className="divide-y divide-gray-50">
-            {totals.map((t) => (
+            {totals.map((t, idx) => (
               <button
                 key={t.staffId}
                 onClick={() => setDetail({ staffId: t.staffId, name: t.name })}
-                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors hover:bg-gray-100 ${
+                  idx % 2 === 1 ? 'bg-gray-50' : 'bg-white'
+                }`}
               >
                 <span className="font-mono text-sm font-semibold text-gray-900">{t.name}</span>
                 <div className="flex items-center gap-3">
@@ -546,7 +548,7 @@ export default function ReceptionistHoursReport() {
                     {unlocked ? <Trash2 size={13} /> : <Lock size={11} />} CLEAR WEEK
                   </button>
                 </div>
-                {wk.shifts.map((s) => {
+                {wk.shifts.map((s, idx) => {
                   const missingIn = s.startTime == null;
                   const missingOut = s.endTime == null;
                   // An open shift (has an in, no out yet) is "in progress"; a
@@ -554,7 +556,9 @@ export default function ReceptionistHoursReport() {
                   return (
                     <div
                       key={shiftKey(s)}
-                      className="grid grid-cols-[1fr_120px_120px_80px_80px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
+                      className={`grid grid-cols-[1fr_120px_120px_80px_80px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${
+                        idx % 2 === 1 ? 'bg-gray-50' : ''
+                      }`}
                     >
                       <span className="font-mono text-sm text-gray-900 truncate">
                         <span className="font-semibold">{s.staffName}</span>
@@ -884,7 +888,7 @@ function ReceptionistDetailModal({
               <span>Out</span>
               <span className="text-right">Total</span>
             </div>
-            {rows.map((d) => {
+            {rows.map((d, idx) => {
               // Per-day OT is the daily portion only (hours past 8 that day);
               // weekly OT can't be pinned to a single day, so the authoritative
               // total split lives in the summary below.
@@ -892,7 +896,9 @@ function ReceptionistDetailModal({
               return (
                 <div
                   key={d.dayKey}
-                  className="grid grid-cols-[1fr_110px_110px_80px] gap-2 px-3 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
+                  className={`grid grid-cols-[1fr_110px_110px_80px] gap-2 px-3 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${
+                    idx % 2 === 1 ? 'bg-gray-50' : ''
+                  }`}
                 >
                   <span className="font-mono text-sm font-semibold text-gray-900">
                     {formatDate(d.dayMs)}

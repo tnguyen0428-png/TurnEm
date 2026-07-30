@@ -155,16 +155,19 @@ export default function ManicuristSalesReport() {
               <span className="text-right">Services</span>
               <span className="text-right">Sales</span>
             </div>
-            {rows.map((r) => {
+            {rows.map((r, idx) => {
               const k = rowKey(r);
               const expanded = expandedKey === k;
               const lines = linesByStaff.get(k) ?? [];
+              const zebra = idx % 2 === 1;
               return (
                 <div key={k} className="border-b border-gray-50 last:border-b-0">
                   <button
                     type="button"
                     onClick={() => setExpandedKey(expanded ? null : k)}
-                    className="w-full grid grid-cols-[1fr_120px_140px] gap-2 px-4 py-2.5 items-center hover:bg-gray-50 transition-colors text-left"
+                    className={`w-full grid grid-cols-[1fr_120px_140px] gap-2 px-4 py-2.5 items-center transition-colors text-left hover:bg-gray-100 ${
+                      zebra ? 'bg-gray-50' : 'bg-white'
+                    }`}
                   >
                     <span className="font-mono text-sm font-semibold text-gray-900 truncate flex items-center gap-1.5">
                       {expanded
@@ -196,7 +199,9 @@ export default function ManicuristSalesReport() {
                             {lines.map((line, idx) => (
                               <div
                                 key={`${line.ticketId}:${idx}`}
-                                className="grid grid-cols-[120px_70px_1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center"
+                                className={`grid grid-cols-[120px_70px_1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center ${
+                                  idx % 2 === 1 ? 'bg-gray-50' : ''
+                                }`}
                               >
                                 <span className="font-mono text-xs text-gray-700">{formatLongDate(line.businessDate)}</span>
                                 <span className="font-mono text-xs font-bold text-gray-800">#{line.ticketNumber}</span>

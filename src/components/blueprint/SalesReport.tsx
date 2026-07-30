@@ -246,7 +246,7 @@ export default function SalesReport() {
               <span className="text-right">Variance</span>
               <span className="text-right">Status</span>
             </div>
-            {shifts.map((s) => {
+            {shifts.map((s, idx) => {
               const openedName = s.openedByReceptionistId
                 ? manicuristNameById.get(s.openedByReceptionistId) ?? '(removed)'
                 : '—';
@@ -260,7 +260,9 @@ export default function SalesReport() {
                   type="button"
                   onClick={() => setSelectedShift(s)}
                   title="View closing details"
-                  className="w-full text-left grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center hover:bg-gray-50 transition-colors cursor-pointer focus:outline-none focus:bg-gray-50"
+                  className={`w-full text-left grid grid-cols-[110px_120px_1fr_120px_1fr_90px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors cursor-pointer hover:bg-gray-100 focus:outline-none focus:bg-gray-100 ${
+                    idx % 2 === 1 ? 'bg-gray-50' : 'bg-white'
+                  }`}
                 >
                   <span className="font-mono text-sm text-gray-800 underline decoration-dotted decoration-gray-300 underline-offset-2">{formatLongDate(s.businessDate)}</span>
                   <span className="font-mono text-sm text-gray-700">
@@ -393,8 +395,8 @@ export default function SalesReport() {
               <span className="text-right">Discount</span>
               <span className="text-right">Net Total</span>
             </div>
-            {discountTickets.map((t) => (
-              <div key={t.id} className="grid grid-cols-[80px_110px_1fr_1fr_110px_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
+            {discountTickets.map((t, idx) => (
+              <div key={t.id} className={`grid grid-cols-[80px_110px_1fr_1fr_110px_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${idx % 2 === 1 ? 'bg-gray-50' : ''}`}>
                 <span className="font-mono text-sm font-bold text-gray-800">#{t.ticketNumber}</span>
                 <span className="font-mono text-xs text-gray-700">{formatLongDate(t.businessDate)}</span>
                 <span className="font-mono text-sm font-semibold text-gray-900 truncate">{t.clientName || 'Walk-in'}</span>
@@ -430,8 +432,8 @@ export default function SalesReport() {
               <span>Reason</span>
               <span className="text-right">Amount</span>
             </div>
-            {cancelRows.map((r) => (
-              <div key={r.id} className="grid grid-cols-[120px_70px_90px_1fr_120px_1fr_90px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
+            {cancelRows.map((r, idx) => (
+              <div key={r.id} className={`grid grid-cols-[120px_70px_90px_1fr_120px_1fr_90px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${idx % 2 === 1 ? 'bg-gray-50' : ''}`}>
                 <span className="font-mono text-xs text-gray-700">{formatLongDate(r.date)}</span>
                 <span className="font-mono text-xs text-gray-500">{formatTime(r.whenMs)}</span>
                 <span>
@@ -483,7 +485,7 @@ export default function SalesReport() {
             </div>
             {[...closed]
               .sort((a, b) => (b.closedAt ?? b.openedAt) - (a.closedAt ?? a.openedAt))
-              .map((t) => {
+              .map((t, idx) => {
                 const expanded = expandedTicketId === t.id;
                 const lineDiscount = t.items.reduce((s, it) => s + (it.discountCents || 0), 0);
                 const totalDiscount = (t.discountCents || 0) + lineDiscount;
@@ -499,7 +501,9 @@ export default function SalesReport() {
                       type="button"
                       onClick={() => setExpandedTicketId(expanded ? null : t.id)}
                       className={`w-full grid grid-cols-[70px_110px_70px_1fr_1fr_80px_80px_90px_100px] gap-2 px-4 py-2.5 items-center transition-colors text-left ${
-                        expanded ? 'bg-pink-100/60' : 'hover:bg-gray-50'
+                        expanded
+                          ? 'bg-pink-100/60'
+                          : idx % 2 === 1 ? 'bg-gray-50 hover:bg-gray-100' : 'bg-white hover:bg-gray-100'
                       }`}
                     >
                       <span className="font-mono text-sm font-bold text-gray-800 flex items-center gap-1">
@@ -533,10 +537,12 @@ export default function SalesReport() {
                           {t.items.length === 0 ? (
                             <p className="font-mono text-xs text-gray-400 px-3 py-2 text-center">No line items.</p>
                           ) : (
-                            t.items.map((it) => (
+                            t.items.map((it, idx) => (
                               <div
                                 key={it.id}
-                                className="grid grid-cols-[40px_1fr_1fr_70px_90px_90px_100px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center"
+                                className={`grid grid-cols-[40px_1fr_1fr_70px_90px_90px_100px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center ${
+                                  idx % 2 === 1 ? 'bg-gray-50' : ''
+                                }`}
                               >
                                 <span className="font-mono text-xs text-gray-700 text-right">{it.quantity}</span>
                                 <span className="font-mono text-xs text-gray-800 truncate">{it.name}</span>
@@ -597,8 +603,8 @@ export default function SalesReport() {
               <span className="text-right">Gross</span>
               <span className="text-right">Tips</span>
             </div>
-            {byDay.map((d) => (
-              <div key={d.date} className="grid grid-cols-[1fr_90px_120px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center">
+            {byDay.map((d, idx) => (
+              <div key={d.date} className={`grid grid-cols-[1fr_90px_120px_100px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${idx % 2 === 1 ? 'bg-gray-50' : ''}`}>
                 <span className="font-mono text-sm text-gray-800">{formatLongDate(d.date)}</span>
                 <span className="font-mono text-sm text-gray-700 text-right">{d.count}</span>
                 <span className="font-mono text-sm font-semibold text-gray-900 text-right">{formatMoney(d.grossCents)}</span>

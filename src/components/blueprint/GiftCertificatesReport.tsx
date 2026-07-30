@@ -173,10 +173,12 @@ function CertList({
             <span>Redeemer</span>
             <span className="text-right">Used</span>
           </div>
-          {certs.map((c) => (
+          {certs.map((c, idx) => (
             <div
               key={`${c.purchaseTicketId}:${c.normalizedSerial || c.serial}`}
-              className="grid grid-cols-[110px_120px_1fr_110px_120px_1fr_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center"
+              className={`grid grid-cols-[110px_120px_1fr_110px_120px_1fr_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${
+                idx % 2 === 1 ? 'bg-gray-50' : ''
+              }`}
             >
               <span className="font-mono text-sm font-bold text-gray-800">#{c.serial || '—'}</span>
               <span className="font-mono text-xs text-gray-700">{formatDate(c.purchaseDate)}</span>
