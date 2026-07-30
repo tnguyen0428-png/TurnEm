@@ -1090,10 +1090,21 @@ export default function TicketModal({
 
       for (const [apptId, w] of work) {
         if (!w.touched) continue;
+        // Purge any serviceRequests entries whose service is no longer in
+        // the touched services[]. Without this, a rename that fell into the
+        // "no matching request" push branch above — or a request seeded by
+        // a prior drag/synth path we don't own — leaves the old-name entry
+        // behind alongside the new one. The appt book renders one block per
+        // serviceRequests entry, so the orphan shows up as a phantom block
+        // at whatever startTime the stale entry carried (Connie 2026-07-29:
+        // stale Manicure/08:00 next to real Gel Manicure/16:45 on TOMMY).
+        const scrubbedRequests = w.serviceRequests.filter((r) =>
+          w.services.includes(r.service),
+        );
         const updates: Partial<Appt> = {
           services: w.services,
           service: (w.services[0] ?? '') as Svc,
-          serviceRequests: w.serviceRequests,
+          serviceRequests: scrubbedRequests,
           manicuristId: w.manicuristId,
         };
         dispatch({ type: 'UPDATE_APPOINTMENT', id: apptId, updates });
