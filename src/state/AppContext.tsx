@@ -784,48 +784,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // queue + completed rows, so it can never touch a live walk-in. Scope is
     // limited to today/yesterday so historical appt-book blocks (whose
     // completed rows may have been pruned at 14d) are never disturbed.
-    {
-      const todayLA = getTodayLA();
-      // TODAY ONLY. The previous version also swept "yesterday", but the nightly
-      // archive deletes past-day completed_services rows (moved to daily_history),
-      // so by load time there is no completed row left to prove a yesterday walk-in
-      // block is real — every legit prior-day walk-in looked like an orphan and got
-      // deleted (data loss 6/18+). Today's completed rows are still live, so the
-      // orphan check is only sound for today; the regenerating phantom also
-      // re-uploads against today's stale queue id, so today-only still kills it.
-      const recentDates = new Set([todayLA]);
-      const liveQueueIds = new Set(queue.map((q) => q.id));
-      const completedIds = new Set(completed.map((c) => c.id));
-      const orphanWalkInIds = appointments
-        .filter((a) => a.id.startsWith('walkin:') && recentDates.has(a.date))
-        // A block already marked 'completed' is proven real work — the ticket
-        // closed and (per the tickets_complete_appointment_on_close DB trigger)
-        // flipped this exact row's status server-side. Never sweep it, even if
-        // the queue-entry-removal and completed_services-insert writes (two
-        // separate Supabase calls, not one transaction) haven't both landed by
-        // the time this load's queue/completed snapshots were fetched — that
-        // race silently deleted legitimately-finished walk-ins (Stephanie /
-        // Katelyn Gel Polish Hand and Erin / Ly Manicure, 2026-07-30: both had
-        // real completed_services rows in History but the appt-book block was
-        // gone) whenever a page happened to reload in that narrow gap.
-        .filter((a) => a.status !== 'completed')
-        .filter((a) => {
-          const qid = a.id.slice('walkin:'.length);
-          return !liveQueueIds.has(qid) && !completedIds.has(qid);
-        })
-        .map((a) => a.id);
-      if (orphanWalkInIds.length > 0) {
-        const orphanSet = new Set(orphanWalkInIds);
-        appointments = appointments.filter((a) => !orphanSet.has(a.id));
-        const BATCH = 100;
-        for (let i = 0; i < orphanWalkInIds.length; i += BATCH) {
-          const idSlice = orphanWalkInIds.slice(i, i + BATCH);
-          const { error } = await supabase.from('appointments').delete().in('id', idSlice);
-          if (error) console.warn('[loadInitialData] orphan walk-in sweep failed:', error.message);
-        }
-        console.log(`[loadInitialData] swept ${orphanWalkInIds.length} orphan walk-in block(s)`);
-      }
-    }
+    // Candidate detection only here — the actual sweep (with a re-verify delay)
+    // runs AFTER the LOAD_STATE dispatch below, as a background task. See that
+    // block for why: checkout's queue-removal and completed_services-insert are
+    // two separate, non-atomic Supabase writes, so a snapshot fetched mid-race
+    // can transiently show neither for a perfectly real, just-finished visit.
+    const todayLA = getTodayLA();
+    // TODAY ONLY. The previous version also swept "yesterday", but the nightly
+    // archive deletes past-day completed_services rows (moved to daily_history),
+    // so by load time there is no completed row left to prove a yesterday walk-in
+    // block is real — every legit prior-day walk-in looked like an orphan and got
+    // deleted (data loss 6/18+). Today's completed rows are still live, so the
+    // orphan check is only sound for today; the regenerating phantom also
+    // re-uploads against today's stale queue id, so today-only still kills it.
+    const recentDates = new Set([todayLA]);
+    const liveQueueIds = new Set(queue.map((q) => q.id));
+    const completedIds = new Set(completed.map((c) => c.id));
+    const orphanCandidateIds = appointments
+      .filter((a) => a.id.startsWith('walkin:') && recentDates.has(a.date))
+      // A block already marked 'completed' is proven real work — the ticket
+      // closed and (per the tickets_complete_appointment_on_close DB trigger)
+      // flipped this exact row's status server-side. Never sweep it.
+      .filter((a) => a.status !== 'completed')
+      .filter((a) => {
+        const qid = a.id.slice('walkin:'.length);
+        return !liveQueueIds.has(qid) && !completedIds.has(qid);
+      })
+      .map((a) => a.id);
 
     dispatch({ type: 'LOAD_STATE', state: {
       manicurists, queue, completed, appointments, salonServices,
@@ -834,6 +819,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
       categoryPriority: initialCatPriority,
       servicePriority: initialSvcPriority,
     } });
+
+    // Deferred orphan-sweep confirmation. Checkout's queue-entry removal and
+    // its completed_services insert are two separate, non-atomic Supabase
+    // writes, so the snapshot this load fetched can transiently show neither
+    // for a visit that just finished seconds ago. Wait, then re-fetch just the
+    // id sets fresh and only delete a candidate that's STILL unmatched in
+    // both: a real visit's second write reliably lands within a couple
+    // seconds, but a genuine "regenerating phantom" (a stale queue child some
+    // other device keeps re-uploading) stays orphaned indefinitely. Runs in
+    // the background so it never delays the initial render. (Stephanie/
+    // Katelyn, Erin/Ly, Erin/Kelly, Kelly's LATE fee, 2026-07-30: all real,
+    // non-voided completed_services rows in History, but the appt-book block
+    // was swept because a page reload landed in that gap.)
+    if (orphanCandidateIds.length > 0) {
+      void (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        const [{ data: freshQueue }, { data: freshCompleted }] = await Promise.all([
+          supabase.from('queue_entries').select('id'),
+          supabase.from('completed_services').select('id'),
+        ]);
+        const freshLiveQueueIds = new Set((freshQueue ?? []).map((r) => (r as { id: string }).id));
+        const freshCompletedIds = new Set((freshCompleted ?? []).map((r) => (r as { id: string }).id));
+        const stillOrphanIds = orphanCandidateIds.filter((apptId) => {
+          const qid = apptId.slice('walkin:'.length);
+          return !freshLiveQueueIds.has(qid) && !freshCompletedIds.has(qid);
+        });
+        if (stillOrphanIds.length === 0) return;
+        const BATCH = 100;
+        for (let i = 0; i < stillOrphanIds.length; i += BATCH) {
+          const idSlice = stillOrphanIds.slice(i, i + BATCH);
+          const { error } = await supabase.from('appointments').delete().in('id', idSlice);
+          if (error) console.warn('[loadInitialData] orphan walk-in sweep failed:', error.message);
+        }
+        // Mark as remote so the local delete-sync effect doesn't try to
+        // re-push a DELETE we already issued directly above.
+        for (const id of stillOrphanIds) {
+          isApplyingRemoteRef.current = true;
+          dispatch({ type: 'REMOTE_APPOINTMENT_DELETE', id });
+        }
+        console.log(`[loadInitialData] swept ${stillOrphanIds.length} orphan walk-in block(s)`);
+      })();
+    }
 
     // Startup stale-data check: two conditions trigger an archive+reset on load:
     // 1. system_state.last_archive_date is behind today â the 11:59pm timer missed (app closed,
