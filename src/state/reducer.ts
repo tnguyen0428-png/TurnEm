@@ -1577,6 +1577,20 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
             ? { ...a, ...action.updates, lastEditedAt: Date.now() }
             : a
         ),
+        // Keep the live queue entry's `originalAppointment` snapshot in sync.
+        // That snapshot is captured once at check-in time and otherwise never
+        // refreshed, so a receptionist correcting a mis-placed block (e.g. the
+        // ASSIGN_CLIENT 8 AM conflict fallback) left every reader of the
+        // snapshot — the queue card's time badge, the appt-book's
+        // dangling-reference re-synth path — permanently showing the stale
+        // pre-correction time/placement instead of the fix. (Dolly 2026-07-30:
+        // corrected to 11:00 in the book, but her queue card kept showing 8:00
+        // forever because nothing wrote the correction back here.)
+        queue: state.queue.map((q) =>
+          q.originalAppointment?.id === action.id
+            ? { ...q, originalAppointment: { ...q.originalAppointment, ...action.updates } }
+            : q
+        ),
       };
 
     case 'DELETE_APPOINTMENT':
