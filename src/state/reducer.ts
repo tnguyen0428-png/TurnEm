@@ -806,24 +806,40 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                     // and clear the parked startTime so the services stack from
                     // the new appt.time. clientRequest is preserved untouched, so
                     // a customer request keeps its R badge.
-                    // BUT leave slots deliberately placed with a DIFFERENT tech
-                    // alone (keep their manicuristIds AND startTime). A multi-
-                    // tech booking — built by dragging each service block into a
-                    // separate manicurist's column — has serviceRequests pointing
-                    // at several different techs. Blindly mapping every one onto
+                    // BUT leave every OTHER service on this appt alone (keep its
+                    // manicuristIds AND startTime) — only relocate the service(s)
+                    // this queue entry actually covers (client.services). A multi-
+                    // tech booking has serviceRequests pointing at several
+                    // different techs; blindly mapping every one onto
                     // action.manicuristId collapsed them all onto the single
                     // assigned tech, clumped at one time (Carrie 2026-06-30: Gel
                     // Mani/Gel Pedi/Gel Mani/Pedicure spread across mani-3/5/6/8
                     // all jumped to the last-assigned tech when the final slot
-                    // was assigned from the queue). Only slots following the
-                    // appt's primary column (or unassigned) move with the
-                    // assignment; the rest hold their column + startTime.
-                    serviceRequests: (a.serviceRequests ?? []).map((r) => {
-                      const rMani = r.manicuristIds?.[0] ?? null;
-                      const primaryCol = a.manicuristId ?? null;
-                      if (rMani && primaryCol && rMani !== primaryCol) return r;
-                      return { ...r, manicuristIds: [action.manicuristId], startTime: undefined };
-                    }),
+                    // was assigned from the queue).
+                    //
+                    // The first fix for that (comparing the request's tech against
+                    // the appt's top-level primaryCol, moving it only when they
+                    // matched) broke whenever the FIRST-assigned service's tech
+                    // happened to equal primaryCol too — e.g. a client-requested
+                    // service becomes the appt's primary column at booking.
+                    // Assigning a LATER, still-unassigned service then swept the
+                    // first (already-worked, sometimes already-completed) request
+                    // onto the new tech as well (Megan Smith 2026-07-30: assigning
+                    // Gel Pedicure to Brian moved her already-completed Gel
+                    // Fill/Sam request onto Brian too). Scoping the relocation to
+                    // client.services — the exact service(s) THIS assignment
+                    // covers — instead of an indirect column-matching guess fixes
+                    // both bugs at once.
+                    serviceRequests: (() => {
+                      const remaining = new Map<string, number>();
+                      for (const s of client.services) remaining.set(s, (remaining.get(s) ?? 0) + 1);
+                      return (a.serviceRequests ?? []).map((r) => {
+                        const left = remaining.get(r.service) ?? 0;
+                        if (left <= 0) return r;
+                        remaining.set(r.service, left - 1);
+                        return { ...r, manicuristIds: [action.manicuristId], startTime: undefined };
+                      });
+                    })(),
                   }
                 : a,
             )
