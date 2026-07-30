@@ -99,6 +99,9 @@ export default function TicketModal({
   const isVoided = ticket.status === 'voided';
   // VOID requires a receptionist PIN — the modal renders inline once this is true.
   const [showVoidGate, setShowVoidGate] = useState(false);
+  // PROCESS on a discounted ticket requires a receptionist PIN too, so the
+  // Sales report can show "discount by" — same pattern as the void gate.
+  const [showDiscountGate, setShowDiscountGate] = useState(false);
 
   // Closed-ticket edit unlock. By default a CLOSED ticket is read-only; a
   // receptionist can tap EDIT in the footer to open a PIN gate. Once they
@@ -1708,7 +1711,12 @@ export default function TicketModal({
   }
 
   // ─── Process Ticket ───────────────────────────────────────────────────────
-  async function handleProcess() {
+  // Validates, then either processes immediately or — for a discounted
+  // ticket — opens a receptionist PIN gate first (mirrors the void flow) so
+  // the Sales report can show who applied the discount. The gate's onConfirm
+  // calls runProcess with the captured receptionist id; the no-discount path
+  // calls it directly with null.
+  function handleProcess() {
     setError(null);
     if (lines.length === 0) { setError('Add at least one item.'); return; }
     // Block checkout if any service line is still unassigned. Cashier needs
@@ -1727,6 +1735,15 @@ export default function TicketModal({
       setError(`Payments ${formatMoneyCents(pendingPaidCents)} ≠ total ${formatMoneyCents(totalCents)}.`);
       return;
     }
+    if (hasAnyDiscount) {
+      setShowDiscountGate(true);
+      return;
+    }
+    void runProcess(null);
+  }
+
+  async function runProcess(discountedByReceptionistId: string | null) {
+    setError(null);
     // Block an over-balance gift redemption before anything is committed.
     setBusy('processing');
     const giftErr = await giftOverdraftError();
@@ -1757,6 +1774,7 @@ export default function TicketModal({
       ticketId: ticket.id,
       shiftId: shift.id,
       payments: closingPayments,
+      discountedByReceptionistId,
     });
     setBusy('idle');
     if (!closed) {
@@ -2665,6 +2683,19 @@ canEdit && (
         receptionists={state.manicurists.filter((m) => m.isReceptionist)}
         onCancel={() => setShowVoidGate(false)}
         onConfirm={handleVoidConfirmed}
+      />
+      <ReceptionistPinGate
+        open={showDiscountGate}
+        title="DISCOUNT APPLIED"
+        subtitle={`Ticket #${ticket.ticketNumber} has a discount. Confirm your PIN to process it.`}
+        confirmLabel="PROCESS"
+        tone="primary"
+        receptionists={state.manicurists.filter((m) => m.isReceptionist)}
+        onCancel={() => setShowDiscountGate(false)}
+        onConfirm={(receptionistId) => {
+          setShowDiscountGate(false);
+          void runProcess(receptionistId);
+        }}
       />
       <ReceptionistPinGate
         open={showEditGate}

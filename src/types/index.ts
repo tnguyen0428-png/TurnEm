@@ -211,6 +211,9 @@ export interface Ticket {
   // Receptionist (manicurist row, is_receptionist=true) who PIN-gated and
   // voided the ticket. Null until the void path runs.
   voidedByReceptionistId: string | null;
+  // Receptionist who PIN-gated checkout on a ticket that had a discount
+  // applied. Null when the ticket has never carried a discount at close time.
+  discountedByReceptionistId: string | null;
 
   openedAt: number;             // ms epoch
   closedAt: number | null;      // ms epoch

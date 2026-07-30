@@ -54,6 +54,7 @@ interface DbTicket {
   note: string;
   void_reason: string;
   voided_by_receptionist_id: string | null;
+  discounted_by_receptionist_id: string | null;
   opened_at: string;
   closed_at: string | null;
   updated_at: string;
@@ -165,6 +166,7 @@ function fromDbTicket(row: DbTicket, items: DbTicketItem[], payments: DbPayment[
     note: row.note,
     voidReason: row.void_reason,
     voidedByReceptionistId: row.voided_by_receptionist_id ?? null,
+    discountedByReceptionistId: row.discounted_by_receptionist_id ?? null,
     openedAt: new Date(row.opened_at).getTime(),
     closedAt: row.closed_at ? new Date(row.closed_at).getTime() : null,
     updatedAt: new Date(row.updated_at).getTime(),
@@ -482,6 +484,45 @@ export async function fetchTicketsForRange(
     .lte('business_date', toDateLA)
     .order('opened_at', { ascending: false });
   if (error) { console.error('[tickets] fetchTicketsForRange:', error.message); return []; }
+  if (!tRows || tRows.length === 0) return [];
+
+  const ids = tRows.map((r) => (r as DbTicket).id);
+  const [items, payments] = await Promise.all([
+    fetchItemsForTicketIds(ids),
+    fetchPaymentsForTicketIds(ids),
+  ]);
+  return tRows.map((r) => fromDbTicket(r as DbTicket, items, payments));
+}
+
+/**
+ * List every VOIDED ticket whose void actually happened within an inclusive
+ * LA-local date range — used by the Sales report's Cancellations & Void
+ * section. Deliberately separate from fetchTicketsForRange: that one scopes
+ * by business_date (when the ticket was opened), but a ticket can be voided
+ * on a later calendar day than it was opened, and the report should show the
+ * void on the day it happened, not the ticket's original business day.
+ *
+ * `closed_at` doubles as "voided at" here — voidTicket() stamps it in the
+ * same update that sets status='voided'. Falls back to updated_at for the
+ * rare legacy row where closed_at is somehow null. The '-07:00' fixed offset
+ * mirrors the todayMidnightLA construction already used in AppContext.tsx.
+ */
+export async function fetchVoidedTicketsForRange(
+  fromDateLA: string,
+  toDateLA: string,
+): Promise<Ticket[]> {
+  const fromMs = new Date(fromDateLA + 'T00:00:00-07:00').toISOString();
+  const toMs = new Date(toDateLA + 'T23:59:59.999-07:00').toISOString();
+  const { data: tRows, error } = await supabase
+    .from('tickets')
+    .select('*')
+    .eq('status', 'voided')
+    .or(
+      `and(closed_at.gte.${fromMs},closed_at.lte.${toMs}),` +
+      `and(closed_at.is.null,updated_at.gte.${fromMs},updated_at.lte.${toMs})`,
+    )
+    .order('closed_at', { ascending: false });
+  if (error) { console.error('[tickets] fetchVoidedTicketsForRange:', error.message); return []; }
   if (!tRows || tRows.length === 0) return [];
 
   const ids = tRows.map((r) => (r as DbTicket).id);
@@ -2340,6 +2381,11 @@ export interface CloseTicketInput {
   ticketId: string;
   shiftId: string | null;
   payments: ClosingPaymentInput[];
+  // Receptionist who PIN-confirmed checkout on a discounted ticket. Always
+  // written (defaults to null below) so re-processing a reopened ticket
+  // after the discount was removed clears stale attribution instead of
+  // leaving a prior close's value behind.
+  discountedByReceptionistId?: string | null;
 }
 
 /**
@@ -2409,6 +2455,7 @@ export async function closeTicket(input: CloseTicketInput): Promise<Ticket | nul
       shift_id: input.shiftId,
       paid_cents: paidCents,
       updated_at: new Date().toISOString(),
+      discounted_by_receptionist_id: input.discountedByReceptionistId ?? null,
     })
     .eq('id', input.ticketId)
     .eq('status', 'open')

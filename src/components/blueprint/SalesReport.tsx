@@ -7,12 +7,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { Shift, ShiftMovement, Ticket } from '../../types';
-import { fetchTicketsForRange } from '../../lib/tickets';
+import { fetchTicketsForRange, fetchVoidedTicketsForRange } from '../../lib/tickets';
 import { fetchShiftsForRange, fetchShiftMovements } from '../../lib/shifts';
 import {
   BILL_DENOMINATIONS_CENTS, COIN_DENOMINATIONS_CENTS, totalFromCount,
 } from '../register/MoneyCountTable';
 import { useApp } from '../../state/AppContext';
+import { getLocalDateStr } from '../../utils/time';
 import {
   ReportRangeHeader, useReportRange, formatMoney, formatLongDate, formatTime, eachDateInRange,
 } from './reportShared';
@@ -35,6 +36,7 @@ interface CancelRow {
 export default function SalesReport() {
   const [range, setRange] = useReportRange();
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [voidedTickets, setVoidedTickets] = useState<Ticket[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null);
@@ -46,14 +48,18 @@ export default function SalesReport() {
     (async () => {
       setLoading(true);
       // Tickets + shifts in parallel — the Shifts section needs the drawer
-      // sessions across the same date range.
-      const [allTickets, allShifts] = await Promise.all([
+      // sessions across the same date range. voidedTickets is a SEPARATE
+      // fetch scoped by when the void actually happened (not business_date)
+      // — see fetchVoidedTicketsForRange for why.
+      const [allTickets, allShifts, allVoided] = await Promise.all([
         fetchTicketsForRange(range.from, range.to),
         fetchShiftsForRange(range.from, range.to),
+        fetchVoidedTicketsForRange(range.from, range.to),
       ]);
       if (!cancelled) {
         setTickets(allTickets);
         setShifts(allShifts);
+        setVoidedTickets(allVoided);
         setLoading(false);
       }
     })();
@@ -124,15 +130,18 @@ export default function SalesReport() {
 
   const cancelRows = useMemo<CancelRow[]>(() => {
     const out: CancelRow[] = [];
-    for (const t of tickets) {
-      if (t.status !== 'voided') continue;
+    // voidedTickets is already scoped to the void date (not business_date) —
+    // see fetchVoidedTicketsForRange. Use closedAt (stamped at void time) as
+    // the row's timestamp; fall back to updatedAt for the rare legacy row.
+    for (const t of voidedTickets) {
+      const whenMs = t.closedAt ?? t.updatedAt;
       const byName = t.voidedByReceptionistId
         ? receptionistNameById.get(t.voidedByReceptionistId) ?? '(removed)'
         : '—';
       out.push({
         id: `t:${t.id}`,
-        date: t.businessDate,
-        whenMs: t.openedAt,
+        date: getLocalDateStr(new Date(whenMs)),
+        whenMs,
         source: 'ticket',
         status: 'voided',
         clientName: t.clientName || 'Walk-in',
@@ -141,26 +150,43 @@ export default function SalesReport() {
         byReceptionistName: byName,
       });
     }
+    // Appointments have no dedicated "cancelled at" column, but every
+    // UPDATE_APPOINTMENT (including the status flip to cancelled/no-show)
+    // bumps lastEditedAt — use that as the actual cancellation date instead
+    // of the appointment's scheduled date, which can be in the future (the
+    // Kerri 7/30 10am case: cancelled well before the slot itself). Legacy
+    // rows cancelled before lastEditedAt existed fall back to the scheduled
+    // date/time.
     for (const a of state.appointments) {
       if (a.status !== 'cancelled' && a.status !== 'no-show') continue;
-      if (a.date < range.from || a.date > range.to) continue;
       const [hh, mm] = (a.time || '00:00').split(':').map((s) => parseInt(s, 10));
-      const d = new Date(a.date + 'T12:00:00');
-      d.setHours(Number.isFinite(hh) ? hh : 12, Number.isFinite(mm) ? mm : 0, 0, 0);
+      const scheduled = new Date(a.date + 'T12:00:00');
+      scheduled.setHours(Number.isFinite(hh) ? hh : 12, Number.isFinite(mm) ? mm : 0, 0, 0);
+      const whenMs = a.lastEditedAt ?? scheduled.getTime();
+      const date = a.lastEditedAt ? getLocalDateStr(new Date(whenMs)) : a.date;
+      if (date < range.from || date > range.to) continue;
+      // Best-effort only: lastEditedByReceptionistId is "who made the most
+      // recent edit," which is usually the cancel/no-show action itself
+      // (appointments rarely get touched again after) but isn't guaranteed —
+      // there's no PIN gate on the cancel/no-show actions themselves to
+      // confirm it. Shows the name when known, '—' otherwise.
+      const apptByName = a.lastEditedByReceptionistId
+        ? receptionistNameById.get(a.lastEditedByReceptionistId) ?? '(removed)'
+        : '—';
       out.push({
         id: `a:${a.id}`,
-        date: a.date,
-        whenMs: d.getTime(),
+        date,
+        whenMs,
         source: 'appointment',
         status: a.status as 'cancelled' | 'no-show',
         clientName: a.clientName || 'Walk-in',
         reason: a.notes || '',
         amountCents: 0,
-        byReceptionistName: '—',
+        byReceptionistName: apptByName,
       });
     }
     return out.sort((a, b) => b.whenMs - a.whenMs);
-  }, [tickets, state.appointments, range.from, range.to, receptionistNameById]);
+  }, [voidedTickets, state.appointments, range.from, range.to, receptionistNameById]);
 
   const cancelSummary = useMemo(() => {
     let voided = 0;
@@ -387,20 +413,28 @@ export default function SalesReport() {
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-[80px_110px_1fr_1fr_110px_110px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+            <div className="grid grid-cols-[70px_100px_1fr_100px_100px_1fr_100px_110px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
               <span>Ticket</span>
               <span>Date</span>
               <span>Client</span>
               <span>Primary Staff</span>
+              <span>Discount by</span>
+              <span>Reason</span>
               <span className="text-right">Discount</span>
               <span className="text-right">Net Total</span>
             </div>
             {discountTickets.map((t, idx) => (
-              <div key={t.id} className={`grid grid-cols-[80px_110px_1fr_1fr_110px_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${idx % 2 === 1 ? 'bg-gray-50' : ''}`}>
+              <div key={t.id} className={`grid grid-cols-[70px_100px_1fr_100px_100px_1fr_100px_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${idx % 2 === 1 ? 'bg-gray-50' : ''}`}>
                 <span className="font-mono text-sm font-bold text-gray-800">#{t.ticketNumber}</span>
                 <span className="font-mono text-xs text-gray-700">{formatLongDate(t.businessDate)}</span>
                 <span className="font-mono text-sm font-semibold text-gray-900 truncate">{t.clientName || 'Walk-in'}</span>
                 <span className="font-mono text-sm text-gray-700 truncate">{t.primaryManicuristName || '—'}</span>
+                <span className="font-mono text-xs text-gray-700 truncate">
+                  {t.discountedByReceptionistId
+                    ? receptionistNameById.get(t.discountedByReceptionistId) ?? '(removed)'
+                    : '—'}
+                </span>
+                <span className="font-mono text-xs text-gray-500 truncate" title={t.note}>{t.note || '—'}</span>
                 <span className="font-mono text-sm text-red-600 text-right">-{formatMoney(t.totalDiscountCents)}</span>
                 <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoney(t.totalCents)}</span>
               </div>
