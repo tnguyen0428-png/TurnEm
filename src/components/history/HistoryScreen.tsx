@@ -458,7 +458,7 @@ export default function HistoryScreen() {
   // For PAST DAYS: build entirely from the day's saved entries.
   const turnsPerManicurist = useMemo<TurnsRowEntry[]>(() => {
     if (!viewingPastDay) {
-      type Row = TurnsRowEntry & { sortTime: number };
+      type Row = TurnsRowEntry & { sortTime: number; hasClockIn: boolean };
       const byId = new Map<string, Row>();
 
       // 1. Every manicurist who clocked in today (whether currently clocked
@@ -480,13 +480,21 @@ export default function HistoryScreen() {
           color: m.color,
           clockInTime: m.clockedIn ? formatTime(m.clockInTime) : '',
           sortTime: m.clockInTime,
+          hasClockIn: true,
         });
       }
 
-      // 2. Add / fold in entries — covers clocked-out manicurists who
-      //    worked today, and refines sortTime to the earliest startedAt
-      //    seen for each manicurist (clocked-in already has clockInTime,
-      //    which is normally earlier than any startedAt anyway).
+      // 2. Add / fold in entries — covers manicurists with no clock-in
+      //    record at all (legacy/orphan entries), and gives THOSE rows a
+      //    sortTime from their earliest startedAt. Rows already seeded in
+      //    step 1 keep clockInTime as their sortTime unconditionally — a
+      //    ticket's startedAt can occasionally land a few seconds before
+      //    the clock-in stamp (e.g. Brian 2026-08-02: ticket started 9s
+      //    before his official clock-in), and letting that startedAt pull
+      //    sortTime earlier anchored his row above manicurists with a
+      //    later clockInTime in a way dragging (which only swaps
+      //    clockInTime, see handleDragEnd) could never override — every
+      //    attempt to drag someone above him snapped back.
       for (const e of displayedEntries) {
         const startTime = e.startedAt ?? Number.POSITIVE_INFINITY;
         if (!byId.has(e.manicuristId)) {
@@ -497,9 +505,8 @@ export default function HistoryScreen() {
             color: e.manicuristColor,
             clockInTime: '',
             sortTime: startTime,
+            hasClockIn: false,
           });
-        } else if (startTime < byId.get(e.manicuristId)!.sortTime) {
-          byId.get(e.manicuristId)!.sortTime = startTime;
         }
         // SINGLE-SOURCE turn count: sum every non-voided entry for EVERY row —
         // clocked-in and clocked-out alike. displayedEntries already contains
@@ -517,7 +524,7 @@ export default function HistoryScreen() {
       if (byId.size > 0) {
         return Array.from(byId.values())
           .sort((a, b) => a.sortTime - b.sortTime)
-          .map(({ sortTime: _t, ...rest }) => { void _t; return rest; });
+          .map(({ sortTime: _t, hasClockIn: _h, ...rest }) => { void _t; void _h; return rest; });
       }
     }
     // Past day view (or today with no data at all): build from displayed entries.
