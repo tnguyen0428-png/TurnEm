@@ -176,6 +176,12 @@ function mapDbCompleted(row: Record<string, unknown>): CompletedEntry {
     // Set by the trg_sync_completed_service_prices DB trigger on ticket close.
     // Null while the ticket is still open or for pre-trigger legacy rows.
     priceCents: row.price_cents == null ? null : Number(row.price_cents),
+    // Durable clock-in stamp (added because the field previously lived only
+    // in local reducer state — see syncCompleted). Null for legacy rows
+    // completed before this column existed.
+    manicuristClockInTime: row.manicurist_clock_in_time
+      ? new Date(row.manicurist_clock_in_time as string).getTime()
+      : null,
   };
 }
 
@@ -1056,9 +1062,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       manicuristClockInTime:
         clockInOrder.get(e.manicuristId) ?? e.manicuristClockInTime ?? null,
     }));
+    // Sort off the value just resolved above (live clock-in, falling back to
+    // the entry's own durable stamp), not a fresh clockInOrder lookup — that
+    // second lookup had no fallback, so when clockInOrder was empty (e.g. a
+    // missed 11:59pm run picked up by a later, post-reset device) every
+    // comparison collapsed to Infinity - Infinity (NaN), which is not a valid
+    // sort result and left entries in whatever order they happened to be in.
     const sortedEntries = [...stampedCompleted].sort((a, b) => {
-      const aTime = clockInOrder.get(a.manicuristId) ?? Number.POSITIVE_INFINITY;
-      const bTime = clockInOrder.get(b.manicuristId) ?? Number.POSITIVE_INFINITY;
+      const aTime = a.manicuristClockInTime ?? Number.POSITIVE_INFINITY;
+      const bTime = b.manicuristClockInTime ?? Number.POSITIVE_INFINITY;
       return aTime - bTime;
     });
     // MERGE rather than overwrite. daily_history is one row per date, and the
@@ -1367,8 +1379,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const next: typeof currentReqs = [...currentReqs];
       // Add entries for services the queue has but the appt doesn't yet.
       const covered = new Set(currentReqs.map((r) => r.service));
+      // Gate on the appt's OWN services[] so a service that was deliberately
+      // renamed/removed from the appointment (e.g. a checkout rename from
+      // Manicure to Gel Manicure) can't get silently re-added here just
+      // because a stale/unrenamed queue entry still lists the old name.
+      // Without this, the phantom entry never carries a startTime or
+      // clientRequest flag, but it still renders forever — AppointmentBookView's
+      // getApptSvcs() treats ANY serviceRequests entry not covered by
+      // services[] as a recovered slot (that trust was added 2026-06-30 for a
+      // DIFFERENT bug where services[] itself wrongly shrank — see Sara
+      // Feaver). Requiring the service to still be in appt.services here
+      // doesn't weaken that fix (which only reads current state at render
+      // time); it just stops this effect from being the thing that
+      // resurrects a slot the appointment itself no longer wants.
+      // (Debbie Ma x Brian, 2026-08-05: a stale "Manicure" serviceRequests
+      // entry kept reappearing after checkout correctly changed her services[]
+      // to Gel Manicure.)
+      const apptServices = new Set(appt.services ?? []);
       for (const [svc, mid] of desired) {
         if (covered.has(svc)) continue;
+        if (!apptServices.has(svc)) continue;
         next.push({
           service: svc as typeof currentReqs[number]['service'],
           manicuristIds: [mid],
@@ -2390,6 +2420,7 @@ async function syncCompleted(
         previous.isRequested === c.isRequested &&
         !!previous.edited === !!c.edited &&
         !!previous.voided === !!c.voided &&
+        previous.manicuristClockInTime === c.manicuristClockInTime &&
         JSON.stringify(previous.services) === JSON.stringify(c.services) &&
         JSON.stringify(previous.requestedServices ?? []) === JSON.stringify(c.requestedServices ?? []);
       if (unchanged) continue;
@@ -2413,6 +2444,13 @@ async function syncCompleted(
       is_requested: !!c.isRequested,
       edited: !!c.edited,
       voided: !!c.voided,
+      // Persisted so the History "Turns per Manicurist" clock-in order
+      // survives a reload/resync before the nightly archive — previously
+      // this only lived in local reducer state and any reload before
+      // saveTodayHistory ran silently dropped it back to null (2026-07-30:
+      // every entry archived that day came back with a null stamp).
+      manicurist_clock_in_time:
+        c.manicuristClockInTime == null ? null : new Date(c.manicuristClockInTime).toISOString(),
     }, { onConflict: 'id' }));
     if (error) { console.error('[syncCompleted] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 

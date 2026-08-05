@@ -411,6 +411,40 @@ function sanitizeQueueEntryId(id: string): string {
   return collapsed;
 }
 
+// Appointments carry TWO parallel service lists — services[] (flat names)
+// and serviceRequests[] (per-slot placement/staff/time) — that must stay in
+// lockstep or AppointmentBookView's getApptSvcs() renders a phantom block
+// forever: it deliberately trusts any serviceRequests entry not covered by
+// services[] (added 2026-06-30 so slots stop vanishing when services[]
+// wrongly shrinks), so a stale entry left behind by an asymmetric write is
+// never pruned back out on its own. Several independent call sites write to
+// one array without the other — ticket-line renames, drag/drop, the
+// appt/queue sync effect, manual service removal — so patching one call site
+// at a time is whack-a-mole (Connie 2026-07-29, Debbie Ma x Brian 2026-08-05:
+// same symptom, two different write paths). UPDATE_APPOINTMENT is the single
+// choke point every one of those writes passes through, so enforcing the
+// invariant here closes the whole bug class instead of waiting for the next
+// call site to forget.
+//
+// Keeps up to as many occurrences of each service name as `services` now
+// has (in the requests' original order), dropping any excess — occurrence-
+// count aware so a legitimately duplicated service (two Pedicures) isn't
+// collapsed down to one.
+function reconcileServiceRequests(services: ServiceType[], requests: ServiceRequest[]): ServiceRequest[] {
+  const countNeeded = new Map<string, number>();
+  for (const s of services) countNeeded.set(s, (countNeeded.get(s) ?? 0) + 1);
+  const used = new Map<string, number>();
+  const result: ServiceRequest[] = [];
+  for (const r of requests) {
+    const have = used.get(r.service) ?? 0;
+    const needed = countNeeded.get(r.service) ?? 0;
+    if (have >= needed) continue; // services[] no longer wants this occurrence — drop it
+    used.set(r.service, have + 1);
+    result.push(r);
+  }
+  return result;
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   // Run the per-action case, then converge totalTurns from the source-of-
   // truth arrays. The wrapper means individual cases no longer have to be
@@ -1588,11 +1622,24 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // (legacy code paths) the field stays as-is.
       return {
         ...state,
-        appointments: state.appointments.map((a) =>
-          a.id === action.id
-            ? { ...a, ...action.updates, lastEditedAt: Date.now() }
-            : a
-        ),
+        appointments: state.appointments.map((a) => {
+          if (a.id !== action.id) return a;
+          const { updates } = action;
+          // Any write that changes services[] gets serviceRequests[]
+          // reconciled against the NEW list — see reconcileServiceRequests
+          // above. Call sites that already pass a correctly-scrubbed
+          // serviceRequests (e.g. removeSvcFromAppt) are unaffected: this is
+          // idempotent on an already-consistent pair.
+          const serviceRequests = updates.services
+            ? reconcileServiceRequests(updates.services, updates.serviceRequests ?? a.serviceRequests ?? [])
+            : updates.serviceRequests;
+          return {
+            ...a,
+            ...updates,
+            ...(serviceRequests !== undefined ? { serviceRequests } : {}),
+            lastEditedAt: Date.now(),
+          };
+        }),
         // Keep the live queue entry's `originalAppointment` snapshot in sync.
         // That snapshot is captured once at check-in time and otherwise never
         // refreshed, so a receptionist correcting a mis-placed block (e.g. the
@@ -1613,6 +1660,23 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         appointments: state.appointments.filter((a) => a.id !== action.id),
+        // Clear the snapshot on any live queue entry pointing at the deleted
+        // appointment. Without this, the appt-book's dangling-reference
+        // re-synth effect (AppContext.tsx) reads the now-stale
+        // originalAppointment on the next queue/appointments change and
+        // recreates the very appointment the user just deleted — that path
+        // exists to repair appointments a *code* path dropped as a side
+        // effect (e.g. SPLIT_AND_ASSIGN forking ids), not to undo an
+        // intentional delete. Confirmed on Sydney 2026-07-30: deleting her
+        // appt (meant to drop a cancelled Nail Art line) while her ticket
+        // was still open resurrected the whole original booking — 2 Full
+        // Set + Nail Art/Panda — the moment Sam and Kimberly's services
+        // were added to the still-open ticket.
+        queue: state.queue.map((q) =>
+          q.originalAppointment?.id === action.id
+            ? { ...q, originalAppointment: undefined }
+            : q
+        ),
       };
 
     case 'SET_EDITING_APPOINTMENT':
