@@ -11,14 +11,29 @@ const MAX_VISIBLE_SKILLS = 3;
 export default function StaffScreen() {
   const { state, dispatch } = useApp();
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
 
   async function confirmDelete() {
-    if (deleteId) {
-      await supabase.from('manicurists').delete().eq('id', deleteId);
-      dispatch({ type: 'DELETE_MANICURIST', id: deleteId });
-      setDeleteId(null);
+    if (!deleteId) return;
+    setDeleting(true);
+    setDeleteError(null);
+    // The DB delete's result was previously never checked — a failed delete
+    // (network blip, expired session, etc.) looked identical to a successful
+    // one, because DELETE_MANICURIST was dispatched unconditionally right
+    // after. That's how Lisa's row survived a "removal": gone from this
+    // tab's local state, but still live in Supabase, so the queue panel,
+    // every assign dropdown, and the Staff Portal login (which re-fetches
+    // manicurists straight from the DB) kept showing/allowing her.
+    const { error } = await supabase.from('manicurists').delete().eq('id', deleteId);
+    setDeleting(false);
+    if (error) {
+      setDeleteError(`Could not remove — ${error.message}. Try again.`);
+      return;
     }
+    dispatch({ type: 'DELETE_MANICURIST', id: deleteId });
+    setDeleteId(null);
   }
 
   function getStatusVariant(status: string): 'green' | 'red' | 'amber' | 'gray' {
@@ -143,11 +158,17 @@ export default function StaffScreen() {
 
       {deleteId && (
         <ConfirmDialog
-          message="Delete this manicurist? This cannot be undone."
-          confirmLabel="Delete"
+          message={
+            deleteError
+              ? deleteError
+              : deleting
+              ? 'Removing…'
+              : 'Delete this manicurist? This cannot be undone.'
+          }
+          confirmLabel={deleteError ? 'Try again' : 'Delete'}
           danger
           onConfirm={confirmDelete}
-          onCancel={() => setDeleteId(null)}
+          onCancel={() => { setDeleteId(null); setDeleteError(null); }}
         />
       )}
       </div>
