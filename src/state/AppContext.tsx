@@ -331,6 +331,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const dispatch = useCallback<React.Dispatch<AppAction>>((action) => {
     if (action.type === 'DELETE_APPOINTMENT') {
       pendingApptDeletesRef.current.add(action.id);
+    } else if (action.type === 'DELETE_MANICURIST') {
+      tombstoneManicurist(action.id);
     } else if (action.type === 'DELETE_COMPLETED') {
       pendingCompletedDeletesRef.current.add(action.id);
     } else if (action.type === 'CLEAR_HISTORY' || action.type === 'DAILY_RESET') {
@@ -423,6 +425,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!ts) return false;
     if (Date.now() - ts > TOMBSTONE_MS) {
       apptTombstonesRef.current.delete(id);
+      return false;
+    }
+    return true;
+  }
+
+  // Same protection as the appt tombstone above, for manicurists. A hard
+  // DELETE_MANICURIST can race a still-in-flight upsert for that same id
+  // (e.g. a PIN/skills edit saved moments before the delete): if that stale
+  // write's realtime echo lands AFTER the local delete, REMOTE_MANICURIST_UPSERT's
+  // "not found → add as new" branch (reducer.ts) resurrects the row locally,
+  // and the next syncManicurists diff then re-upserts it right back into the
+  // DB — silently undoing a deletion the receptionist just confirmed (Lisa,
+  // 2026-08-06: PIN edit immediately followed by a delete that never stuck).
+  const manicuristTombstonesRef = useRef<Map<string, number>>(new Map());
+  function tombstoneManicurist(id: string) {
+    manicuristTombstonesRef.current.set(id, Date.now());
+    const cutoff = Date.now() - TOMBSTONE_MS;
+    for (const [k, ts] of manicuristTombstonesRef.current) {
+      if (ts < cutoff) manicuristTombstonesRef.current.delete(k);
+    }
+  }
+  function isManicuristTombstoned(id: string): boolean {
+    const ts = manicuristTombstonesRef.current.get(id);
+    if (!ts) return false;
+    if (Date.now() - ts > TOMBSTONE_MS) {
+      manicuristTombstonesRef.current.delete(id);
       return false;
     }
     return true;
@@ -1265,7 +1293,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       prevStateRef.current = state;
       return;
     }
-    if (prev.manicurists !== state.manicurists) trackSave(() => syncManicurists(state.manicurists, prev.manicurists, setSyncErrorTracked));
+    if (prev.manicurists !== state.manicurists) trackSave(() => syncManicurists(state.manicurists, prev.manicurists, setSyncErrorTracked, isManicuristTombstoned));
     if (prev.queue !== state.queue) trackSave(() => syncQueue(state.queue, prev.queue, setSyncErrorTracked, state.salonServices, state.manicurists, state.completed));
     if (prev.completed !== state.completed) trackSave(() => syncCompleted(state.completed, prev.completed, setSyncErrorTracked, state.salonServices, pendingCompletedDeletesRef.current, bulkCompletedClearRef));
     if (prev.appointments !== state.appointments) {
@@ -1431,7 +1459,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (id) dispatch({ type: 'REMOTE_MANICURIST_DELETE', id });
           else isApplyingRemoteRef.current = false; // nothing dispatched, clear flag
         } else {
-          dispatch({ type: 'REMOTE_MANICURIST_UPSERT', manicurist: mapDbManicurist(payload.new as Record<string, unknown>) });
+          const incoming = mapDbManicurist(payload.new as Record<string, unknown>);
+          // Ignore a stale UPSERT echo for an id we just deleted — see
+          // manicuristTombstonesRef. Without this, an in-flight write from
+          // just before the delete (e.g. a PIN edit) can land after it and
+          // resurrect the row via the "not found → add as new" branch below.
+          if (isManicuristTombstoned(incoming.id)) { isApplyingRemoteRef.current = false; return; }
+          dispatch({ type: 'REMOTE_MANICURIST_UPSERT', manicurist: incoming });
         }
       })
       .subscribe();
@@ -1812,10 +1846,20 @@ function manicuristToRow(m: Manicurist, idx: number) {
   };
 }
 
-async function syncManicurists(manicurists: Manicurist[], prev: Manicurist[], onError: (msg: string) => void) {
+async function syncManicurists(
+  manicurists: Manicurist[],
+  prev: Manicurist[],
+  onError: (msg: string) => void,
+  isTombstoned: (id: string) => boolean = () => false,
+) {
   const prevById = new Map(prev.map((m, idx) => [m.id, { m, idx }]));
   const changed: ReturnType<typeof manicuristToRow>[] = [];
   manicurists.forEach((m, idx) => {
+    // Never push an id we just deleted back into the DB — see
+    // manicuristTombstonesRef above. Without this, a stale realtime echo
+    // that resurrected the row locally (see REMOTE_MANICURIST_UPSERT) would
+    // otherwise get faithfully re-saved right here.
+    if (isTombstoned(m.id)) return;
     const previous = prevById.get(m.id);
     if (previous && manicuristUnchanged(previous.m, m, previous.idx, idx)) return;
     changed.push(manicuristToRow(m, idx));
