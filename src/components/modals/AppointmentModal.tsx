@@ -1111,7 +1111,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           />
         ) : matches.length > 0 && mode !== 'edit' ? (
           <div className="rounded-xl border border-pink-200 bg-pink-50/40 p-3">
-            <p className="font-mono text-[10px] tracking-wider font-bold text-pink-700 uppercase mb-1.5">
+            <p className="font-mono text-xs tracking-wider font-bold text-pink-700 uppercase mb-1.5">
               Existing customers matching
             </p>
             <div className="flex flex-col gap-1">
@@ -1125,7 +1125,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                   <span className="font-mono text-sm font-semibold text-gray-900 truncate">
                     {displayCustomerName(c)}
                   </span>
-                  <span className="font-mono text-xs text-gray-500 flex-shrink-0">{c.phone || '—'}</span>
+                  <span className="font-mono text-sm text-gray-500 flex-shrink-0">{c.phone || '—'}</span>
                 </button>
               ))}
             </div>
@@ -1135,7 +1135,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         {/* Client info */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">FIRST NAME</label>
+            <label className="block font-mono text-xs text-gray-500 font-semibold tracking-wider mb-1.5">FIRST NAME</label>
             <input
               type="text"
               value={clientFirstName}
@@ -1147,7 +1147,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             />
           </div>
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">LAST NAME</label>
+            <label className="block font-mono text-xs text-gray-500 font-semibold tracking-wider mb-1.5">LAST NAME</label>
             <input
               type="text"
               value={clientLastName}
@@ -1158,7 +1158,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             />
           </div>
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">PHONE</label>
+            <label className="block font-mono text-xs text-gray-500 font-semibold tracking-wider mb-1.5">PHONE</label>
             <input
               type="tel"
               inputMode="numeric"
@@ -1182,7 +1182,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         {/* Services */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider">SERVICES</label>
+            <label className="block font-mono text-xs text-gray-500 font-semibold tracking-wider">SERVICES</label>
           </div>
 
           <div className="flex gap-2 mb-3">
@@ -1190,7 +1190,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               <select
                 value={selectedCategory}
                 onChange={(e) => { setSelectedCategory(e.target.value); setSelectedServiceId(''); }}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer"
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer"
               >
                 <option value="">Category...</option>
                 {availableCategories.map((cat) => (
@@ -1212,7 +1212,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                   setSelectedCategory('');
                 }}
                 disabled={!selectedCategory}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
               >
                 <option value="">Select service...</option>
                 {servicesInCategory.map((svc) => (
@@ -1224,8 +1224,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
           {selectedServices.length === 0 ? (
             <div className="text-center py-6 border-2 border-dashed border-gray-200 rounded-xl">
-              <p className="font-mono text-xs text-gray-400">No services added yet</p>
-              <p className="font-mono text-[10px] text-gray-300 mt-1">Select a category and service above</p>
+              <p className="font-mono text-sm text-gray-400">No services added yet</p>
+              <p className="font-mono text-xs text-gray-400 mt-1">Select a category and service above</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -1241,18 +1241,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                     <div className="flex items-center justify-between px-3.5 py-3 rounded-xl border-2 border-pink-300 bg-pink-50 shadow-sm">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-mono text-xs font-semibold text-pink-700">{s.serviceName}</p>
+                          <p className="font-mono text-sm font-semibold text-pink-700">{s.serviceName}</p>
                           {s.requestedManicuristIds.length > 0 && (
                             <span className="flex items-center gap-1">
-                              <span className="px-1.5 py-0.5 rounded-md font-mono text-[8px] font-bold bg-pink-500 text-white leading-none tracking-wide">REQ</span>
-                              <span className="font-mono text-[10px] text-pink-600 font-semibold">
+                              <span className="px-1.5 py-0.5 rounded-md font-mono text-[9px] font-bold bg-pink-500 text-white leading-none tracking-wide">REQ</span>
+                              <span className="font-mono text-xs text-pink-600 font-semibold">
                                 {s.requestedManicuristIds.map((id) => state.manicurists.find((m) => m.id === id)?.name).filter(Boolean).join(', ')}
                               </span>
                             </span>
                           )}
                           {s.durationAdjustment !== 0 && (
                             <span
-                              className={`px-1.5 py-0.5 rounded-md font-mono text-[10px] font-semibold leading-none ${
+                              className={`px-1.5 py-0.5 rounded-md font-mono text-xs font-semibold leading-none ${
                                 s.durationAdjustment > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
                               }`}
                               title="Per-appointment duration adjustment"
@@ -1283,8 +1283,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                     {isExpanded && (
                       <div className="mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white space-y-3">
                         <div>
-                          <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">
-                            REQUEST MANICURIST <span className="text-gray-300 font-normal">(optional)</span>
+                          <p className="font-mono text-xs text-gray-500 font-semibold tracking-wider mb-2">
+                            REQUEST MANICURIST <span className="text-gray-400 font-normal">(optional)</span>
                           </p>
                           <div className="flex flex-wrap gap-1.5">
                             {displayStaff.map((m) => {
@@ -1294,7 +1294,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                                   key={m.id}
                                   type="button"
                                   onClick={() => toggleManicurist(idx, m.id)}
-                                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[10px] font-semibold transition-all ${
+                                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-xs font-semibold transition-all ${
                                     isSelected ? 'bg-pink-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                   }`}
                                 >
@@ -1306,8 +1306,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                           </div>
                         </div>
                         <div>
-                          <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">
-                            DURATION ADJUSTMENT <span className="text-gray-300 font-normal">(optional)</span>
+                          <p className="font-mono text-xs text-gray-500 font-semibold tracking-wider mb-2">
+                            DURATION ADJUSTMENT <span className="text-gray-400 font-normal">(optional)</span>
                           </p>
                           <div className="flex items-center gap-2">
                             <button
@@ -1317,7 +1317,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                             >
                               -
                             </button>
-                            <span className={`font-mono text-xs font-semibold w-14 text-center tabular-nums ${
+                            <span className={`font-mono text-sm font-semibold w-14 text-center tabular-nums ${
                               s.durationAdjustment > 0 ? 'text-amber-600' :
                               s.durationAdjustment < 0 ? 'text-emerald-600' : 'text-gray-400'
                             }`}>
@@ -1330,11 +1330,11 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                             >
                               +
                             </button>
-                            <span className="font-mono text-[10px] text-gray-400 ml-2">
+                            <span className="font-mono text-xs text-gray-500 ml-2">
                               base {baseDuration}m &rarr; <span className="text-gray-600 font-semibold">{adjustedDuration}m</span>
                             </span>
                           </div>
-                          <p className="font-mono text-[9px] text-gray-300 mt-1.5">
+                          <p className="font-mono text-xs text-gray-400 mt-1.5">
                             One-off tweak for this booking. Stacks with the staff member&apos;s own +/- if they have one.
                           </p>
                         </div>
@@ -1350,7 +1350,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         {/* Date & Time */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">DATE</label>
+            <label className="block font-mono text-xs text-gray-500 font-semibold tracking-wider mb-1.5">DATE</label>
             <div className="relative">
               <button
                 type="button"
@@ -1375,7 +1375,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             </div>
           </div>
           <div>
-            <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">TIME</label>
+            <label className="block font-mono text-xs text-gray-500 font-semibold tracking-wider mb-1.5">TIME</label>
             <input
               type="text"
               inputMode="numeric"
@@ -1390,7 +1390,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           </div>
         </div>
 
-        {/* Same-time / Party-group flags */}
+        {/* Same-time / Party-group / Caution / Standing flags */}
         <div className="flex flex-wrap gap-3">
           <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-white cursor-pointer hover:bg-gray-50 transition-colors select-none">
             <input
@@ -1399,8 +1399,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               onChange={(e) => setSameTime(e.target.checked)}
               className="w-4 h-4 accent-green-500"
             />
-            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white font-bold text-[9px]">S</span>
-            <span className="font-mono text-xs text-gray-700">Same time</span>
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white font-bold text-[10px]">S</span>
+            <span className="font-mono text-sm text-gray-700">Same time</span>
           </label>
           <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-white cursor-pointer hover:bg-gray-50 transition-colors select-none">
             <input
@@ -1409,8 +1409,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               onChange={(e) => setPartyGroup(e.target.checked)}
               className="w-4 h-4 accent-purple-500"
             />
-            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-500 text-white font-bold text-[9px]">P</span>
-            <span className="font-mono text-xs text-gray-700">Party group</span>
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-500 text-white font-bold text-[10px]">P</span>
+            <span className="font-mono text-sm text-gray-700">Party group</span>
           </label>
           <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-white cursor-pointer hover:bg-gray-50 transition-colors select-none">
             <input
@@ -1419,55 +1419,76 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
               onChange={(e) => setCaution(e.target.checked)}
               className="w-4 h-4 accent-amber-500"
             />
-            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-500 text-white font-bold text-[9px]">C</span>
-            <span className="font-mono text-xs text-gray-700">Caution</span>
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-500 text-white font-bold text-[10px]">C</span>
+            <span className="font-mono text-sm text-gray-700">Caution</span>
           </label>
-        </div>
-
-        {/* Standing appointment — recurring booking on a fixed cadence. */}
-        {mode === 'add' && (
-          <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 space-y-3">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
+          {mode === 'add' && (
+            <label
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer transition-colors select-none ${
+                isStandingAppt ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-white hover:bg-gray-50'
+              }`}
+            >
               <input
                 type="checkbox"
                 checked={isStandingAppt}
                 onChange={(e) => setIsStandingAppt(e.target.checked)}
                 className="w-4 h-4 accent-indigo-500"
               />
-              <span className="font-mono text-xs font-semibold text-indigo-800">Standing appointment</span>
-              <span className="font-mono text-[10px] text-indigo-500">Repeat this booking on a fixed cadence</span>
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-indigo-500 text-white font-bold text-[10px]">R</span>
+              <span className="font-mono text-sm text-indigo-800">Standing</span>
             </label>
-            {isStandingAppt && (
-              <div className="grid grid-cols-2 gap-3 pl-6">
-                <div>
-                  <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">EVERY (DAYS)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={standingIntervalDays}
-                    onChange={(e) => setStandingIntervalDays(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">BOOK THROUGH</label>
-                  <input
-                    type="date"
-                    value={standingEndDate}
-                    min={date}
-                    onChange={(e) => setStandingEndDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 transition-all"
-                  />
-                </div>
+          )}
+        </div>
+
+        {/* Standing appointment detail — recurring cadence. Only rendered once
+            the Standing pill above is checked, instead of always showing the
+            full panel (Tony 2026-08-06: collapse it into the pill row). */}
+        {mode === 'add' && isStandingAppt && (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 space-y-3">
+            <p className="font-mono text-xs text-indigo-600">Repeat this booking on a fixed cadence</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block font-mono text-xs text-gray-500 font-semibold tracking-wider mb-1.5">EVERY (DAYS)</label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={standingIntervalDays}
+                  onChange={(e) => setStandingIntervalDays(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 transition-all"
+                />
               </div>
-            )}
+              <div>
+                <label className="block font-mono text-xs text-gray-500 font-semibold tracking-wider mb-1.5">BOOK THROUGH</label>
+                <input
+                  type="date"
+                  value={standingEndDate}
+                  min={date}
+                  onChange={(e) => setStandingEndDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 transition-all"
+                />
+              </div>
+            </div>
           </div>
         )}
 
         {/* Notes */}
         <div>
-          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">NOTES</label>
+          <div className="flex items-center justify-between gap-3 mb-1.5">
+            <label className="font-mono text-xs text-gray-500 font-semibold tracking-wider">NOTES</label>
+            <label
+              className="inline-flex items-center gap-1.5 cursor-pointer select-none"
+              title="Auto-loads on future bookings for this customer"
+            >
+              <input
+                type="checkbox"
+                checked={permanentNote}
+                onChange={(e) => setPermanentNote(e.target.checked)}
+                className="w-3.5 h-3.5 accent-pink-500"
+              />
+              <span className="font-mono text-xs text-gray-500">Save as permanent note</span>
+            </label>
+          </div>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
@@ -1475,17 +1496,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             rows={2}
             className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all resize-none"
           />
-          <label className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-gray-200 bg-white cursor-pointer hover:bg-gray-50 transition-colors select-none">
-            <input
-              type="checkbox"
-              checked={permanentNote}
-              onChange={(e) => setPermanentNote(e.target.checked)}
-              className="w-4 h-4 accent-pink-500"
-            />
-            <span className="font-mono text-[11px] text-gray-700">
-              Save as permanent customer note (auto-loads on future bookings)
-            </span>
-          </label>
         </div>
 
         {mode === 'edit' ? (
