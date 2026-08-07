@@ -2020,26 +2020,36 @@ export default function TicketModal({
             dispatch({ type: 'REMOVE_CLIENT', id: q.id });
           }
         }
-        // Walk-in cleanup: collect every appt id linked to this visit's
-        // queue entries (in-progress walk-ins) and completed_services
-        // entries (completed walk-ins). Delete any that are still flagged
-        // appt.isWalkIn === true — those are auto-placed blocks the
-        // receptionist hasn't drag-confirmed. Drag-confirmed blocks stay
-        // (they've become "real" appointments and survive the void).
-        const walkInApptIds = new Set<string>();
+        // Appointment cleanup: collect every appt id linked to this visit's
+        // queue entries (in-progress) and completed_services entries
+        // (completed), and delete ALL of them — walk-in blocks and real
+        // pre-booked appointments alike (Tony, 2026-08-06: a voided ticket
+        // was leaving its linked appointment stranded on the book — e.g. the
+        // Lisa Kiel 8 AM card that outlived its own voided ticket — with no
+        // way to clean it up short of a manual delete). A void means the
+        // whole visit didn't happen; the appointment record shouldn't
+        // survive it either.
+        //
+        // Deliberate trade-off, chosen over reverting a real appointment to
+        // 'scheduled' instead of deleting it: if the client's appointment was
+        // genuinely booked ahead and the ticket only got voided to fix a
+        // mis-rung line, this now erases that booking from the book too, not
+        // just the bad ticket — voiding is no longer safe to use as a
+        // "just fix the money" action when a real appointment is attached.
+        const linkedApptIds = new Set<string>();
         for (const q of state.queue) {
           if ((q.id === visitId || q.parentQueueId === visitId) && q.originalAppointment?.id) {
-            walkInApptIds.add(q.originalAppointment.id);
+            linkedApptIds.add(q.originalAppointment.id);
           }
         }
         for (const c of state.completed) {
           if ((c.id === visitId || c.id.startsWith(`${visitId}-`)) && c.originalAppointmentId) {
-            walkInApptIds.add(c.originalAppointmentId);
+            linkedApptIds.add(c.originalAppointmentId);
           }
         }
-        for (const apptId of walkInApptIds) {
-          const appt = state.appointments.find((a) => a.id === apptId);
-          if (appt && appt.isWalkIn) {
+        if (ticket.appointmentId) linkedApptIds.add(ticket.appointmentId);
+        for (const apptId of linkedApptIds) {
+          if (state.appointments.some((a) => a.id === apptId)) {
             dispatch({ type: 'DELETE_APPOINTMENT', id: apptId });
           }
         }

@@ -3,7 +3,7 @@ import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { Plus, Trash2, GripVertical, XCircle } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
-import { formatTimeOfDay, getTodayLA } from '../../utils/time';
+import { formatTimeOfDay, getTodayLA, getNowMinutesLA } from '../../utils/time';
 import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType } from '../../types';
 import DayScheduleOverrideModal from './DayScheduleOverrideModal';
 import { resolveScheduleForDate } from '../../utils/schedule';
@@ -1010,6 +1010,26 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
 
   function addApptToQueue(e: React.MouseEvent, appt: Appointment) {
     e.stopPropagation();
+    // Stale-appointment guard (added after the Lisa Kiel incident, 2026-08-06):
+    // an appointment left un-checked-in well past its scheduled time is a sign
+    // this card is being reused for a DIFFERENT, later visit from the same-named
+    // client rather than the one it was actually booked for. Silently reusing it
+    // attaches the new visit's services to the old record, where they can be lost
+    // in the same way Sam's Gel Fill was. Force a deliberate confirmation instead
+    // of a silent click-through.
+    if (appt.date === getTodayLA()) {
+      const [apptH, apptM] = appt.time.split(':').map(Number);
+      const apptMin = apptH * 60 + apptM;
+      const lateMins = getNowMinutesLA() - apptMin;
+      if (lateMins > 90) {
+        const ok = window.confirm(
+          `This appointment was scheduled for ${formatTimeOfDay(appt.time)}, over an hour ago. ` +
+          `Check in ${appt.clientName || 'this client'} now anyway?\n\n` +
+          `If this is actually a NEW/different visit for the same client today, use "Add Walk-in" instead — checking in this old slot can attach the new services to the wrong record.`
+        );
+        if (!ok) return;
+      }
+    }
     const commit = () => {
       // Keep the appointment in the book; flag it as 'checked-in' so the block
       // renderer can recolor it (light gray while waiting, gray while in service,

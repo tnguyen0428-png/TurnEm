@@ -2755,10 +2755,18 @@ export async function voidTicket(
       //    deletion is what keeps voided services off the staff portal's
       //    "today's services" list (otherwise Kelly et al. keep showing
       //    voided work).
-      const { error: delErr } = await supabase
-        .from('completed_services')
-        .delete()
-        .or(`id.eq.${visitId},id.like.${visitId}-%`);
+      //
+      // A direct .delete() here is silently blocked by the
+      // guard_completed_services_delete trigger for any row completed in
+      // the last 7 days (2026-08-06: every recent void was leaving its rows
+      // behind as orphaned-but-voided, and the load-time half-applied-void
+      // reconciliation kept retrying — and re-failing — the same delete on
+      // every page load). void_completed_services_for_visit is a narrow
+      // escape hatch that only deletes rows for a visit whose ticket is
+      // ALREADY 'voided', so we route through it instead.
+      const { error: delErr } = await supabase.rpc('void_completed_services_for_visit', {
+        p_visit_id: visitId,
+      });
       if (delErr) {
         console.warn('[tickets] voidTicket completed_services delete:', delErr.message);
       }

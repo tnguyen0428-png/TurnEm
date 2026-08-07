@@ -2651,6 +2651,14 @@ function appointmentToRow(a: Appointment) {
   };
 }
 
+// Identity key for a service_requests entry, used by the stale-overwrite
+// guard below to tell "same request" from "different request" regardless of
+// array order. Keyed on service + manicurist (not startTime/durationAdjustment)
+// since those can legitimately be tweaked in place without changing identity.
+function serviceRequestKey(r: Pick<ServiceRequest, 'service' | 'manicuristIds'>): string {
+  return `${r.service}::${(r.manicuristIds ?? []).slice().sort().join(',')}`;
+}
+
 async function syncAppointments(appointments: Appointment[], prev: Appointment[], onError: (msg: string) => void) {
   // NOTE: this function NO LONGER deletes. Deletions are handled exclusively by
   // the gated delete-detection in the sync effect (which only removes a real
@@ -2663,13 +2671,78 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
   // re-uploading every appt (which would resurrect rows another tab just deleted) and
   // cuts realtime echo traffic.
   const prevById = new Map(prev.map((a) => [a.id, a]));
-  const changed: ReturnType<typeof appointmentToRow>[] = [];
+  const changedAppts: Appointment[] = [];
   for (const a of appointments) {
     const previous = prevById.get(a.id);
     if (previous && appointmentUnchanged(previous, a)) continue;
-    changed.push(appointmentToRow(a));
+    changedAppts.push(a);
   }
-  if (changed.length === 0) return;
+  if (changedAppts.length === 0) return;
+
+  // Stale-overwrite guard (added 2026-08-06 after the Stephanie/Sam Gel-Fill
+  // incident: a split service that was correctly saved by one device got
+  // silently erased when another device — whose local copy predated that
+  // save — later wrote the SAME appointment row from its own outdated
+  // service_requests array). This is a full-row upsert, so any client
+  // writing from a stale copy will otherwise clobber additions it never saw.
+  //
+  // IMPORTANT: this must run for every row about to be upserted, not just
+  // rows where THIS device's own local serviceRequests changed. Stephanie's
+  // actual incident traced to a STATUS-only flip at checkout — the device
+  // closing the ticket never touched serviceRequests locally, so its own
+  // before/after comparison for that field looked "unchanged" even though
+  // its copy was stale; it still upserted the whole row, wiping the entry it
+  // never knew about. Gating the check on a local serviceRequests diff would
+  // have missed exactly that case, so we check every changed row instead.
+  //
+  // Before upserting, re-check the live DB value: any entry present in the
+  // DB but absent from BOTH this client's own last-known baseline (prev) AND
+  // its outgoing local copy was added by someone else since we last synced
+  // this row — merge it back in instead of dropping it. An entry present in
+  // prev AND the DB but missing from our local copy is a deliberate removal
+  // we made and stays removed.
+  const idsNeedingCheck = changedAppts
+    .filter((a) => {
+      const previous = prevById.get(a.id);
+      return !!previous; // brand-new row, nothing to reconcile against
+    })
+    .map((a) => a.id);
+
+  const reconciledById = new Map<string, Appointment>();
+  if (idsNeedingCheck.length > 0) {
+    const { data: liveRows, error: liveErr } = await supabase
+      .from('appointments')
+      .select('id, service_requests')
+      .in('id', idsNeedingCheck);
+    if (liveErr) {
+      console.warn('[syncAppointments] stale-overwrite guard: live-row check failed, proceeding without it:', liveErr.message);
+    } else if (liveRows) {
+      for (const row of liveRows) {
+        const a = changedAppts.find((x) => x.id === row.id);
+        if (!a) continue;
+        const previous = prevById.get(a.id)!;
+        const prevKeys = new Set((previous.serviceRequests ?? []).map(serviceRequestKey));
+        const localReqs = a.serviceRequests ?? [];
+        const localKeys = new Set(localReqs.map(serviceRequestKey));
+        const liveReqsRaw = Array.isArray(row.service_requests) ? row.service_requests : [];
+        const liveReqs = liveReqsRaw.map((r) => mapDbServiceRequest(r as Record<string, unknown>));
+        const missing = liveReqs.filter((r) => {
+          const key = serviceRequestKey(r);
+          return !prevKeys.has(key) && !localKeys.has(key);
+        });
+        if (missing.length > 0) {
+          console.warn(
+            '[syncAppointments] stale-overwrite guard: recovering', missing.length,
+            'service_requests entr(y/ies) on', a.id, 'that this client never saw locally:',
+            missing.map((r) => `${r.service}/${r.manicuristIds.join(',')}`),
+          );
+          reconciledById.set(a.id, { ...a, serviceRequests: [...localReqs, ...missing] });
+        }
+      }
+    }
+  }
+
+  const changed = changedAppts.map((a) => appointmentToRow(reconciledById.get(a.id) ?? a));
   const { error } = await withRetry(() => supabase.from('appointments').upsert(changed, { onConflict: 'id' }));
   if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 }

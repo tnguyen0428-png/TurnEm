@@ -12,7 +12,7 @@ import ConfirmDialog from '../shared/ConfirmDialog';
 import CustomerNoteAlert from '../shared/CustomerNoteAlert';
 import AppointmentBookView from './AppointmentBookView';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
-import { getTodayLA, formatTimeOfDay } from '../../utils/time';
+import { getTodayLA, formatTimeOfDay, getNowMinutesLA } from '../../utils/time';
 import { getPermanentNoteByPhone } from '../../lib/customers';
 import type { Appointment, QueueEntry, ServiceType } from '../../types';
 
@@ -112,6 +112,26 @@ export default function AppointmentsScreen() {
   }
 
   function handleCheckIn(appt: Appointment) {
+    // Stale-appointment guard (added after the Lisa Kiel incident, 2026-08-06):
+    // an appointment left un-checked-in well past its scheduled time is a sign
+    // this card is being reused for a DIFFERENT, later visit from the same-named
+    // client rather than the one it was actually booked for. Silently reusing it
+    // attaches the new visit's services to the old record, where they can be lost
+    // the same way Sam's Gel Fill was. Force a deliberate confirmation instead of
+    // a silent click-through.
+    if (appt.date === getTodayLA()) {
+      const [apptH, apptM] = appt.time.split(':').map(Number);
+      const apptMin = apptH * 60 + apptM;
+      const lateMins = getNowMinutesLA() - apptMin;
+      if (lateMins > 90) {
+        const ok = window.confirm(
+          `This appointment was scheduled for ${formatTimeOfDay(appt.time)}, over an hour ago. ` +
+          `Check in ${appt.clientName || 'this client'} now anyway?\n\n` +
+          `If this is actually a NEW/different visit for the same client today, use "Add Walk-in" instead — checking in this old slot can attach the new services to the wrong record.`
+        );
+        if (!ok) return;
+      }
+    }
     const commit = () => {
       // Keep the appointment in the book; mark it 'checked-in' so the book view
       // can recolor the block based on the linked queue entry's lifecycle

@@ -1,3 +1,20 @@
+// Current time-of-day in Los Angeles, in minutes since midnight. Used to
+// spot a check-in against a scheduled time that's already well past —
+// e.g. clicking "Check In" on an unprocessed 8 AM appointment at 1 PM,
+// which silently attaches a same-named client's later, unrelated visit
+// onto that stale record instead of a fresh one (Lisa Kiel, 2026-08-06).
+export function getNowMinutesLA(): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(new Date());
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return h * 60 + m;
+}
+
 export function getTodayLA(): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Los_Angeles',
