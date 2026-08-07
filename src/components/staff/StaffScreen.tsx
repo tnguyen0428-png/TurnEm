@@ -70,7 +70,7 @@ export default function StaffScreen() {
           {[...state.manicurists].sort((a, b) => a.name.localeCompare(b.name)).map((m) => (
             <div
               key={m.id}
-              className="bg-white rounded-xl border border-gray-100 p-4 hover:shadow-md transition-all duration-200"
+              className="bg-white rounded-xl border border-gray-100 p-4 hover:shadow-md hover:bg-pink-50 transition-all duration-200"
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">

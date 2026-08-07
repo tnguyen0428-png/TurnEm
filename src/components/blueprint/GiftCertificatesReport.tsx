@@ -176,7 +176,7 @@ function CertList({
           {certs.map((c, idx) => (
             <div
               key={`${c.purchaseTicketId}:${c.normalizedSerial || c.serial}`}
-              className={`grid grid-cols-[110px_120px_1fr_110px_120px_1fr_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${
+              className={`grid grid-cols-[110px_120px_1fr_110px_120px_1fr_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
                 idx % 2 === 1 ? 'bg-gray-50' : ''
               }`}
             >

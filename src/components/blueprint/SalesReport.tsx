@@ -467,7 +467,7 @@ export default function SalesReport() {
               <span className="text-right">Amount</span>
             </div>
             {cancelRows.map((r, idx) => (
-              <div key={r.id} className={`grid grid-cols-[120px_70px_90px_1fr_120px_1fr_90px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${idx % 2 === 1 ? 'bg-gray-50' : ''}`}>
+              <div key={r.id} className={`grid grid-cols-[120px_70px_90px_1fr_120px_1fr_90px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${idx % 2 === 1 ? 'bg-gray-50' : ''}`}>
                 <span className="font-mono text-xs text-gray-700">{formatLongDate(r.date)}</span>
                 <span className="font-mono text-xs text-gray-500">{formatTime(r.whenMs)}</span>
                 <span>
@@ -537,7 +537,7 @@ export default function SalesReport() {
                       className={`w-full grid grid-cols-[70px_110px_70px_1fr_1fr_80px_80px_90px_100px] gap-2 px-4 py-2.5 items-center transition-colors text-left ${
                         expanded
                           ? 'bg-pink-100/60'
-                          : idx % 2 === 1 ? 'bg-gray-50 hover:bg-gray-100' : 'bg-white hover:bg-gray-100'
+                          : idx % 2 === 1 ? 'bg-gray-50 hover:bg-pink-100' : 'bg-white hover:bg-pink-100'
                       }`}
                     >
                       <span className="font-mono text-sm font-bold text-gray-800 flex items-center gap-1">

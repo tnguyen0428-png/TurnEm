@@ -101,13 +101,13 @@ function SortableStaffRow({
   return (
     <div
       ref={setNodeRef}
-      className={`grid items-center ${!isLast ? 'border-b border-gray-50' : ''}`}
+      className={`grid items-center transition-colors ${!isLast ? 'border-b border-gray-50' : ''} ${isDragging ? '' : 'bg-white hover:bg-pink-50'}`}
       style={{
         gridTemplateColumns: '1fr 130px 150px',
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.5 : 1,
-        background: isDragging ? '#fdf2f8' : 'white',
+        ...(isDragging ? { background: '#fdf2f8' } : {}),
       }}
     >
       <div className="px-4 py-3.5 flex items-center gap-3">

@@ -549,7 +549,7 @@ function PaymentsSummary({
               : 0;
           return (
             <div key={line.method}
-              className="grid grid-cols-[90px_repeat(7,_1fr)] gap-1 px-3 py-2.5 border-b border-gray-100 items-center bg-white">
+              className="grid grid-cols-[90px_repeat(7,_1fr)] gap-1 px-3 py-2.5 border-b border-gray-100 items-center bg-white transition-colors hover:bg-pink-100">
               <span className="font-mono text-base font-bold text-gray-900">
                 {line.method === 'visa_mc' ? 'Visa/MC' : line.method[0].toUpperCase() + line.method.slice(1)}
               </span>
@@ -886,7 +886,7 @@ function PaymentRow({
   }
 
   return (
-    <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center">
+    <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100">
       <span className="font-mono text-base text-gray-900 truncate">{payment.clientName}</span>
       {editing ? (
         <input
@@ -1004,7 +1004,7 @@ function TicketListTab({ tickets, onRefresh }: { tickets: Ticket[]; onRefresh?: 
               key={t.id}
               onDoubleClick={() => setOpenTicket(t)}
               title="Double-click to view ticket"
-              className="grid grid-cols-[60px_1fr_140px_1fr_100px_100px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center cursor-pointer hover:bg-gray-50/60 select-none"
+              className="grid grid-cols-[60px_1fr_140px_1fr_100px_100px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center cursor-pointer hover:bg-pink-100 select-none"
             >
               <span className="font-mono text-base font-bold text-gray-900">#{t.ticketNumber}</span>
               <span className="font-mono text-base text-gray-900 truncate">{t.clientName || 'Walk-in'}</span>

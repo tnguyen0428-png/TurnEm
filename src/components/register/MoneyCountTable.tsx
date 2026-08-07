@@ -125,7 +125,7 @@ function Column({
           return (
             <div
               key={key}
-              className="grid grid-cols-[60px_1fr_90px] gap-2 items-center px-3 py-2 border-b border-gray-50 last:border-b-0"
+              className="grid grid-cols-[60px_1fr_90px] gap-2 items-center px-3 py-2 border-b border-gray-50 last:border-b-0 transition-colors hover:bg-pink-50"
             >
               <span className="font-mono text-sm font-semibold text-gray-700">
                 {labelFor(cents)}

@@ -499,7 +499,7 @@ function TicketList({
               onClick(t);
             }
           }}
-          className="w-full grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_110px] gap-3 px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/50 transition-colors text-left items-center cursor-pointer focus:outline-none focus:bg-gray-50/50"
+          className="w-full grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_110px] gap-3 px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-pink-100 transition-colors text-left items-center cursor-pointer focus:outline-none focus:bg-pink-100"
         >
           <span className="font-mono text-base font-bold text-gray-900">#{t.ticketNumber}</span>
           <span className="font-mono text-base text-gray-700">{formatTimeShort(t.openedAt)}</span>

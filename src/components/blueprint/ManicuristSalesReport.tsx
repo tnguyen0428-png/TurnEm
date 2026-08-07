@@ -165,7 +165,7 @@ export default function ManicuristSalesReport() {
                   <button
                     type="button"
                     onClick={() => setExpandedKey(expanded ? null : k)}
-                    className={`w-full grid grid-cols-[1fr_120px_140px] gap-2 px-4 py-2.5 items-center transition-colors text-left hover:bg-gray-100 ${
+                    className={`w-full grid grid-cols-[1fr_120px_140px] gap-2 px-4 py-2.5 items-center transition-colors text-left hover:bg-pink-100 ${
                       zebra ? 'bg-gray-50' : 'bg-white'
                     }`}
                   >
@@ -199,7 +199,7 @@ export default function ManicuristSalesReport() {
                             {lines.map((line, idx) => (
                               <div
                                 key={`${line.ticketId}:${idx}`}
-                                className={`grid grid-cols-[120px_70px_1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center ${
+                                className={`grid grid-cols-[120px_70px_1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
                                   idx % 2 === 1 ? 'bg-gray-50' : ''
                                 }`}
                               >

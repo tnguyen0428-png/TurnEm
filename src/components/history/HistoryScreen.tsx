@@ -168,7 +168,7 @@ function ServiceRow({
   return (
     <tr
       className={`border-b border-gray-50 transition-colors ${
-        isVoided ? 'bg-gray-50/40' : 'hover:bg-gray-50/50'
+        isVoided ? 'bg-gray-50/40 hover:bg-pink-100/60' : 'hover:bg-pink-100/60'
       }`}
     >
       <td className={`px-4 py-3 font-mono text-xs font-semibold ${isVoided ? 'text-gray-400' : 'text-gray-900'}`}>
