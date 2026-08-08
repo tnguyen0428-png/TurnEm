@@ -23,9 +23,18 @@ function countByService(items: ReadonlyArray<{ service: string }>): Map<string, 
 /**
  * Reassign the next pending manicurist(s) for each service name onto the
  * FIRST matching, NOT-client-requested occurrences in `requests`, in array
- * order. Client-requested entries are always skipped — a customer's
- * requested slot must never be swept up by an unrelated reassignment just
- * because it shares a service name with the slot actually being moved.
+ * order. A client-requested entry is never overwritten by a pending
+ * assignment for a DIFFERENT manicurist — a customer's requested slot must
+ * never be swept up by an unrelated reassignment just because it shares a
+ * service name with the slot actually being moved. But when a pending
+ * assignment names the SAME manicurist the request already has (the caller
+ * is fulfilling that exact request, e.g. SPLIT_AND_ASSIGN's per-row fan-out
+ * doesn't distinguish "fulfilling a request" from "reassigning a plain
+ * slot"), it's consumed as already-satisfied rather than left over — leaving
+ * it unconsumed made the caller append a second, duplicate entry for a
+ * request that was already correctly represented (Brianna Bouchard/
+ * Christina, Melissa Nelson/Brian, 2026-08-08: assigning a request alongside
+ * other services in the same round doubled the requested slot).
  *
  * `pending` is a FIFO queue of manicurist ids per service name: pass a
  * single-element array for a plain reassignment, or several for a multi-tech
@@ -45,9 +54,19 @@ export function relocateServiceRequests(
     Array.from(pending, ([svc, ids]) => [svc, [...ids]]),
   );
   const next = requests.map((r) => {
-    if (r.clientRequest === true) return r;
     const q = queues.get(r.service);
     if (!q || q.length === 0) return r;
+    if (r.clientRequest === true) {
+      // Only consume a pending assignment that matches this request's
+      // current manicurist — that's the request being fulfilled, not an
+      // unrelated reassignment trying to steal the slot. Leave a
+      // different-manicurist assignment in the queue untouched so it can
+      // never overwrite (or duplicate against) the request.
+      const idx = q.indexOf(r.manicuristIds[0] ?? '');
+      if (idx === -1) return r;
+      q.splice(idx, 1);
+      return r;
+    }
     const manicuristId = q.shift()!;
     return { ...r, manicuristIds: [manicuristId], startTime: undefined };
   });
