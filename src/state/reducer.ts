@@ -3,6 +3,7 @@ import type { AppAction } from './actions';
 import { clientHasAnyWaxService } from '../utils/salonRules';
 import { isFourthPositionSpecialService } from '../utils/priority';
 import { getLocalDateStr } from '../utils/time';
+import { reconcileServiceRequests, relocateServiceRequests } from '../lib/serviceRequests';
 
 // ─── totalTurns convergence ──────────────────────────────────────────────
 //
@@ -424,26 +425,10 @@ function sanitizeQueueEntryId(id: string): string {
 // same symptom, two different write paths). UPDATE_APPOINTMENT is the single
 // choke point every one of those writes passes through, so enforcing the
 // invariant here closes the whole bug class instead of waiting for the next
-// call site to forget.
-//
-// Keeps up to as many occurrences of each service name as `services` now
-// has (in the requests' original order), dropping any excess — occurrence-
-// count aware so a legitimately duplicated service (two Pedicures) isn't
-// collapsed down to one.
-function reconcileServiceRequests(services: ServiceType[], requests: ServiceRequest[]): ServiceRequest[] {
-  const countNeeded = new Map<string, number>();
-  for (const s of services) countNeeded.set(s, (countNeeded.get(s) ?? 0) + 1);
-  const used = new Map<string, number>();
-  const result: ServiceRequest[] = [];
-  for (const r of requests) {
-    const have = used.get(r.service) ?? 0;
-    const needed = countNeeded.get(r.service) ?? 0;
-    if (have >= needed) continue; // services[] no longer wants this occurrence — drop it
-    used.set(r.service, have + 1);
-    result.push(r);
-  }
-  return result;
-}
+// call site to forget. reconcileServiceRequests itself now lives in
+// ../lib/serviceRequests.ts alongside the other serviceRequests-matching
+// helpers (relocateServiceRequests, addMissingServiceRequests) so every write
+// site shares one implementation instead of re-deriving its own.
 
 export function appReducer(state: AppState, action: AppAction): AppState {
   // Run the per-action case, then converge totalTurns from the source-of-
@@ -864,16 +849,25 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                     // client.services — the exact service(s) THIS assignment
                     // covers — instead of an indirect column-matching guess fixes
                     // both bugs at once.
-                    serviceRequests: (() => {
-                      const remaining = new Map<string, number>();
-                      for (const s of client.services) remaining.set(s, (remaining.get(s) ?? 0) + 1);
-                      return (a.serviceRequests ?? []).map((r) => {
-                        const left = remaining.get(r.service) ?? 0;
-                        if (left <= 0) return r;
-                        remaining.set(r.service, left - 1);
-                        return { ...r, manicuristIds: [action.manicuristId], startTime: undefined };
-                      });
-                    })(),
+                    // relocateServiceRequests (../lib/serviceRequests.ts) does the
+                    // name+count matching AND skips clientRequest entries — see its
+                    // header for why that skip matters (Linda Platten x Macy→Brian,
+                    // 2026-08-07: without it, matching by name alone grabbed
+                    // whichever occurrence came first in the array, which can be
+                    // the customer's requested slot instead of the one actually
+                    // being reassigned).
+                    serviceRequests: relocateServiceRequests(
+                      a.serviceRequests ?? [],
+                      (() => {
+                        const pending = new Map<string, string[]>();
+                        for (const s of client.services) {
+                          const q = pending.get(s) ?? [];
+                          q.push(action.manicuristId);
+                          pending.set(s, q);
+                        }
+                        return pending;
+                      })(),
+                    ).next,
                   }
                 : a,
             )
@@ -1190,18 +1184,19 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
               q.push(tech);
               pending.set(service, q);
             }
-            // Re-point existing per-service requests first (in order),
-            // preserving clientRequest / durationAdjustment.
-            const nextReqs: ServiceRequest[] = (a.serviceRequests ?? []).map((r) => {
-              const q = pending.get(r.service);
-              if (!q || q.length === 0) return r;
-              const tech = q.shift()!;
-              return { ...r, manicuristIds: [tech], startTime: undefined };
-            });
+            // relocateServiceRequests (../lib/serviceRequests.ts) re-points
+            // existing per-service requests first (in order), preserving
+            // clientRequest / durationAdjustment, and skips clientRequest
+            // entries — a customer's requested slot must never be consumed by
+            // this FIFO just because a split sibling shares its service name
+            // (same failure class as the ASSIGN_CLIENT relocate branch;
+            // Linda Platten x Macy→Brian, 2026-08-07).
+            const { next: relocated, remaining } = relocateServiceRequests(a.serviceRequests ?? [], pending);
+            const nextReqs: ServiceRequest[] = [...relocated];
             // Any service whose tech is still pending had no existing request
             // entry — append one so the block fans into that tech's column.
-            for (const [service, q] of pending) {
-              for (const tech of q) {
+            for (const [service, techs] of remaining) {
+              for (const tech of techs) {
                 nextReqs.push({ service: service as ServiceType, manicuristIds: [tech], startTime: undefined });
               }
             }

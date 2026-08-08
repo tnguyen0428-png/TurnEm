@@ -7,6 +7,7 @@ import { supabase, fetchAllRows } from '../lib/supabase';
 import { defaultSalonServices } from '../constants/salonServices';
 import { defaultManicurists } from '../constants/manicurists';
 import { getLocalDateStr, getTodayLA } from '../utils/time';
+import { addMissingServiceRequests } from '../lib/serviceRequests';
 
 // Visible save status. Driven by a counter of in-flight DB writes:
 // - 'saving': at least one upsert/delete is awaiting a response
@@ -1345,10 +1346,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     for (const [apptId, entries] of byApptId) {
       const appt = state.appointments.find((a) => a.id === apptId);
-      // Build a map of (serviceName -> intended manicuristId) from the queue.
-      // If two entries claim the same service (rare; can happen on partial
-      // re-assign), the most recently-started one wins.
-      const desired = new Map<string, string>();
+      // Build a map of (serviceName -> intended manicuristIds, in queue order).
+      // A list, not a single value, because a service can legitimately be
+      // split across two techs at once (e.g. SPLIT_AND_ASSIGN handing the
+      // same "Gel Polish Feet" to two manicurists simultaneously) — collapsing
+      // to one manicurist per service name silently dropped the second tech's
+      // assignment (Annalee/Leo+Danny, 2026-08-07).
+      const desired = new Map<string, string[]>();
       const orderedByStart = [...entries].sort((a, b) => {
         const ta = a.startedAt ?? 0;
         const tb = b.startedAt ?? 0;
@@ -1357,16 +1361,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const e of orderedByStart) {
         if (!e.assignedManicuristId) continue;
         for (const svc of e.services ?? []) {
-          desired.set(svc, e.assignedManicuristId);
+          const list = desired.get(svc) ?? [];
+          list.push(e.assignedManicuristId);
+          desired.set(svc, list);
         }
       }
       if (desired.size === 0) continue;
-      const desiredReqs = Array.from(desired.entries()).map(([svc, mid]) => ({
-        service: svc as ServiceType,
-        manicuristIds: [mid],
-        clientRequest: false,
-      }));
-      const desiredServices = Array.from(desired.keys()) as ServiceType[];
+      const desiredReqs = Array.from(desired.entries()).flatMap(([svc, mids]) =>
+        mids.map((mid) => ({
+          service: svc as ServiceType,
+          manicuristIds: [mid],
+          clientRequest: false,
+        })),
+      );
+      const desiredServices = Array.from(desired.entries()).flatMap(
+        ([svc, mids]) => mids.map(() => svc),
+      ) as ServiceType[];
       if (!appt) {
         // Dangling reference: queue entries point at an appt the reducer
         // already deleted (e.g. CANCEL_SERVICE on a walk-in removed the
@@ -1403,11 +1413,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // blocks to see/rearrange them during service. We still ADD missing
       // services and re-synth deleted appts below; we just no longer clobber a
       // block the user moved by hand.
-      let changed = false;
-      const next: typeof currentReqs = [...currentReqs];
-      // Add entries for services the queue has but the appt doesn't yet.
-      const covered = new Set(currentReqs.map((r) => r.service));
-      // Gate on the appt's OWN services[] so a service that was deliberately
+      //
+      // addMissingServiceRequests (../lib/serviceRequests.ts) is count-aware
+      // (not presence-only) — two techs can share a service name (a split),
+      // and each queue-side assignment needs its own entry rather than being
+      // treated as "already covered" by the first. It's also gated on the
+      // appt's OWN services[] so a service that was deliberately
       // renamed/removed from the appointment (e.g. a checkout rename from
       // Manicure to Gel Manicure) can't get silently re-added here just
       // because a stale/unrenamed queue entry still lists the old name.
@@ -1424,16 +1435,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // entry kept reappearing after checkout correctly changed her services[]
       // to Gel Manicure.)
       const apptServices = new Set(appt.services ?? []);
-      for (const [svc, mid] of desired) {
-        if (covered.has(svc)) continue;
-        if (!apptServices.has(svc)) continue;
-        next.push({
-          service: svc as typeof currentReqs[number]['service'],
-          manicuristIds: [mid],
-          clientRequest: false,
-        });
-        changed = true;
-      }
+      const { next, changed } = addMissingServiceRequests(currentReqs, desired, apptServices);
       if (!changed) continue;
       dispatch({
         type: 'UPDATE_APPOINTMENT',
