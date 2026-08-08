@@ -43,6 +43,7 @@ import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { SERVICE_CATEGORIES } from '../../constants/services';
 import { supabase } from '../../lib/supabase';
 import { lookupGiftCardBalance, normalizeSerial, type GiftCardBalance } from '../../lib/giftCertificates';
+import { reconcileServiceRequests } from '../../lib/serviceRequests';
 import type { PaymentMethod, ServiceType, Ticket } from '../../types';
 
 interface Props {
@@ -1061,11 +1062,17 @@ export default function TicketModal({
 
         // serviceRequests[]: update the request that owns this line (matched by
         // old service + old staff, else by old service name) with the new name
-        // and/or new staff. clientRequest / startTime are preserved.
+        // and/or new staff. clientRequest / startTime are preserved. The
+        // no-staff-match fallback excludes clientRequest entries — without a
+        // staff match to confirm identity, a same-named customer-requested
+        // slot must never be the one silently renamed/reassigned instead of
+        // the line actually being edited (same failure class as the
+        // ASSIGN_CLIENT/SPLIT_AND_ASSIGN request-clobber bug — see
+        // lib/serviceRequests.ts).
         let ri = w.serviceRequests.findIndex(
           (r) => r.service === oldName && (orig.staff1Id ? (r.manicuristIds ?? []).includes(orig.staff1Id) : true),
         );
-        if (ri < 0) ri = w.serviceRequests.findIndex((r) => r.service === oldName);
+        if (ri < 0) ri = w.serviceRequests.findIndex((r) => r.service === oldName && r.clientRequest !== true);
         if (ri >= 0) {
           const r = w.serviceRequests[ri];
           w.serviceRequests[ri] = {
@@ -1101,9 +1108,11 @@ export default function TicketModal({
         // serviceRequests entry, so the orphan shows up as a phantom block
         // at whatever startTime the stale entry carried (Connie 2026-07-29:
         // stale Manicure/08:00 next to real Gel Manicure/16:45 on TOMMY).
-        const scrubbedRequests = w.serviceRequests.filter((r) =>
-          w.services.includes(r.service),
-        );
+        // reconcileServiceRequests (../../lib/serviceRequests.ts) is
+        // count-aware — a plain membership check here would keep every
+        // same-named entry regardless of how many services[] actually wants,
+        // silently letting an extra one through instead of pruning it.
+        const scrubbedRequests = reconcileServiceRequests(w.services, w.serviceRequests);
         const updates: Partial<Appt> = {
           services: w.services,
           service: (w.services[0] ?? '') as Svc,

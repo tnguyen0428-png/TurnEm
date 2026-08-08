@@ -987,14 +987,26 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     return blocks;
   }
 
-  function removeSvcFromAppt(appt: Appointment, svcName: string) {
+  function removeSvcFromAppt(appt: Appointment, svcName: string, occurrence: number) {
     const all = getApptSvcs(appt);
     const firstIdx = all.indexOf(svcName);
     const svcs = firstIdx >= 0 ? [...all.slice(0, firstIdx), ...all.slice(firstIdx + 1)] : all;
     if (svcs.length === 0) {
       dispatch({ type: 'DELETE_APPOINTMENT', id: appt.id });
     } else {
-      const newReqs = (appt.serviceRequests || []).filter((r) => r.service !== svcName);
+      // Drop only the Nth occurrence of this service (the specific block that
+      // was clicked) — `occurrence` uses the same indexing scheme as
+      // getServiceBlocks (the occ-th entry in serviceRequests filtered by
+      // name). Filtering by name alone removed EVERY entry sharing that
+      // name, including another tech's or a customer's clientRequest slot
+      // for the same service (same failure class fixed in ASSIGN_CLIENT/
+      // SPLIT_AND_ASSIGN — see lib/serviceRequests.ts).
+      let seen = -1;
+      const newReqs = (appt.serviceRequests || []).filter((r) => {
+        if (r.service !== svcName) return true;
+        seen++;
+        return seen !== occurrence;
+      });
       dispatch({ type: 'UPDATE_APPOINTMENT', id: appt.id, updates: {
         services: svcs, service: svcs[0] as ServiceType,
         serviceRequests: newReqs,
@@ -1003,9 +1015,9 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     }
   }
 
-  function deleteSvcBlock(e: React.MouseEvent, appt: Appointment, svcName: string) {
+  function deleteSvcBlock(e: React.MouseEvent, appt: Appointment, svcName: string, occurrence: number) {
     e.stopPropagation();
-    removeSvcFromAppt(appt, svcName);
+    removeSvcFromAppt(appt, svcName, occurrence);
   }
 
   function addApptToQueue(e: React.MouseEvent, appt: Appointment) {
@@ -1817,7 +1829,7 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                       draggable={false}
                       onMouseDown={(e) => e.stopPropagation()}
                       onDragStart={(e) => e.preventDefault()}
-                      onClick={(e) => deleteSvcBlock(e, appt, serviceName)}
+                      onClick={(e) => deleteSvcBlock(e, appt, serviceName, occurrence)}
                       title="Remove this service"
                       className="p-0.5 rounded bg-red-100 text-red-500 hover:bg-red-200">
                       <Trash2 size={9} />
