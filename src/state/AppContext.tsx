@@ -1303,7 +1303,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // writes through chainAppointmentWrite so this UPSERT cannot overtake the DELETE that
       // just got queued above (or any earlier write) — eliminating the write-write race
       // that resurrects appointments after a quick edit-then-delete.
-      trackSave(() => chainAppointmentWrite(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked)));
+      trackSave(() => chainAppointmentWrite(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked, dispatch, isApplyingRemoteRef)));
     }
     if (prev.salonServices !== state.salonServices) trackSave(() => syncSalonServices(state.salonServices, prev.salonServices, setSyncErrorTracked));
     if (prev.turnCriteria !== state.turnCriteria) trackSave(() => syncTurnCriteria(state.turnCriteria, prev.turnCriteria, setSyncErrorTracked));
@@ -2661,7 +2661,13 @@ function serviceRequestKey(r: Pick<ServiceRequest, 'service' | 'manicuristIds'>)
   return `${r.service}::${(r.manicuristIds ?? []).slice().sort().join(',')}`;
 }
 
-async function syncAppointments(appointments: Appointment[], prev: Appointment[], onError: (msg: string) => void) {
+async function syncAppointments(
+  appointments: Appointment[],
+  prev: Appointment[],
+  onError: (msg: string) => void,
+  dispatch: React.Dispatch<AppAction>,
+  isApplyingRemoteRef: React.MutableRefObject<boolean>,
+) {
   // NOTE: this function NO LONGER deletes. Deletions are handled exclusively by
   // the gated delete-detection in the sync effect (which only removes a real
   // booking when it was explicitly deleted, never on a transient state-diff
@@ -2746,7 +2752,22 @@ async function syncAppointments(appointments: Appointment[], prev: Appointment[]
 
   const changed = changedAppts.map((a) => appointmentToRow(reconciledById.get(a.id) ?? a));
   const { error } = await withRetry(() => supabase.from('appointments').upsert(changed, { onConflict: 'id' }));
-  if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  if (error) { console.error('[syncAppointments] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); return; }
+
+  // Reflect any stale-overwrite recoveries into THIS device's own local state right
+  // away, instead of only patching the outgoing DB row. Without this, the recovered
+  // entry existed in the DB the instant this upsert landed, but the device that made
+  // the write kept rendering its pre-recovery (missing-slot) local copy until the
+  // postgres_changes echo of its own write came back and corrected it — a visible
+  // "slot vanished, then reappeared a moment later" gap (Karen Bak x Tommy/Sam,
+  // 2026-08-09: assigning Gel Fill to Sam briefly hid her already-saved Gel
+  // Pedicure/Tommy request from the book on the assigning device). Setting
+  // isApplyingRemoteRef mirrors the realtime-echo handlers below so this dispatch
+  // doesn't re-trigger an outbound sync of the very state it just wrote.
+  for (const reconciled of reconciledById.values()) {
+    isApplyingRemoteRef.current = true;
+    dispatch({ type: 'REMOTE_APPOINTMENT_UPSERT', appointment: reconciled });
+  }
 }
 
 function salonServiceUnchanged(a: SalonService, b: SalonService): boolean {
