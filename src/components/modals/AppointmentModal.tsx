@@ -1822,7 +1822,7 @@ function MatchedCustomerBanner({
     const rows = openAppointments
       .map((a) => {
         const services = (a.services?.length ? a.services : [a.service]).join(', ');
-        const staffId = a.manicuristId ?? a.serviceRequests?.[0]?.manicuristIds?.[0] ?? null;
+        const staffId = a.serviceRequests?.find((r) => r.manicuristIds?.length > 0)?.manicuristIds[0] ?? a.manicuristId ?? null;
         const staff = staffId ? manicuristNameById.get(staffId) ?? '—' : '—';
         return `<tr>
           <td>${esc(fmtDate(a.date))}</td>
@@ -1965,7 +1965,7 @@ ${rows
           </div>
           {openAppointments.slice(0, 5).map((a) => {
             const services = (a.services?.length ? a.services : [a.service]).join(', ');
-            const staffId = a.manicuristId ?? a.serviceRequests?.[0]?.manicuristIds?.[0] ?? null;
+            const staffId = a.serviceRequests?.find((r) => r.manicuristIds?.length > 0)?.manicuristIds[0] ?? a.manicuristId ?? null;
             const staff = staffId ? manicuristNameById.get(staffId) ?? '—' : '—';
             return (
               <div
