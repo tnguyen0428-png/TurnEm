@@ -9,13 +9,14 @@
 // and price.
 
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Printer } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import type { Ticket, TicketItem } from '../../types';
 import { fetchTicketsForRange, computeLineExt } from '../../lib/tickets';
 import {
-  ReportRangeHeader, useReportRange, formatMoney, formatLongDate,
+  ReportRangeHeader, useReportRange, formatMoney, formatLongDate, rangeLabel,
 } from './reportShared';
+import { printManicuristReport } from './printManicuristReport';
 
 interface StaffRow {
   staffId: string;
@@ -39,6 +40,28 @@ function lineExt(it: TicketItem | { unitPriceCents: number; quantity: number; di
     quantity: it.quantity,
     discountCents: it.discountCents,
   });
+}
+
+interface DayGroup {
+  businessDate: string;
+  lines: ServiceLine[];
+  subtotalCents: number;
+}
+
+// Lines are pre-sorted newest-first by date then ticket # — group
+// consecutive same-date lines into day sections with a subtotal each.
+function groupByDay(lines: ServiceLine[]): DayGroup[] {
+  const days: DayGroup[] = [];
+  for (const line of lines) {
+    const last = days[days.length - 1];
+    if (!last || last.businessDate !== line.businessDate) {
+      days.push({ businessDate: line.businessDate, lines: [line], subtotalCents: line.extCents });
+    } else {
+      last.lines.push(line);
+      last.subtotalCents += line.extCents;
+    }
+  }
+  return days;
 }
 
 export default function ManicuristSalesReport() {
@@ -150,60 +173,74 @@ export default function ManicuristSalesReport() {
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-[1fr_120px_140px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+            <div className="grid grid-cols-[1fr_120px_140px_36px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
               <span>Manicurist</span>
               <span className="text-right">Services</span>
               <span className="text-right">Sales</span>
+              <span></span>
             </div>
             {rows.map((r, idx) => {
               const k = rowKey(r);
               const expanded = expandedKey === k;
               const lines = linesByStaff.get(k) ?? [];
               const zebra = idx % 2 === 1;
+              const dayGroups = groupByDay(lines);
               return (
                 <div key={k} className="border-b border-gray-50 last:border-b-0">
-                  <button
-                    type="button"
-                    onClick={() => setExpandedKey(expanded ? null : k)}
-                    className={`w-full grid grid-cols-[1fr_120px_140px] gap-2 px-4 py-2.5 items-center transition-colors text-left hover:bg-pink-100 ${
+                  <div
+                    className={`w-full grid grid-cols-[1fr_120px_140px_36px] gap-2 px-4 py-2.5 items-center transition-colors ${
                       zebra ? 'bg-gray-50' : 'bg-white'
                     }`}
                   >
-                    <span className="font-mono text-sm font-semibold text-gray-900 truncate flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedKey(expanded ? null : k)}
+                      className="font-mono text-sm font-semibold text-gray-900 truncate flex items-center gap-1.5 text-left hover:text-pink-700"
+                    >
                       {expanded
                         ? <ChevronDown size={14} className="text-gray-400" />
                         : <ChevronRight size={14} className="text-gray-400" />}
                       {r.staffName}
-                    </span>
+                    </button>
                     <span className="font-mono text-sm text-gray-700 text-right">{r.serviceCount}</span>
                     <span className="font-mono text-sm font-bold text-gray-900 text-right">
                       {formatMoney(r.grossCents)}
                     </span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => printManicuristReport({
+                        staffName: r.staffName,
+                        rangeLabel: rangeLabel(range),
+                        lines,
+                        totalServices: r.serviceCount,
+                        totalCents: r.grossCents,
+                      })}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-pink-700 hover:bg-pink-100 transition-colors justify-self-end"
+                      title={`Print ${r.staffName}'s report`}
+                    >
+                      <Printer size={14} />
+                    </button>
+                  </div>
                   {expanded && (
-                    <div className="bg-gray-50/60 px-4 pt-2 pb-3">
-                      {lines.length === 0 ? (
+                    <div className="bg-gray-50/60 px-4 pt-2 pb-3 space-y-3">
+                      {dayGroups.length === 0 ? (
                         <p className="font-mono text-xs text-gray-400 py-3 text-center">
                           No service lines.
                         </p>
                       ) : (
-                        <>
-                          <div className="grid grid-cols-[120px_70px_1fr_1fr_110px] gap-2 px-3 py-1.5 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
-                            <span>Date</span>
-                            <span>Ticket</span>
-                            <span>Client</span>
-                            <span>Service</span>
-                            <span className="text-right">Price</span>
-                          </div>
-                          <div className="rounded-lg bg-white border border-gray-100 overflow-hidden">
-                            {lines.map((line, idx) => (
+                        dayGroups.map((day) => (
+                          <div key={day.businessDate} className="rounded-lg bg-white border border-gray-100 overflow-hidden">
+                            <div className="grid grid-cols-[70px_1fr_1fr_110px] gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-500 uppercase">
+                              <span className="col-span-3">{formatLongDate(day.businessDate)}</span>
+                              <span className="text-right">Price</span>
+                            </div>
+                            {day.lines.map((line, idx) => (
                               <div
                                 key={`${line.ticketId}:${idx}`}
-                                className={`grid grid-cols-[120px_70px_1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
+                                className={`grid grid-cols-[70px_1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-50 items-center transition-colors hover:bg-pink-100 ${
                                   idx % 2 === 1 ? 'bg-gray-50' : ''
                                 }`}
                               >
-                                <span className="font-mono text-xs text-gray-700">{formatLongDate(line.businessDate)}</span>
                                 <span className="font-mono text-xs font-bold text-gray-800">#{line.ticketNumber}</span>
                                 <span className="font-mono text-xs text-gray-800 truncate">{line.clientName}</span>
                                 <span className="font-mono text-xs text-gray-700 truncate">{line.serviceName}</span>
@@ -212,8 +249,16 @@ export default function ManicuristSalesReport() {
                                 </span>
                               </div>
                             ))}
+                            <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50">
+                              <span className="font-mono text-[10px] tracking-wider font-semibold text-gray-500 uppercase">
+                                Day total ({day.lines.length})
+                              </span>
+                              <span className="font-mono text-xs font-bold text-gray-900">
+                                {formatMoney(day.subtotalCents)}
+                              </span>
+                            </div>
                           </div>
-                        </>
+                        ))
                       )}
                     </div>
                   )}
