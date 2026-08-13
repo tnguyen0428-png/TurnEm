@@ -1368,12 +1368,24 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const now = Date.now();
       const clientHadWax = client ? clientHasAnyWaxService(client.services, state.salonServices) : false;
       // Only clear the manicurist's card if it's still pointing at THIS entry
-      // (or already empty). If it's pointing at something else — e.g. a
-      // drifted pointer, or they've since started a new client — leave it
-      // alone instead of clobbering their real current work.
+      // (or already empty). If it's pointing at newer work of their OWN, leave
+      // it alone instead of clobbering it.
+      //
+      // Exception — a pointer aimed at an entry assigned to a DIFFERENT tech is
+      // drift, not newer work. Now that the DONE button pins queueEntryId to the
+      // entry the card is displaying, completing via a drift-corrected id would
+      // otherwise leave the bad pointer untouched: the entry gets completed
+      // correctly, but the card stays busy still aimed at the other tech's
+      // client, which is how the drift stayed invisible in the first place
+      // (Maggie x Tommy/Kelly, 2026-08-12). A pointer into someone else's entry
+      // is never legitimate, so clear it.
       const updatedManicurists = state.manicurists.map((m) => {
         if (m.id !== action.manicuristId) return m;
-        if (m.currentClient && m.currentClient !== clientId) return m;
+        if (m.currentClient && m.currentClient !== clientId) {
+          const pointed = state.queue.find((c) => c.id === m.currentClient);
+          const drifted = !!pointed?.assignedManicuristId && pointed.assignedManicuristId !== m.id;
+          if (!drifted) return m;
+        }
         return { ...m, status: 'available' as const, currentClient: null, hasWax: clientHadWax ? true : m.hasWax };
       });
       const updatedQueue = state.queue.filter((c) => c.id !== clientId);

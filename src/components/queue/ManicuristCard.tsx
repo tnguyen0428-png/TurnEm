@@ -96,7 +96,21 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
   }
 
   function handleDone() {
-        dispatch({ type: 'COMPLETE_SERVICE', manicuristId: manicurist.id });
+    // Pin the completion to the entry this card is actually SHOWING. Without
+    // an explicit id the reducer falls back to manicurist.currentClient, a
+    // single mutable pointer that can be redirected onto another tech's card
+    // by a reassignment (Maggie x Tommy/Kelly, 2026-08-12) or moved out from
+    // under us by a realtime echo between render and tap — either way DONE
+    // completes and credits a service the user never looked at. Checkout was
+    // pinned to its ticket line in 00d36a9; this is the same guarantee for the
+    // floor button. `currentClient` is already drift-corrected upstream in
+    // ManicuristPanel.reconcileBusy. Undefined only when the card has no
+    // client, where the reducer's assignedManicuristId lookup still applies.
+    dispatch({
+      type: 'COMPLETE_SERVICE',
+      manicuristId: manicurist.id,
+      queueEntryId: currentClient?.id,
+    });
   }
 
   function handleCancel() {

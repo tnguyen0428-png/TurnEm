@@ -42,7 +42,9 @@ export default function ManicuristPanel() {
   // Derived only — no dispatch — so it can't fight a realtime echo. Applied
   // BEFORE turn ordering below so every downstream consumer sees the fix.
   const inProgressByMani = new Map<string, typeof state.queue[number]>();
+  const queueEntryById = new Map<string, typeof state.queue[number]>();
   for (const c of state.queue) {
+    queueEntryById.set(c.id, c);
     if (c.status !== 'inProgress' || !c.assignedManicuristId) continue;
     const existing = inProgressByMani.get(c.assignedManicuristId);
     // Prefer a real entry over an add-child (`…-add-…`) as the shown client.
@@ -50,11 +52,35 @@ export default function ManicuristPanel() {
       inProgressByMani.set(c.assignedManicuristId, c);
     }
   }
+  // A `currentClient` pointing at an entry that belongs to a DIFFERENT tech is
+  // drift, not a second assignment: `currentClient` is one mutable field per
+  // manicurist and gets redirected onto another tech's card whenever a split
+  // child is reassigned (Maggie x Tommy/Kelly, 2026-08-12 — Tommy's pointer
+  // landed on Kelly's card, so his DONE completed and credited HER pedicure).
+  // The queue entry's own assignedManicuristId is the source of truth, so when
+  // the two disagree we believe the assignment. Deliberately narrow: we only
+  // override when the pointed-at entry is explicitly assigned to someone else.
+  // A tech legitimately holding two of their own entries (a real one plus an
+  // add-child) keeps whichever their pointer names — overriding that would
+  // switch the card out from under them mid-service.
+  const pointerDrifted = (m: typeof state.manicurists[number]): boolean => {
+    if (!m.currentClient) return false;
+    const pointed = queueEntryById.get(m.currentClient);
+    return !!pointed?.assignedManicuristId && pointed.assignedManicuristId !== m.id;
+  };
   const reconcileBusy = (m: typeof state.manicurists[number]): typeof state.manicurists[number] => {
-    if (m.status !== 'available') return m; // never override a real break/busy
     const qc = inProgressByMani.get(m.id);
     if (!qc) return m;
-    return { ...m, status: 'busy' as const, currentClient: m.currentClient ?? qc.id };
+    if (m.status !== 'available') {
+      // Never override a real break/busy status, but still repoint a drifted
+      // pointer so the card renders the entry actually assigned to them.
+      return pointerDrifted(m) ? { ...m, currentClient: qc.id } : m;
+    }
+    return {
+      ...m,
+      status: 'busy' as const,
+      currentClient: pointerDrifted(m) ? qc.id : (m.currentClient ?? qc.id),
+    };
   };
   const clockedIn = state.manicurists
     .filter((m) => m.clockedIn && !isDeskOnlyReceptionist(m))
