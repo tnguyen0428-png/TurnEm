@@ -16,7 +16,7 @@ export type AppAction =
   | { type: 'SET_EDITING_CLIENT'; clientId: string | null }
   | { type: 'REMOVE_CLIENT'; id: string }
   | { type: 'ASSIGN_CLIENT'; clientId: string; manicuristId: string }
-  | { type: 'COMPLETE_SERVICE'; manicuristId: string }
+  | { type: 'COMPLETE_SERVICE'; manicuristId: string; queueEntryId?: string }
   | { type: 'CANCEL_SERVICE'; manicuristId: string }
   | { type: 'SET_SELECTED_CLIENT'; clientId: string | null }
   | { type: 'SET_EDITING_STAFF'; staffId: string | null }

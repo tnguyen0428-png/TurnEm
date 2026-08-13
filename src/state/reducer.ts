@@ -1342,7 +1342,20 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // bailed and DONE silently no-op'd (Kelly×Ally, 2026-06-16). Fall back to
       // the queue entry assigned to this manicurist so DONE always completes.
       // Prefer a real entry over an add-child, mirroring reconcileBusy.
-      let clientId = manicurist.currentClient;
+      //
+      // Checkout (TicketModal) passes queueEntryId explicitly, pinned to a
+      // specific ticket line, so completion doesn't depend on
+      // manicurist.currentClient at all — that pointer can only hold one
+      // queue entry per manicurist and drifts whenever a card gets
+      // reassigned, silently completing/crediting whatever it happens to
+      // be pointing at instead of the entry actually assigned to this
+      // manicurist (Maggie x Tommy/Kelly, 2026-08-12: Tommy's pointer
+      // drifted onto Kelly's split-child card, so checkout completed and
+      // credited HER Gel Pedicure to him while his own entry sat orphaned).
+      // The manual DONE button still calls this without queueEntryId, so
+      // the currentClient / assignedManicuristId fallbacks below are unchanged
+      // for that caller.
+      let clientId = action.queueEntryId ?? manicurist.currentClient;
       if (!clientId) {
         const assigned = state.queue.filter(
           (c) => c.status === 'inProgress' && c.assignedManicuristId === action.manicuristId
@@ -1354,11 +1367,15 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const client = state.queue.find((c) => c.id === clientId);
       const now = Date.now();
       const clientHadWax = client ? clientHasAnyWaxService(client.services, state.salonServices) : false;
-      const updatedManicurists = state.manicurists.map((m) =>
-        m.id === action.manicuristId
-          ? { ...m, status: 'available' as const, currentClient: null, hasWax: clientHadWax ? true : m.hasWax }
-          : m
-      );
+      // Only clear the manicurist's card if it's still pointing at THIS entry
+      // (or already empty). If it's pointing at something else — e.g. a
+      // drifted pointer, or they've since started a new client — leave it
+      // alone instead of clobbering their real current work.
+      const updatedManicurists = state.manicurists.map((m) => {
+        if (m.id !== action.manicuristId) return m;
+        if (m.currentClient && m.currentClient !== clientId) return m;
+        return { ...m, status: 'available' as const, currentClient: null, hasWax: clientHadWax ? true : m.hasWax };
+      });
       const updatedQueue = state.queue.filter((c) => c.id !== clientId);
       if (!client) {
         return { ...state, manicurists: updatedManicurists, queue: updatedQueue };

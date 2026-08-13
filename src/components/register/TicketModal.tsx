@@ -1851,44 +1851,59 @@ export default function TicketModal({
     // missing the entry. That bug ate Brian/Christina/Joe/Katelyn/Macy/
     // Tammy/Tommy's numbers on 2026-05-27.
     //
-    // Three cases on m.currentClient:
-    //   - `${visitId}` (bare primary) or a split-and-assign child
-    //     (`${visitId}-mani-…` / `${visitId}-waiting-…`): dispatch
-    //     COMPLETE_SERVICE so the reducer writes a proper history row
-    //     using the queue entry's deterministic id + real turnValue.
-    //     COMPLETE_SERVICE is idempotent at the PK layer, so if the
-    //     manicurist later presses DONE manually the second write is a
-    //     no-op instead of a duplicate.
+    // Complete by TICKET LINE, not by walking manicurist.currentClient.
+    // Each service line's queueEntryId is fixed at line-creation time and
+    // is exactly what the receipt shows (see resolveApptId / ticket_items
+    // above) — but currentClient is a single mutable pointer per manicurist
+    // that reassignment (ASSIGN_CLIENT's orphan-prevention, re-assigning a
+    // split child, etc.) can silently redirect onto a DIFFERENT split
+    // child. Walking currentClient then completes/credits whatever it
+    // happens to be pointing at instead of what's actually on the receipt.
+    // Confirmed root cause of Maggie x Tommy/Kelly (2026-08-12): Tommy's
+    // currentClient pointer drifted onto Kelly's split-child card, so
+    // checkout completed and credited HER Gel Pedicure to him while his own
+    // entry sat orphaned in the queue and never completed at all. Pinning
+    // completion to each line's own queueEntryId (and crediting that
+    // entry's own assignedManicuristId, via COMPLETE_SERVICE's existing
+    // "credit follows the assigned tech" logic) makes checkout immune to
+    // pointer drift — it always closes out exactly what's on the receipt.
+    //
+    // Two cases per distinct queueEntryId on the ticket's service lines:
+    //   - a real queue entry (bare visit id or a split-and-assign child):
+    //     dispatch COMPLETE_SERVICE with that entry's assignedManicuristId
+    //     AND the queueEntryId itself, so the reducer resolves the entry
+    //     directly instead of via currentClient. Idempotent at the PK
+    //     layer, so if the manicurist already pressed DONE manually (entry
+    //     no longer in state.queue) this is just a no-op.
     //   - `${visitId}-add-…` (cashier-added synthetic add-child): the
-    //     ticket_items are owned by the cashier's TicketModal save and
-    //     the synthetic queue entry carries turnValue=0, so a
-    //     COMPLETE_SERVICE would just emit a turn=0 noise row. Keep the
-    //     lightweight UPDATE_MANICURIST + REMOVE_CLIENT cleanup —
-    //     without it the add-child sits in state.queue forever and the
-    //     manicurist panel keeps drawing a phantom BUSY card.
-    //   - anything else: leave the manicurist alone.
+    //     ticket_items are owned by the cashier's TicketModal save and the
+    //     synthetic queue entry carries turnValue=0, so a COMPLETE_SERVICE
+    //     would just emit a turn=0 noise row. Free whichever manicurist
+    //     card is still pointing at it instead — REMOVE_CLIENT below drops
+    //     the queue row.
     if (ticket.queueEntryId) {
       const visitId = ticket.queueEntryId;
       const addChildPrefix = `${visitId}-add-`;
-      // NOTE: the deferred child id is `${visit}-waiting` (no trailing dash),
-      // so the prefix must be `-waiting` not `-waiting-` — otherwise a held
-      // waiting-child never auto-completes at checkout and lingers in-service.
-      const splitPrefixes = [`${visitId}-mani-`, `${visitId}-waiting`];
-      for (const m of state.manicurists) {
-        if (!m.currentClient) continue;
-        const cc = m.currentClient;
-        if (cc.startsWith(addChildPrefix)) {
-          dispatch({
-            type: 'UPDATE_MANICURIST',
-            id: m.id,
-            updates: { status: 'available', currentClient: null },
-          });
-        } else if (
-          cc === visitId ||
-          splitPrefixes.some((p) => cc.startsWith(p))
-        ) {
-          dispatch({ type: 'COMPLETE_SERVICE', manicuristId: m.id });
+      const lineQueueIds = new Set(
+        lines
+          .filter((l): l is typeof l & { queueEntryId: string } => l.kind === 'service' && !!l.queueEntryId)
+          .map((l) => l.queueEntryId)
+      );
+      for (const qid of lineQueueIds) {
+        if (qid.startsWith(addChildPrefix)) {
+          const m = state.manicurists.find((mm) => mm.currentClient === qid);
+          if (m) {
+            dispatch({
+              type: 'UPDATE_MANICURIST',
+              id: m.id,
+              updates: { status: 'available', currentClient: null },
+            });
+          }
+          continue;
         }
+        const entry = state.queue.find((q) => q.id === qid);
+        if (!entry || !entry.assignedManicuristId) continue;
+        dispatch({ type: 'COMPLETE_SERVICE', manicuristId: entry.assignedManicuristId, queueEntryId: qid });
       }
       // ── Turn-credit consistency heal: REMOVED 2026-06-19 ──────────────
       // This loop used to force every completed_services row's tech to match
