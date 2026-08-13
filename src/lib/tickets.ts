@@ -2904,6 +2904,114 @@ export async function reallocateTurnsForStaffChanges(
   }
 }
 
+// ── Turn-credit reconciliation at close (exact-match only) ──────────────────
+//
+// The closed ticket is the final authority on who earned the turn. A DONE
+// press can land on the wrong card — a receptionist hits it by accident, or a
+// drifted pointer aimed it at another tech — whereas the receipt is what the
+// cashier confirmed while taking money. This pass repoints any turn record
+// whose credit disagrees with its own receipt line.
+//
+// CRITICAL — why this is NOT the heal reverted in 03be248 (2026-06-19):
+// that version *inferred* which row belonged to which line and, when it
+// guessed wrong on a multi-tech ticket, swapped two already-correct credits at
+// payment ("nothing changed during service but the credit moved after I hit
+// process"). The single rule that makes this version safe is the no-match
+// branch below: when a line has no row at its exact id, this does NOTHING and
+// reports it. There is deliberately no positional, name, price, or
+// best-effort fallback. A queue entry's id encodes its technician and is
+// destroyed and recreated on reassignment, so ANY inferred pairing is unsound
+// by construction — an exact id hit is the only pairing that carries
+// information. Do not add a fallback here; that is precisely the regression.
+//
+// Two-staff lines are skipped: they split credit between techs under their own
+// rules, so repointing a single row would misrepresent them.
+//
+// Returns what changed and what could not be paired, so the caller can surface
+// the unpaired lines for a human rather than swallowing them.
+
+export interface TurnCreditReconcileReport {
+  corrected: Array<{
+    queueEntryId: string;
+    serviceName: string;
+    fromStaffName: string;
+    toStaffName: string;
+    turnValue: number;
+  }>;
+  unpaired: Array<{ queueEntryId: string; serviceName: string; staffName: string }>;
+}
+
+export async function reconcileTurnCreditToTicketLines(
+  lines: Array<{
+    kind: string;
+    name: string;
+    queueEntryId?: string | null;
+    staff1Id?: string | null;
+    staff1Name?: string;
+    staff1Color?: string;
+    staff2Id?: string | null;
+  }>,
+): Promise<TurnCreditReconcileReport> {
+  const report: TurnCreditReconcileReport = { corrected: [], unpaired: [] };
+  for (const l of lines) {
+    if (l.kind !== 'service') continue;
+    const qid = l.queueEntryId;
+    if (!qid || !l.staff1Id) continue;
+    if (l.staff2Id) continue;
+    try {
+      const { data, error } = await supabase
+        .from('completed_services')
+        .select('id, manicurist_id, manicurist_name, turn_value, voided')
+        .eq('id', qid)
+        .maybeSingle();
+      if (error) continue;
+      if (!data) {
+        // No exact pair — report, never guess. See the note above.
+        report.unpaired.push({
+          queueEntryId: qid,
+          serviceName: l.name,
+          staffName: l.staff1Name ?? '(unknown)',
+        });
+        continue;
+      }
+      const row = data as {
+        manicurist_id: string | null;
+        manicurist_name: string | null;
+        turn_value: number | string | null;
+        voided: boolean | null;
+      };
+      if (row.voided) continue;                       // voided rows carry no turns
+      if (row.manicurist_id === l.staff1Id) continue; // already agrees — nothing to do
+      const turn = Number(row.turn_value) || 0;
+      // Repoint the row FIRST. If this write fails we must not have already
+      // moved total_turns, or the counter and the row would disagree.
+      const { error: uErr } = await supabase.from('completed_services').update({
+        manicurist_id: l.staff1Id,
+        manicurist_name: l.staff1Name,
+        manicurist_color: l.staff1Color,
+      }).eq('id', qid);
+      if (uErr) {
+        console.warn('[tickets] credit reconcile: repoint failed for', qid, uErr.message);
+        continue;
+      }
+      if (turn > 0) {
+        if (row.manicurist_id) await applyTurnDelta(row.manicurist_id, -turn);
+        await applyTurnDelta(l.staff1Id, turn);
+      }
+      report.corrected.push({
+        queueEntryId: qid,
+        serviceName: l.name,
+        fromStaffName: row.manicurist_name ?? '(unknown)',
+        toStaffName: l.staff1Name ?? '(unknown)',
+        turnValue: turn,
+      });
+    } catch (err) {
+      console.warn('[tickets] reconcileTurnCreditToTicketLines failed for', qid, err);
+    }
+  }
+  return report;
+}
+
 // replace payments on a closed ticket --------------------------------------
 
 /**

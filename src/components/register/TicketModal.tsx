@@ -32,6 +32,7 @@ import {
   closeTicket,
   voidTicket,
   reallocateTurnsForStaffChanges,
+  reconcileTurnCreditToTicketLines,
   reconcileTicketItemsFromCompleted,
   applyTurnDelta,
   type ClosingPaymentInput,
@@ -887,6 +888,10 @@ export default function TicketModal({
   // ─── Save (without closing) ───────────────────────────────────────────────
   const [busy, setBusy] = useState<'idle' | 'saving' | 'processing' | 'voiding'>('idle');
   const [error, setError] = useState<string | null>(null);
+  // Outcome of the post-close turn-credit reconcile. Surfaced as a passive
+  // notice rather than a blocking dialog — the sale is already done and paid,
+  // and this must never stand between the cashier and the next customer.
+  const [creditNotice, setCreditNotice] = useState<{ corrected: number; unpaired: number } | null>(null);
 
   function buildItemsForSave() {
     return lines.map((l) => ({
@@ -1790,6 +1795,36 @@ export default function TicketModal({
       setError('Could not process ticket — try again.');
       return;
     }
+    // ── The closed ticket is now the final authority on turn credit ─────────
+    // Runs AFTER the close succeeds, so a failed payment never rewrites credit.
+    // Only repoints rows it can pair by exact queue-entry id; anything it
+    // cannot pair is reported, never guessed (see the long note on
+    // reconcileTurnCreditToTicketLines — guessing is what forced the
+    // 2026-06-19 revert). Not awaited into the payment path: a reconcile
+    // failure must not block a completed sale.
+    //
+    // Rows completed by THIS checkout may not have synced yet and will simply
+    // land in `unpaired`. That is harmless — they were just credited from the
+    // queue entry's own assignedManicuristId moments ago, so they are already
+    // correct. The case this exists for (a wrong DONE press earlier in the
+    // day) has long since been persisted and pairs fine.
+    void reconcileTurnCreditToTicketLines(lines).then((report) => {
+      for (const c of report.corrected) {
+        console.warn(
+          `[ticket] turn credit corrected to the receipt: ${c.serviceName} ` +
+          `(${c.queueEntryId}) ${c.fromStaffName} → ${c.toStaffName}, ${c.turnValue} turn(s)`,
+        );
+      }
+      for (const u of report.unpaired) {
+        console.warn(
+          `[ticket] turn credit UNVERIFIED for ${u.serviceName} (${u.queueEntryId}, ` +
+          `receipt says ${u.staffName}): no turn record at that id — left untouched, needs review`,
+        );
+      }
+      if (report.corrected.length > 0 || report.unpaired.length > 0) {
+        setCreditNotice({ corrected: report.corrected.length, unpaired: report.unpaired.length });
+      }
+    });
     // Flip the linked appointment (if any) to 'completed' so the appointment
     // book turns the block dark gray. Per user request 2026-05-22, this is
     // the ONLY place that flips appt → 'completed' — COMPLETE_SERVICE leaves
@@ -2552,6 +2587,20 @@ canEdit && (
         {/* Footer — simplified action row. */}
         <div className="px-5 py-2.5 border-t border-gray-200 flex items-center justify-between gap-3 flex-wrap">
           {error && <p className="font-mono text-xs text-red-600 w-full sm:w-auto">{error}</p>}
+          {creditNotice && (
+            <p className="font-mono text-xs w-full sm:w-auto">
+              {creditNotice.corrected > 0 && (
+                <span className="text-emerald-700">
+                  Turn credit matched to receipt ({creditNotice.corrected}).{' '}
+                </span>
+              )}
+              {creditNotice.unpaired > 0 && (
+                <span className="text-amber-700">
+                  {creditNotice.unpaired} line(s) had no turn record — left unchanged, needs review.
+                </span>
+              )}
+            </p>
+          )}
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <FooterBtn
               label="HISTORY"
