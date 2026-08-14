@@ -2,6 +2,7 @@ import { CheckCircle } from 'lucide-react';
 import { isWaxService, waxRotationCompare, WAX } from '../../utils/salonRules';
 import type { QueueEntry, SalonService, ServiceType, Manicurist, Appointment, CompletedEntry } from '../../types';
 import { getTodayLA } from '../../utils/time';
+import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../../lib/manicuristStatus';
 
 export function ServiceHistory({ m }: { m: Manicurist }) {
   const checks = [m.hasFourthPositionSpecial, m.hasCheck2, m.hasCheck3].filter(Boolean).length;
@@ -137,13 +138,25 @@ export function getAlmostDoneMs(manicurist: Manicurist, queue: QueueEntry[], sal
 
 export function getEligibleForService(service: ServiceType, manicurists: Manicurist[], salonServices?: SalonService[], queue?: QueueEntry[]): (Manicurist & { _almostDone?: boolean })[] {
   const wax = salonServices ? isWaxService(service, salonServices) : false;
-  const available = manicurists
+  // Correct the manicurist->queue desync BEFORE filtering. A dropped status
+  // write can leave a row at 'available' while its queue entry is still
+  // inProgress; without this the tech is offered the next client while she is
+  // mid-service (PANDA, 2026-08-14 — busy on the floor panel, which already
+  // reconciled, and simultaneously available here, which did not).
+  // Reconciling up front also fixes the `almostDone` branch below, which
+  // needs a trustworthy `status`/`currentClient` to measure remaining time.
+  const busyIndex = queue ? buildQueueBusyIndex(queue) : null;
+  const roster = busyIndex
+    ? manicurists.map((m) => reconcileBusyFromQueue(m, busyIndex))
+    : manicurists;
+
+  const available = roster
     .filter((m) => m.clockedIn && m.status === 'available')
     .filter((m) => m.skills.includes(service))
     .map(m => ({ ...m, _almostDone: false }));
 
   const almostDone = (queue && salonServices)
-    ? manicurists
+    ? roster
         .filter((m) => m.clockedIn && m.status === 'busy' && m.skills.includes(service))
         .filter((m) => getAlmostDoneMs(m, queue, salonServices) !== null)
         .map(m => ({ ...m, _almostDone: true }))
@@ -160,8 +173,11 @@ export function getEligibleForService(service: ServiceType, manicurists: Manicur
   });
 }
 
-export function getSuggestedForService(service: ServiceType, manicurists: Manicurist[], salonServices: SalonService[], excludeIds: Set<string> = new Set()): Manicurist | null {
-  const eligible = getEligibleForService(service, manicurists, salonServices).filter((m) => !excludeIds.has(m.id));
+// `queue` is optional only for backwards compatibility — pass it wherever you
+// can. Without it the eligibility check falls back to the raw manicurist row,
+// which can wrongly offer a tech who is actually mid-service.
+export function getSuggestedForService(service: ServiceType, manicurists: Manicurist[], salonServices: SalonService[], excludeIds: Set<string> = new Set(), queue?: QueueEntry[]): Manicurist | null {
+  const eligible = getEligibleForService(service, manicurists, salonServices, queue).filter((m) => !excludeIds.has(m.id));
   if (eligible.length === 0) return null;
   const svc = salonServices.find((s) => s.name === service);
   if (svc?.isFourthPositionSpecial) {

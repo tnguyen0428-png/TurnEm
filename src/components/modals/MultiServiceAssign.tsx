@@ -64,7 +64,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         .filter(([k, id]) => k !== rowKey && id !== null)
         .map(([, id]) => id as string)
     );
-    const suggested = getSuggestedForService(service, state.manicurists, state.salonServices, takenByOtherIds);
+    const suggested = getSuggestedForService(service, state.manicurists, state.salonServices, takenByOtherIds, state.queue);
 
     // Do NOT re-query serviceRequests by service name — that would return the same request
     // for every instance of a repeated service, making all rows show the same preferred manicurist.

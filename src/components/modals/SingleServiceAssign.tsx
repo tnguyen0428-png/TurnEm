@@ -12,6 +12,7 @@ import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
 import type { QueueEntry, ServiceType } from '../../types';
 import { isWaxService, waxRotationCompare } from '../../utils/salonRules';
+import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../../lib/manicuristStatus';
 import { getClientDurationMs, formatServiceList, ServiceHistory, getMinsToNextAppt } from './assignHelpers';
 
 // Compute the turn_value a queue entry should carry once it's been marked
@@ -67,9 +68,15 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
 
   const eligible = getEligibleManicurists(client.services, state.manicurists, state.salonServices, state.queue);
 
-  const requestedNotEligible = state.manicurists.filter(
-    (m) => requestedIds.has(m.id) && !eligible.find((e) => e.id === m.id) && m.clockedIn && m.status === 'available'
-  );
+  // Reconcile against the queue first: a requested tech whose status write was
+  // dropped would otherwise be listed as available while she is mid-service
+  // (see lib/manicuristStatus).
+  const busyIndex = buildQueueBusyIndex(state.queue);
+  const requestedNotEligible = state.manicurists
+    .map((m) => reconcileBusyFromQueue(m, busyIndex))
+    .filter(
+      (m) => requestedIds.has(m.id) && !eligible.find((e) => e.id === m.id) && m.clockedIn && m.status === 'available'
+    );
 
   const clientIsWax = client.services.length > 0 && isWaxService(client.services[0], state.salonServices);
 

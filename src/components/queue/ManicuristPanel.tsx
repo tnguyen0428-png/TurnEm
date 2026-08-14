@@ -5,6 +5,7 @@ import ManicuristCard from './ManicuristCard';
 import { SharedAutoFitProvider } from '../shared/SharedAutoFitText';
 import { getSubscribedManicuristIds } from '../../utils/pushNotifications';
 import { formatTime } from '../../utils/time';
+import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../../lib/manicuristStatus';
 
 export default function ManicuristPanel() {
   const { state, dispatch } = useApp();
@@ -41,50 +42,14 @@ export default function ManicuristPanel() {
   // available turn-order, where they'd wrongly be offered the next client.
   // Derived only — no dispatch — so it can't fight a realtime echo. Applied
   // BEFORE turn ordering below so every downstream consumer sees the fix.
-  const inProgressByMani = new Map<string, typeof state.queue[number]>();
-  const queueEntryById = new Map<string, typeof state.queue[number]>();
-  for (const c of state.queue) {
-    queueEntryById.set(c.id, c);
-    if (c.status !== 'inProgress' || !c.assignedManicuristId) continue;
-    const existing = inProgressByMani.get(c.assignedManicuristId);
-    // Prefer a real entry over an add-child (`…-add-…`) as the shown client.
-    if (!existing || (/-add-/.test(existing.id) && !/-add-/.test(c.id))) {
-      inProgressByMani.set(c.assignedManicuristId, c);
-    }
-  }
-  // A `currentClient` pointing at an entry that belongs to a DIFFERENT tech is
-  // drift, not a second assignment: `currentClient` is one mutable field per
-  // manicurist and gets redirected onto another tech's card whenever a split
-  // child is reassigned (Maggie x Tommy/Kelly, 2026-08-12 — Tommy's pointer
-  // landed on Kelly's card, so his DONE completed and credited HER pedicure).
-  // The queue entry's own assignedManicuristId is the source of truth, so when
-  // the two disagree we believe the assignment. Deliberately narrow: we only
-  // override when the pointed-at entry is explicitly assigned to someone else.
-  // A tech legitimately holding two of their own entries (a real one plus an
-  // add-child) keeps whichever their pointer names — overriding that would
-  // switch the card out from under them mid-service.
-  const pointerDrifted = (m: typeof state.manicurists[number]): boolean => {
-    if (!m.currentClient) return false;
-    const pointed = queueEntryById.get(m.currentClient);
-    return !!pointed?.assignedManicuristId && pointed.assignedManicuristId !== m.id;
-  };
-  const reconcileBusy = (m: typeof state.manicurists[number]): typeof state.manicurists[number] => {
-    const qc = inProgressByMani.get(m.id);
-    if (!qc) return m;
-    if (m.status !== 'available') {
-      // Never override a real break/busy status, but still repoint a drifted
-      // pointer so the card renders the entry actually assigned to them.
-      return pointerDrifted(m) ? { ...m, currentClient: qc.id } : m;
-    }
-    return {
-      ...m,
-      status: 'busy' as const,
-      currentClient: pointerDrifted(m) ? qc.id : (m.currentClient ?? qc.id),
-    };
-  };
+  // Now shared with the ASSIGN pool via lib/manicuristStatus — see the header
+  // there. This panel used to be the only place that corrected the desync,
+  // which is exactly why a mid-service tech could show BUSY here and
+  // AVAILABLE in the assign modal at the same moment.
+  const busyIndex = buildQueueBusyIndex(state.queue);
   const clockedIn = state.manicurists
     .filter((m) => m.clockedIn && !isDeskOnlyReceptionist(m))
-    .map(reconcileBusy);
+    .map((m) => reconcileBusyFromQueue(m, busyIndex));
   const notClockedIn = state.manicurists
     .filter((m) => !m.clockedIn && !isDeskOnlyReceptionist(m))
     .sort((a, b) => a.name.localeCompare(b.name));

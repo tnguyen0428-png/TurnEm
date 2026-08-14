@@ -1,6 +1,7 @@
 import type { Manicurist, QueueEntry, SalonService, ServiceType } from '../types';
 import { getPriorityRank } from './priorityStorage';
 import { getAlmostDoneMs } from '../components/modals/assignHelpers';
+import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../lib/manicuristStatus';
 
 function getServicePriorityOrder(service: string, salonServices: SalonService[]): number {
   const svc = salonServices.find((s) => s.name === service);
@@ -38,14 +39,23 @@ export function getEligibleManicurists(
     ? getServicesPrioritySorted(services, salonServices)
     : services;
 
-  const available = manicurists
+  // Correct the manicurist->queue desync before filtering: a dropped status
+  // write can leave a row 'available' while its queue entry is still
+  // inProgress, which would offer a tech who is actually mid-service.
+  // See lib/manicuristStatus for why this can't be fixed at the row.
+  const busyIndex = queue.length > 0 ? buildQueueBusyIndex(queue) : null;
+  const roster = busyIndex
+    ? manicurists.map((m) => reconcileBusyFromQueue(m, busyIndex))
+    : manicurists;
+
+  const available = roster
     .filter((m) => m.clockedIn)
     .filter((m) => m.status === 'available')
     .filter((m) => prioritized.some((s) => m.skills.includes(s)))
     .map((m) => ({ ...m, _almostDone: false }));
 
   const almostDone = queue.length > 0
-    ? manicurists
+    ? roster
         .filter((m) => m.clockedIn && m.status === 'busy')
         .filter((m) => prioritized.some((s) => m.skills.includes(s)))
         .filter((m) => getAlmostDoneMs(m, queue, salonServices) !== null)
