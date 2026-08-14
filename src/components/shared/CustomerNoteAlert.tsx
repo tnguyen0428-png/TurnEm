@@ -1,19 +1,34 @@
 import { StickyNote } from 'lucide-react';
 
-// Attention-grabbing popup for a customer's saved permanent note. Used
-// anywhere a customer profile gets matched during intake (appointment
-// booking, queue check-in) so staff see the note before finishing the
-// booking/check-in instead of it silently pre-filling a notes textarea
-// further down the form where it's easy to miss.
+// Attention-grabbing popup for the notes attached to a client. Used anywhere
+// a customer gets matched during intake (appointment booking, queue check-in,
+// assignment) so staff see the note at the moment it matters instead of it
+// silently pre-filling a notes textarea further down the form where it's easy
+// to miss.
+//
+// Two independent notes can apply to the same visit and they mean different
+// things, so both are surfaced together rather than one winning:
+//   • `note`     — the customer's PERMANENT note, saved on their profile and
+//                  true on every visit ("allergic to acetone").
+//   • `apptNote` — the note typed on THIS booking, true only today ("wants
+//                  short round, coming from work").
+// Either may be empty; the caller is expected not to render this at all when
+// both are. Labels only appear when both are present — a single note keeps
+// the original uncluttered layout.
 export default function CustomerNoteAlert({
   name,
   note,
+  apptNote,
   onDismiss,
 }: {
   name: string;
-  note: string;
+  note?: string | null;
+  apptNote?: string | null;
   onDismiss: () => void;
 }) {
+  const permanent = (note ?? '').trim();
+  const appointment = (apptNote ?? '').trim();
+  const showLabels = permanent.length > 0 && appointment.length > 0;
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
@@ -29,9 +44,32 @@ export default function CustomerNoteAlert({
             Note on file — {name}
           </p>
         </div>
-        <p className="text-gray-800 font-mono text-sm leading-relaxed mb-6 whitespace-pre-wrap">
-          {note}
-        </p>
+        <div className="mb-6 space-y-4">
+          {permanent.length > 0 && (
+            <div>
+              {showLabels && (
+                <p className="font-mono text-[10px] font-bold tracking-wider text-amber-600 uppercase mb-1">
+                  Permanent note
+                </p>
+              )}
+              <p className="text-gray-800 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+                {permanent}
+              </p>
+            </div>
+          )}
+          {appointment.length > 0 && (
+            <div>
+              {showLabels && (
+                <p className="font-mono text-[10px] font-bold tracking-wider text-amber-600 uppercase mb-1">
+                  This appointment
+                </p>
+              )}
+              <p className="text-gray-800 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+                {appointment}
+              </p>
+            </div>
+          )}
+        </div>
         <div className="flex justify-end">
           <button
             onClick={onDismiss}

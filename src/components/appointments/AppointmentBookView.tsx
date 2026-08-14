@@ -127,7 +127,7 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
   // by phone before actually adding them to the queue; if they have a saved
   // note, the check-in is held here (as a closure) until the popup is
   // dismissed, so staff see it before the client lands on the floor.
-  const [noteAlert, setNoteAlert] = useState<{ name: string; note: string } | null>(null);
+  const [noteAlert, setNoteAlert] = useState<{ name: string; note: string; apptNote?: string } | null>(null);
   const pendingCheckInRef = useRef<(() => void) | null>(null);
 
   // Click-to-edit on off-hours overlay: opens DayScheduleOverrideModal for
@@ -1081,14 +1081,23 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
         originalAppointment: appt,
       } as QueueEntry });
     };
-    // Hold the check-in until the receptionist has seen the customer's saved
-    // note (Tony 2026-07-27: notes were getting missed because they only
-    // silently pre-filled a form field). No note on file → check in immediately,
-    // no behavior change.
+    // Hold the check-in until the receptionist has seen the notes on this
+    // client (Tony 2026-07-27: notes were getting missed because they only
+    // silently pre-filled a form field). Gates on BOTH the customer's
+    // permanent note and the note typed on this specific booking — the
+    // appointment note is often the more urgent of the two ("coming from
+    // work, only has 45 min") and was previously visible only inside the
+    // edit modal. Neither note on file → check in immediately, no behavior
+    // change.
+    const apptNote = (appt.notes ?? '').trim();
     void getPermanentNoteByPhone(appt.clientPhone).then((hit) => {
-      if (hit) {
+      if (hit || apptNote) {
         pendingCheckInRef.current = commit;
-        setNoteAlert(hit);
+        setNoteAlert({
+          name: hit?.name ?? (appt.clientName || 'Walk-in'),
+          note: hit?.note ?? '',
+          apptNote,
+        });
       } else {
         commit();
       }
@@ -2217,6 +2226,7 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
         <CustomerNoteAlert
           name={noteAlert.name}
           note={noteAlert.note}
+          apptNote={noteAlert.apptNote}
           onDismiss={() => {
             setNoteAlert(null);
             pendingCheckInRef.current?.();

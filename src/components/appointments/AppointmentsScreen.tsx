@@ -62,7 +62,7 @@ export default function AppointmentsScreen() {
   // phone before adding them to the queue; if they have a saved note, the
   // check-in is held (as a closure) until the popup is dismissed. Mirrors
   // AppointmentBookView.addApptToQueue.
-  const [noteAlert, setNoteAlert] = useState<{ name: string; note: string } | null>(null);
+  const [noteAlert, setNoteAlert] = useState<{ name: string; note: string; apptNote?: string } | null>(null);
   const pendingCheckInRef = useRef<(() => void) | null>(null);
 
   const filtered = state.appointments
@@ -174,12 +174,19 @@ export default function AppointmentsScreen() {
       };
       dispatch({ type: 'ADD_CLIENT', client: newClient });
     };
-    // Hold the check-in until the receptionist has seen the customer's saved
-    // note. No note on file → check in immediately, no behavior change.
+    // Hold the check-in until the receptionist has seen the notes on this
+    // client — the customer's permanent note AND the note typed on this
+    // booking. Mirrors AppointmentBookView.addApptToQueue. Neither on file →
+    // check in immediately, no behavior change.
+    const apptNote = (appt.notes ?? '').trim();
     void getPermanentNoteByPhone(appt.clientPhone).then((hit) => {
-      if (hit) {
+      if (hit || apptNote) {
         pendingCheckInRef.current = commit;
-        setNoteAlert(hit);
+        setNoteAlert({
+          name: hit?.name ?? (appt.clientName || 'Walk-in'),
+          note: hit?.note ?? '',
+          apptNote,
+        });
       } else {
         commit();
       }
@@ -395,6 +402,7 @@ export default function AppointmentsScreen() {
         <CustomerNoteAlert
           name={noteAlert.name}
           note={noteAlert.note}
+          apptNote={noteAlert.apptNote}
           onDismiss={() => {
             setNoteAlert(null);
             pendingCheckInRef.current?.();
