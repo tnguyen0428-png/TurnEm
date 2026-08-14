@@ -636,6 +636,65 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
     const services = selectedServices.map((s) => s.serviceName as ServiceType);
 
+    // Removing a service that is already being performed — or already finished
+    // and credited — takes its block off the appointment book while the work
+    // is still real. Tell the receptionist what it costs instead of discarding
+    // it silently. (Desiree Reyna x SAM, 2026-08-13: Gel Fill was removed from
+    // the booking at 23:58 while Sam was mid-service; he completed it at 00:28
+    // but the block had already vanished from his column, and nobody noticed
+    // until the next day.)
+    //
+    // The reducer enforces the same rule as a hard invariant
+    // (retainBackedServices), which is what protects against silent/automated
+    // writes. This dialog is the human's escape hatch: confirming here sets
+    // `allowDroppingBackedServices` so a deliberate removal still goes
+    // through instead of being mysteriously reverted.
+    let allowDroppingBackedServices = false;
+    if (mode === 'edit' && editing) {
+      // Count-aware diff: which occurrences of which services are being dropped?
+      const remaining = [...services];
+      const dropped: string[] = [];
+      for (const prev of editing.services ?? []) {
+        const i = remaining.indexOf(prev);
+        if (i >= 0) remaining.splice(i, 1);
+        else dropped.push(prev);
+      }
+      if (dropped.length > 0) {
+        const backedBy = new Map<string, Set<string>>();
+        const note = (svc: string, who: string | undefined) => {
+          if (!dropped.includes(svc)) return;
+          const set = backedBy.get(svc) ?? new Set<string>();
+          if (who) set.add(who);
+          backedBy.set(svc, set);
+        };
+        for (const q of state.queue) {
+          if (q.originalAppointment?.id !== editing.id) continue;
+          const who = state.manicurists.find((m) => m.id === q.assignedManicuristId)?.name;
+          for (const s of q.services ?? []) note(s, who);
+        }
+        for (const c of state.completed) {
+          if (c.originalAppointmentId !== editing.id || c.voided) continue;
+          for (const s of c.services ?? []) note(s, c.manicuristName);
+        }
+        if (backedBy.size > 0) {
+          const lines = Array.from(backedBy.entries()).map(([svc, who]) =>
+            who.size > 0 ? `  • ${svc} — ${Array.from(who).join(', ')}` : `  • ${svc}`,
+          );
+          const plural = backedBy.size > 1;
+          const ok = window.confirm(
+            `This appointment already has work on the floor for:\n\n${lines.join('\n')}\n\n` +
+            `Removing ${plural ? 'these services' : 'this service'} here takes ` +
+            `${plural ? 'their blocks' : 'the block'} off the appointment book. The work ` +
+            `itself and any ticket lines are NOT removed — the service stays on the ticket ` +
+            `and the manicurist keeps the turn credit.\n\n` +
+            `Remove ${plural ? 'them' : 'it'} from the booking anyway?`,
+          );
+          if (!ok) return;
+          allowDroppingBackedServices = true;
+        }
+      }
+    }
+
     // Build one entry per service occurrence — merges client request + existing placement/startTime.
     // This avoids duplicate entries that would confuse occurrence-based routing.
     const existingReqs = editing?.serviceRequests || [];
@@ -826,6 +885,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       dispatch({
         type: 'UPDATE_APPOINTMENT',
         id: editing.id,
+        // Only ever true when the receptionist was shown the on-the-floor
+        // work above and explicitly confirmed the removal.
+        allowDroppingBackedServices,
         updates: {
           clientName: name,
           clientPhone: clientPhone.trim(),

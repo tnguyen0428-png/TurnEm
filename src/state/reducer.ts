@@ -430,6 +430,99 @@ function sanitizeQueueEntryId(id: string): string {
 // helpers (relocateServiceRequests, addMissingServiceRequests) so every write
 // site shares one implementation instead of re-deriving its own.
 
+// Work already on the floor, or already credited, is authority over services[].
+// A write that SHRINKS services[] must not silently drop a service that has a
+// live queue entry or a completed_services row attached to this appointment:
+// that is real work, and losing it takes the block off the book mid-service.
+// (Desiree Reyna x SAM, 2026-08-13: Gel Fill was removed from the booking at
+// 23:58:09 while Sam was performing it — he completed it 30 minutes later at
+// 00:28:26, but the block had already vanished from his column, and the loss
+// was invisible because that service had no serviceRequests entry to fall
+// back on. Same principle as "the closed ticket is final authority on turn
+// credit".)
+//
+// Deliberately gated on a genuine SHRINK, never a rename. A checkout rename
+// (Manicure -> Gel Manicure) keeps services[] the same length, and a stale
+// queue entry still carrying the OLD name would otherwise get re-added here,
+// resurrecting exactly the phantom block the Debbie Ma x Brian fix removed
+// (2026-08-05). Length is the discriminator: a 1->1 rename never engages, a
+// 2->1 removal does.
+//
+// KNOWN LIMITATION: an equal-length SWAP in a single write (drop Gel Fill,
+// add Nail Art) is structurally identical to a rename from here — same
+// length, one name out and one in — so this guard deliberately lets it
+// through rather than risk re-adding a stale renamed-away service. The swap
+// case is covered one layer up instead: AppointmentModal's confirm dialog
+// diffs dropped services count-aware (not by length), so a human swapping a
+// service that has work on the floor is still warned. Only a silent /
+// automated equal-length swap is uncovered, and none is known to exist.
+// Closing it fully would mean giving the TicketModal rename path an explicit
+// `allowDroppingBackedServices` opt-out and dropping the length gate.
+//
+// Order is preserved by walking the previous list, so a retained service
+// keeps its original position (and therefore its stacking start time in
+// AppointmentBookView) instead of being appended at the end.
+function retainBackedServices(
+  nextServices: ServiceType[],
+  prevServices: ServiceType[],
+  apptId: string,
+  queue: QueueEntry[],
+  completed: CompletedEntry[],
+): ServiceType[] {
+  if (nextServices.length >= prevServices.length) return nextServices;
+
+  const backed = new Map<string, number>();
+  for (const q of queue) {
+    if (q.originalAppointment?.id !== apptId) continue;
+    for (const s of q.services ?? []) backed.set(s, (backed.get(s) ?? 0) + 1);
+  }
+  for (const c of completed) {
+    // A voided row is work that was explicitly undone — it must NOT pin a
+    // service in place, or a void followed by a correction could never remove
+    // the mistaken service.
+    if (c.originalAppointmentId !== apptId || c.voided) continue;
+    for (const s of c.services ?? []) backed.set(s, (backed.get(s) ?? 0) + 1);
+  }
+  if (backed.size === 0) return nextServices;
+
+  const wanted = new Map<string, number>();
+  for (const s of nextServices) wanted.set(s, (wanted.get(s) ?? 0) + 1);
+
+  const result: ServiceType[] = [];
+  const kept: string[] = [];
+  for (const s of prevServices) {
+    const want = wanted.get(s) ?? 0;
+    if (want > 0) {
+      wanted.set(s, want - 1);
+      result.push(s);
+      continue;
+    }
+    const back = backed.get(s) ?? 0;
+    if (back > 0) {
+      backed.set(s, back - 1);
+      result.push(s);
+      kept.push(s);
+      continue;
+    }
+    // Genuinely removed: nothing left wants it and no live/completed work
+    // backs it. Drop as the caller asked.
+  }
+  // Anything still pending in `wanted` is a service the caller ADDED that the
+  // previous list didn't have — append it so adds still work.
+  for (const [s, n] of wanted) {
+    for (let i = 0; i < n; i++) result.push(s as ServiceType);
+  }
+
+  if (kept.length > 0) {
+    console.warn(
+      `[reducer] UPDATE_APPOINTMENT ${apptId}: refused to drop [${kept.join(', ')}] — ` +
+      `that service has a live queue entry or a completed_services row on this ` +
+      `appointment. If this fires routinely, the caller shrinking services[] is the bug.`,
+    );
+  }
+  return result;
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   // Run the per-action case, then converge totalTurns from the source-of-
   // truth arrays. The wrapper means individual cases no longer have to be
@@ -1649,17 +1742,29 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         appointments: state.appointments.map((a) => {
           if (a.id !== action.id) return a;
           const { updates } = action;
+          // Guard services[] against losing work that's already on the floor
+          // or already credited — see retainBackedServices above. Runs BEFORE
+          // the serviceRequests reconcile so requests are matched against the
+          // list we actually intend to keep.
+          const nextServices = updates.services
+            ? (action.allowDroppingBackedServices
+                ? updates.services
+                : retainBackedServices(updates.services, a.services ?? [], a.id, state.queue, state.completed))
+            : undefined;
           // Any write that changes services[] gets serviceRequests[]
           // reconciled against the NEW list — see reconcileServiceRequests
           // above. Call sites that already pass a correctly-scrubbed
           // serviceRequests (e.g. removeSvcFromAppt) are unaffected: this is
           // idempotent on an already-consistent pair.
-          const serviceRequests = updates.services
-            ? reconcileServiceRequests(updates.services, updates.serviceRequests ?? a.serviceRequests ?? [])
+          const serviceRequests = nextServices
+            ? reconcileServiceRequests(nextServices, updates.serviceRequests ?? a.serviceRequests ?? [])
             : updates.serviceRequests;
           return {
             ...a,
             ...updates,
+            ...(nextServices !== undefined
+              ? { services: nextServices, service: (nextServices[0] ?? a.service) }
+              : {}),
             ...(serviceRequests !== undefined ? { serviceRequests } : {}),
             lastEditedAt: Date.now(),
           };

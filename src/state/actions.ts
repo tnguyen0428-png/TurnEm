@@ -27,7 +27,13 @@ export type AppAction =
   | { type: 'REQUEST_ASSIGN'; client: QueueEntry; manicuristId: string }
   | { type: 'SPLIT_AND_ASSIGN'; originalId: string; entries: { client: QueueEntry; manicuristId: string | null }[] }
   | { type: 'ADD_APPOINTMENT'; appointment: Appointment }
-  | { type: 'UPDATE_APPOINTMENT'; id: string; updates: Partial<Appointment> }
+  // `allowDroppingBackedServices` opts OUT of the reducer's retainBackedServices
+  // guard, which otherwise refuses to shrink services[] past a service that has
+  // a live queue entry or a completed_services row. Set it ONLY where a human
+  // has been shown what the removal costs and explicitly confirmed (the
+  // AppointmentModal dialog). Every other caller leaves it unset so a silent or
+  // automated write can never drop work that's on the floor.
+  | { type: 'UPDATE_APPOINTMENT'; id: string; updates: Partial<Appointment>; allowDroppingBackedServices?: boolean }
   | { type: 'DELETE_APPOINTMENT'; id: string }
   | { type: 'SET_EDITING_APPOINTMENT'; appointmentId: string | null }
   | { type: 'SET_APPOINTMENT_DRAFT'; draft: AppointmentDraft | null }
