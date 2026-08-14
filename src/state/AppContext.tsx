@@ -1234,19 +1234,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // DELETE is at best a no-op, but combined with the prior reconcileAppts
       // wholesale-replace it was the trapdoor that silently destroyed live
       // appointments while their staff were still mid-service.
+      // A walk-in synth block's id is `walkin:${queueEntryId}` (the reducer's
+      // synthWalkInAppt keys it off the queue entry). If that queue entry is
+      // STILL live, the client is on the floor and the block is a real
+      // assignment showing in a manicurist's column — it must NEVER be
+      // diff-deleted just because it blinked out of in-memory state during a
+      // sync/realtime batching race. Only a block whose queue entry is ALSO
+      // gone is a genuine orphan safe to clean up.
+      //
+      // This is what the reducer-internal cleanups (REMOVE_CLIENT,
+      // CANCEL_SERVICE — see shouldDeleteAppt/cancelDeleteAppt in reducer.ts)
+      // actually need: they drop the queue entry and the block in the SAME
+      // action, so the entry is already gone here and the delete still fires.
+      // They can't record intent in pendingApptDeletesRef (a reducer can't
+      // touch the ref), which is why the blanket walk-in exemption existed.
+      //
+      // (Katie x KATELYN/KELLY, 2026-08-13: two freshly assigned blocks were
+      // destroyed 27s and 43s after creation, in two separate sync cycles,
+      // while the client was still on the floor mid-service. Staff had to
+      // void the ticket and re-create the visit to get slots that stuck.
+      // Measured across appointment_delete_log: 66% of all deleted
+      // unconfirmed walk-in blocks died within 2 minutes of creation, vs
+      // 1.4% of confirmed ones.)
+      const liveQueueIds = new Set(state.queue.map((q) => q.id));
+      const isOrphanWalkInBlock = (a: Appointment) =>
+        a.isWalkIn === true &&
+        a.id.startsWith('walkin:') &&
+        !liveQueueIds.has(a.id.slice('walkin:'.length));
+
       const deletedAppts = prev.appointments.filter(
         (a) =>
           !currentApptIds.has(a.id) &&
           !isTombstoned(a.id) &&
           // Protect real bookings: only delete from DB if the user explicitly
-          // deleted it (recorded in the ledger) or it's a *synthetic* walk-in
-          // block (id prefixed `walkin:`). A booked appt that merely went
+          // deleted it (recorded in the ledger) or it's an ORPHANED synthetic
+          // walk-in block (see above). A booked appt that merely went
           // missing from state (a sync/realtime batching race) is left alone
           // and self-heals on the next upsert/refresh instead of being
           // permanently destroyed. The `walkin:` prefix guard also protects
           // real appts that now carry isWalkIn=true while parked after an
           // appointment assignment (per Tony, 2026-06-06).
-          (pendingApptDeletesRef.current.has(a.id) || (a.isWalkIn === true && a.id.startsWith('walkin:'))),
+          (pendingApptDeletesRef.current.has(a.id) || isOrphanWalkInBlock(a)),
       );
       // Consume handled intent markers, and drop any whose appt is still present
       // (an explicit delete superseded by a concurrent re-add) so the set can't
