@@ -515,12 +515,94 @@ function retainBackedServices(
 
   if (kept.length > 0) {
     console.warn(
-      `[reducer] UPDATE_APPOINTMENT ${apptId}: refused to drop [${kept.join(', ')}] — ` +
+      `[reducer] appointment ${apptId}: refused to drop [${kept.join(', ')}] — ` +
       `that service has a live queue entry or a completed_services row on this ` +
       `appointment. If this fires routinely, the caller shrinking services[] is the bug.`,
     );
   }
   return result;
+}
+
+// Anchor preservation, the second half of the same invariant.
+//
+// retainBackedServices keeps a worked service in `services[]`, but a service
+// with NO serviceRequests entry renders in the appointment book purely off
+// the appointment's top-level `manicuristId` fallback (see getServiceBlocks
+// in AppointmentBookView). So a write that keeps the service but moves that
+// pointer leaves the block with nothing to render from — it disappears while
+// services[] still lists it, which is exactly how Sam's in-progress Gel Fill
+// fell off Jennifer Logan's 10:45 block on 2026-08-15 (the pedicure child's
+// queue→appt mirror moved manicuristId mani-4 → mani-3).
+//
+// Before such a write lands, pin every service that (a) is still in
+// services[], (b) has no serviceRequests entry covering that occurrence
+// (count-aware), and (c) has live queue or non-voided completed work on this
+// appointment, to the manicurist ACTUALLY doing that work. Services with no
+// work behind them are untouched — an ordinary booking's slots should keep
+// following the primary column the way they always have.
+function pinBackedServiceAnchors(
+  services: ServiceType[],
+  requests: ServiceRequest[],
+  apptId: string,
+  queue: QueueEntry[],
+  completed: CompletedEntry[],
+): ServiceRequest[] {
+  // Who is actually working each service on this appointment, in first-seen
+  // order, deduped by manicurist — a service that is BOTH in the queue and
+  // already has a completed row (the DONE-but-ticket-open window) must not
+  // count as two separate workers and mint two anchors.
+  const workers = new Map<string, { manicuristId: string; requested: boolean }[]>();
+  const addWorker = (svc: string, manicuristId: string | null, requested: boolean) => {
+    if (!manicuristId) return;
+    const list = workers.get(svc) ?? [];
+    const seen = list.find((w) => w.manicuristId === manicuristId);
+    if (seen) { seen.requested = seen.requested || requested; return; }
+    list.push({ manicuristId, requested });
+    workers.set(svc, list);
+  };
+  for (const q of queue) {
+    if (q.originalAppointment?.id !== apptId) continue;
+    for (const s of q.services ?? []) addWorker(s, q.assignedManicuristId, q.isRequested === true);
+  }
+  for (const c of completed) {
+    if (c.originalAppointmentId !== apptId || c.voided) continue;
+    for (const s of c.services ?? []) {
+      addWorker(s, c.manicuristId, (c.requestedServices ?? []).includes(s));
+    }
+  }
+  if (workers.size === 0) return requests;
+
+  const count = (items: ReadonlyArray<string>) => {
+    const m = new Map<string, number>();
+    for (const s of items) m.set(s, (m.get(s) ?? 0) + 1);
+    return m;
+  };
+  const wanted = count(services);
+  const covered = count(requests.map((r) => r.service));
+
+  const next = [...requests];
+  let changed = false;
+  for (const [svc, workerList] of workers) {
+    const want = wanted.get(svc) ?? 0;
+    const have = covered.get(svc) ?? 0;
+    if (want <= have) continue; // every occurrence already has an entry
+    // A worker already named in an existing entry for this service is the
+    // one that entry represents — only the unrepresented workers need an
+    // anchor of their own.
+    const alreadyAnchored = new Set(
+      next.filter((r) => r.service === svc).flatMap((r) => r.manicuristIds ?? []),
+    );
+    const free = workerList.filter((w) => !alreadyAnchored.has(w.manicuristId));
+    for (let i = 0; i < Math.min(want - have, free.length); i++) {
+      next.push({
+        service: svc as ServiceType,
+        manicuristIds: [free[i].manicuristId],
+        clientRequest: free[i].requested,
+      });
+      changed = true;
+    }
+  }
+  return changed ? next : requests;
 }
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -733,23 +815,63 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // array), serviceRequests (the per-service request list), and
       // manicuristId (on reassign). Only fires when the entry actually has
       // a linked appt (`originalAppointment.id` exists in state.appointments).
+      //
+      // CRITICAL: a queue entry is only ever ONE SLICE of the booking. A
+      // SPLIT_AND_ASSIGN child inherits the PARENT's `originalAppointment`
+      // but carries only its own services[], so copying that slice onto the
+      // booking verbatim wipes every SIBLING service off the block. This
+      // mirror writes straight into the appointments array — it does not go
+      // through UPDATE_APPOINTMENT — so until 2026-08-15 it was the one
+      // appointment write in the app with no retainBackedServices behind it.
+      // (Jennifer Logan 2026-08-15: the pedicure child's mirror shrank
+      // services[] to ["Gel Pedicure"] and moved manicuristId off SAM while
+      // he was mid Gel Fill; his block vanished from the book, his ticket
+      // line and turn credit survived.)
       let updatedAppointments = state.appointments;
       const linkedApptIdForUpdate = existing?.originalAppointment?.id;
       if (linkedApptIdForUpdate) {
         const linkedAppt = state.appointments.find((a) => a.id === linkedApptIdForUpdate);
         if (linkedAppt) {
           const apptPatch: Partial<typeof linkedAppt> = {};
+          const prevServices = linkedAppt.services ?? [];
+          let nextServices = prevServices;
           if (action.updates.services !== undefined) {
-            apptPatch.services = action.updates.services;
-            apptPatch.service = action.updates.services[0] ?? linkedAppt.service;
+            // Backing is measured against the POST-edit queue, so genuinely
+            // removing a service from THIS entry still works — only a
+            // SIBLING entry's live work, or a non-voided completed row,
+            // pins a service the caller didn't mean to touch.
+            nextServices = retainBackedServices(
+              action.updates.services,
+              prevServices,
+              linkedAppt.id,
+              updatedQueue,
+              state.completed,
+            );
+            apptPatch.services = nextServices;
+            apptPatch.service = nextServices[0] ?? linkedAppt.service;
           }
+          const prevRequests = linkedAppt.serviceRequests ?? [];
+          let nextRequests = action.updates.serviceRequests ?? prevRequests;
           if (action.updates.serviceRequests !== undefined) {
-            apptPatch.serviceRequests = action.updates.serviceRequests;
+            apptPatch.serviceRequests = nextRequests;
           }
           if (action.updates.assignedManicuristId !== undefined) {
             apptPatch.manicuristId = action.updates.assignedManicuristId ?? null;
           }
           if (Object.keys(apptPatch).length > 0) {
+            // Same reconcile the UPDATE_APPOINTMENT choke point runs: any
+            // request beyond what services[] wants is a phantom slot.
+            if (apptPatch.services !== undefined) {
+              nextRequests = reconcileServiceRequests(nextServices, nextRequests);
+            }
+            // Then re-anchor anything the patch would have left rendering off
+            // a manicuristId that is about to move (see pinBackedServiceAnchors).
+            nextRequests = pinBackedServiceAnchors(
+              nextServices, nextRequests, linkedAppt.id, updatedQueue, state.completed,
+            );
+            if (nextRequests !== prevRequests) {
+              apptPatch.serviceRequests = nextRequests;
+            }
             updatedAppointments = state.appointments.map((a) =>
               a.id === linkedApptIdForUpdate ? { ...a, ...apptPatch } : a,
             );
@@ -1756,9 +1878,31 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
           // above. Call sites that already pass a correctly-scrubbed
           // serviceRequests (e.g. removeSvcFromAppt) are unaffected: this is
           // idempotent on an already-consistent pair.
-          const serviceRequests = nextServices
+          const reconciled = nextServices
             ? reconcileServiceRequests(nextServices, updates.serviceRequests ?? a.serviceRequests ?? [])
             : updates.serviceRequests;
+          // Retaining a service in services[] isn't enough on its own: if the
+          // caller's serviceRequests don't cover it and this same write moves
+          // `manicuristId`, the block loses its only column and vanishes
+          // anyway. Re-anchor backed work whenever a write touches any of the
+          // three fields that decide where a block renders. Status-only
+          // writes (check-in, complete, cancel — the common case) skip this
+          // entirely. A confirmed allowDroppingBackedServices removal is
+          // unaffected: the dropped service is no longer in nextServices, so
+          // nothing gets pinned for it.
+          const touchesPlacement =
+            updates.services !== undefined ||
+            updates.serviceRequests !== undefined ||
+            updates.manicuristId !== undefined;
+          const serviceRequests = touchesPlacement
+            ? pinBackedServiceAnchors(
+                nextServices ?? a.services ?? [],
+                reconciled ?? a.serviceRequests ?? [],
+                a.id,
+                state.queue,
+                state.completed,
+              )
+            : reconciled;
           return {
             ...a,
             ...updates,
