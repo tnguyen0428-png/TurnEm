@@ -646,8 +646,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // requested_services (even when the client never requested anyone). Detect and clear:
       // bad pattern = every service in the entry is also in requestedServices (all marked requested)
       // AND there are 2+ services (single-service genuine requests are safe to keep).
+      //
+      // GATED ON is_requested (2026-08-14). "Every service is requested" is
+      // ALSO what a genuine request looks like — a client who asks for this
+      // tech has all of their services with her requested — so the shape test
+      // alone could not tell the two apart and was erasing real requests, then
+      // persisting that erasure to the DB below. The R badge consequently
+      // vanished from exactly the visits most likely to be requests, the
+      // multi-service ones: 7 of today's rows were flagged is_requested with
+      // the list already wiped (Alice Talbot, Vallory Ryan, Janice Owen and
+      // others), all confirmed genuine by Tony.
+      //
+      // is_requested is the discriminator the shape lacks, and it survives
+      // this cleanup. It is also load-bearing evidence: across every live and
+      // archived row there is NOT ONE with a requested_services list but no
+      // flag — the synthetic signature — while every surviving
+      // "flagged + has list" row is single-service, which is this cleanup's
+      // own fingerprint. So requiring the flag to be absent keeps the guard
+      // for the case it was written for without touching real requests.
       const reqSet = new Set(rawRequested);
-      const isBadPattern = services.length > 1
+      const isBadPattern = !(row.is_requested as boolean)
+        && services.length > 1
         && rawRequested.length > 0
         && services.every((s) => reqSet.has(s as string));
 
@@ -680,7 +699,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
     });
 
-    // Persist the cleanup to DB for any bad entries we found above
+    // Persist the cleanup to DB for any bad entries we found above.
+    //
+    // This is the DESTRUCTIVE half — it does not just hide the list, it wipes
+    // it from completed_services permanently, and the nightly archive then
+    // freezes the empty list into daily_history. It fires only when
+    // requestedServices came back undefined despite the row having a list,
+    // which now means isBadPattern, so it inherits the is_requested gate added
+    // above. Keep it that way: without that gate, this loop is what actually
+    // destroyed real requests.
     for (const e of completed) {
       const rawRow = (completedRows || []).find((r: Record<string, unknown>) => r.id === e.id);
       const rawRequested = Array.isArray(rawRow?.requested_services) ? rawRow.requested_services as string[] : [];
