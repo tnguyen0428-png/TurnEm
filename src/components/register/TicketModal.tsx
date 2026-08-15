@@ -430,7 +430,29 @@ export default function TicketModal({
       target.currentClient === visitId ||
       (reusable && target.currentClient === reusable.id) ||
       target.currentClient.startsWith(`${visitId}-`);
-    if (target.status === 'busy' && !isAlreadyOnThisVisit) return;
+    // Busy on a DIFFERENT client. This used to `return` outright, which threw
+    // away the work record along with the card update — two separate concerns:
+    //
+    //   the manicurist's card (status / currentClient) is a display pointer,
+    //   and hijacking it onto another visit really would blank the client
+    //   they are mid-service on. That part of the guard is right.
+    //
+    //   the add-child QUEUE ENTRY is the record that the work happened. It is
+    //   what the checkout completion pass matches each ticket line against,
+    //   and what synthesizes the block on the book. Skipping it means the
+    //   service is billed but the tech gets no history row, no turn credit
+    //   and no slot — silently.
+    //
+    // September Adams, 2026-08-14: two Nail Art lines added to ticket #76
+    // moments apart. CHRISTINA was free at 00:09:09 so her add-child was
+    // created and she got both a block and a history row. PANDA was
+    // mid-service on Veronica Reyna at 00:10:45, so this returned early and
+    // she got neither — her $15 was collected, but the work vanished from
+    // her book and her portal. With no add-child to key off, her ticket line
+    // also fell back to the bare visit id and collided into `#1`.
+    //
+    // So: always record the work; only move the card when it is safe to.
+    const busyElsewhere = target.status === 'busy' && !isAlreadyOnThisVisit;
 
     const now = Date.now();
 
@@ -447,11 +469,13 @@ export default function TicketModal({
           updates: { services, assignedManicuristId: line.staff1Id },
         });
       }
-      dispatch({
-        type: 'UPDATE_MANICURIST',
-        id: line.staff1Id,
-        updates: { status: 'busy', currentClient: reusable.id },
-      });
+      if (!busyElsewhere) {
+        dispatch({
+          type: 'UPDATE_MANICURIST',
+          id: line.staff1Id,
+          updates: { status: 'busy', currentClient: reusable.id },
+        });
+      }
       return;
     }
 
@@ -486,11 +510,17 @@ export default function TicketModal({
         extraTimeMs: 0,
       },
     });
-    dispatch({
-      type: 'UPDATE_MANICURIST',
-      id: line.staff1Id,
-      updates: { status: 'busy', currentClient: addChildId },
-    });
+    // Card only moves when this tech isn't mid-service on someone else — the
+    // add-child above is recorded either way. ManicuristPanel prefers a real
+    // entry over an `-add-` child when both exist, so a tech holding both
+    // keeps showing the client they're actually sitting with.
+    if (!busyElsewhere) {
+      dispatch({
+        type: 'UPDATE_MANICURIST',
+        id: line.staff1Id,
+        updates: { status: 'busy', currentClient: addChildId },
+      });
+    }
 
     // Belt-and-suspenders direct DB write (see commit 5ffadda for why).
     const nowIso = new Date(now).toISOString();
