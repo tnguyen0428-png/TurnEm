@@ -270,10 +270,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
 
     async function refreshAmounts() {
       try {
+        // Voided tickets MUST be excluded. A void means the transaction did
+        // not happen, but ticket_items rows survive it (Katie's voided #23 and
+        // #30 on 2026-08-13 kept 2 and 1 lines). While price_cents was the
+        // primary source this was harmless — the snapshot won first — but
+        // entryTotalDollars now reads this map FIRST, so an unfiltered fetch
+        // would pay a tech for voided work.
         const { data: ticketRows, error: tErr } = await supabase
           .from('tickets')
           .select('id, queue_entry_id, business_date')
-          .eq('business_date', selectedDate);
+          .eq('business_date', selectedDate)
+          .in('status', ['open', 'closed']);
         if (cancelled) return;
         if (tErr) { console.error('[staff amounts] tickets fetch:', tErr.message); return; }
         const visitByTicketId = new Map<string, string>();
@@ -427,19 +434,30 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   }
 
   function entryTotalDollars(entry: CompletedEntry): number {
-    // Preferred: the trg_sync_completed_service_prices DB trigger snapshots
-    // the actual checkout price (with any cashier override / discount applied)
-    // into completed_services.price_cents on ticket close, and that value is
-    // also archived into daily_history.entries[].priceCents. Trust it
-    // whenever it's present — it survives both realtime push to the staff
-    // mobile and the nightly archive into daily_history.
-    if (entry.priceCents != null) return entry.priceCents / 100;
-    // Fallback for today's still-open tickets: aggregate live ticket_items.
+    // THE RECEIPT IS THE SOURCE OF TRUTH. What the tech is shown must be the
+    // same number the customer actually paid, so read the live ticket first.
+    //
+    // This used to prefer completed_services.price_cents — a snapshot written
+    // once by trg_sync_completed_service_prices at ticket close. That snapshot
+    // is a second copy of the same fact, and a copy can be wrong: the trigger
+    // fires only on the transition to closed and prices whatever rows exist at
+    // that instant, so any row the client had not yet flushed was never priced
+    // and never would be. On 2026-08-14 that left 53 of 158 rows (~34%) with a
+    // null snapshot. Nothing was visibly wrong at the time only because this
+    // function fell through to the ticket anyway — it resolved 161/161 rows.
+    // Making that path primary removes the copy from the decision entirely.
+    //
+    // `ticketAmountMap` excludes voided tickets (see the fetch above), so
+    // voided work contributes nothing.
     const visitId = getVisitId(entry.id);
     const fromTicket = ticketAmountMap.get(`${visitId}|${entry.manicuristId}`);
     if (typeof fromTicket === 'number') return fromTicket / 100;
-    // Last-resort fallback: catalog price sum. Used for in-progress entries
-    // and legacy rows from before the price_cents column existed.
+    // Archival snapshot: used once the ticket is no longer reachable for the
+    // selected date (daily_history rows carry priceCents through the nightly
+    // archive), which is the case this column genuinely exists for.
+    if (entry.priceCents != null) return entry.priceCents / 100;
+    // Last-resort: catalog price sum, for in-progress entries with no ticket
+    // line yet and legacy rows from before price_cents existed.
     return (entry.services ?? []).reduce((sum, name) => sum + (priceByService.get(name) ?? 0), 0);
   }
 
