@@ -68,6 +68,143 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     if (next <= todayStr) setSelectedDate(next);
   }
 
+  // ── Week view ──────────────────────────────────────────────────────────
+  // Weeks run Sunday → Saturday, matching how the salon reads a week
+  // ("Week 08/02/2026 - 08/08/2026" is Sun 8/2 through Sat 8/8).
+  const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
+  const [weekStart, setWeekStart] = useState<string>(() => startOfWeek(getBusinessDayLA()));
+  const [weekRows, setWeekRows] = useState<{ date: string; services: number; dollars: number }[]>([]);
+  const [weekLoading, setWeekLoading] = useState(false);
+
+  function startOfWeek(dateStr: string): string {
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() - d.getDay()); // getDay(): 0 = Sunday
+    return getLocalDateStr(d);
+  }
+  function addDaysStr(dateStr: string, days: number): string {
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() + days);
+    return getLocalDateStr(d);
+  }
+  const weekEnd = addDaysStr(weekStart, 6);
+  // Can't page forward past the week containing today.
+  const atCurrentWeek = weekStart >= startOfWeek(todayStr);
+
+  function shiftWeek(weeks: number) {
+    const next = addDaysStr(weekStart, weeks * 7);
+    if (next <= startOfWeek(todayStr)) setWeekStart(next);
+  }
+  function formatMDY(dateStr: string): string {
+    return new Date(dateStr + 'T12:00:00')
+      .toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  }
+
+  // Load one week of this manicurist's totals. Past days come from the
+  // archived daily_history rows (whose entries carry priceCents through the
+  // nightly archive); the current business day is still live in
+  // completedToday, so it is summed from state rather than re-fetched.
+  useEffect(() => {
+    if (viewMode !== 'week') return;
+    let cancelled = false;
+    setWeekLoading(true);
+
+    const days = Array.from({ length: 7 }, (_, i) => addDaysStr(weekStart, i))
+      .filter((d) => d <= todayStr);
+
+    void (async () => {
+      // The receipt is the source of truth for money (see entryTotalDollars),
+      // so the week reads tickets for its whole range rather than trusting the
+      // archived priceCents snapshot alone. Without this the week and the day
+      // view disagree on any archived row whose snapshot is null — 28.9% of
+      // 2026-08-13, the day the close-timing race bit hardest.
+      const [{ data }, { data: tRows }] = await Promise.all([
+        supabase.from('daily_history').select('date, entries').in('date', days),
+        supabase.from('tickets')
+          .select('id, business_date, queue_entry_id')
+          .in('business_date', days)
+          .in('status', ['open', 'closed']),
+      ]);
+      if (cancelled) return;
+
+      const visitByTicket = new Map<string, { date: string; visit: string }>();
+      for (const t of (tRows ?? []) as Array<{ id: string; business_date: string; queue_entry_id: string | null }>) {
+        if (t.queue_entry_id) visitByTicket.set(t.id, { date: t.business_date, visit: t.queue_entry_id });
+      }
+      const amounts = new Map<string, number>(); // `${date}|${visit}|${staff}` -> cents
+      if (visitByTicket.size > 0) {
+        const { data: iRows } = await supabase
+          .from('ticket_items')
+          .select('ticket_id, staff1_id, ext_price_cents')
+          .in('ticket_id', Array.from(visitByTicket.keys()));
+        if (cancelled) return;
+        for (const i of (iRows ?? []) as Array<{ ticket_id: string; staff1_id: string | null; ext_price_cents: number }>) {
+          const meta = visitByTicket.get(i.ticket_id);
+          if (!meta || !i.staff1_id) continue;
+          const key = `${meta.date}|${meta.visit}|${i.staff1_id}`;
+          amounts.set(key, (amounts.get(key) ?? 0) + (i.ext_price_cents ?? 0));
+        }
+      }
+
+      {
+        const byDate = new Map<string, { services: number; dollars: number }>();
+        for (const row of (data ?? []) as Array<{ date: string; entries: CompletedEntry[] }>) {
+          let services = 0;
+          let dollars = 0;
+          // Mirrors entryTotalDollars so the week and the day view can never
+          // disagree: the archived priceCents snapshot is per-entry and is
+          // preferred. The ticket map is keyed `${date}|${visit}|${staff}` and
+          // sums EVERY line that tech has on the visit, so it is only used
+          // when a snapshot is missing — and then only once per visit, or a
+          // tech with two entries on one visit would have that visit's money
+          // counted twice (mani-9 on 2026-08-12, mani-3 on 2026-08-13).
+          const countedVisits = new Set<string>();
+          for (const e of row.entries ?? []) {
+            if (e.manicuristId !== initialManicurist.id) continue;
+            if (e.voided) continue;
+            services += e.services?.length || 1;
+            if (e.priceCents != null) {
+              dollars += e.priceCents / 100;
+              continue;
+            }
+            const key = `${row.date}|${getVisitId(e.id)}|${e.manicuristId}`;
+            const fromTicket = amounts.get(key);
+            if (typeof fromTicket === 'number') {
+              if (!countedVisits.has(key)) {
+                dollars += fromTicket / 100;
+                countedVisits.add(key);
+              }
+            } else {
+              dollars += archivedEntryDollars(e);
+            }
+          }
+          byDate.set(row.date, { services, dollars });
+        }
+        setWeekRows(days.map((date) => {
+          if (date === todayStr) {
+            // Live day — use the same amount logic the day view uses so the
+            // two never disagree for today.
+            let services = 0;
+            let dollars = 0;
+            for (const e of completedToday) {
+              if (e.voided) continue;
+              services += e.services?.length || 1;
+              dollars += entryTotalDollars(e);
+            }
+            return { date, services, dollars };
+          }
+          const hit = byDate.get(date);
+          return { date, services: hit?.services ?? 0, dollars: hit?.dollars ?? 0 };
+        }));
+        setWeekLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // completedToday / entryTotalDollars are recomputed on every render; the
+    // week only needs to reload when the range or the mode changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, weekStart, todayStr, initialManicurist.id]);
+
   function formatDateLabel(dateStr: string): string {
     const d = new Date(dateStr + 'T12:00:00');
     const weekday = d.toLocaleDateString('en-US', { weekday: 'long' });
@@ -434,30 +571,40 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   }
 
   function entryTotalDollars(entry: CompletedEntry): number {
-    // THE RECEIPT IS THE SOURCE OF TRUTH. What the tech is shown must be the
-    // same number the customer actually paid, so read the live ticket first.
+    // price_cents IS the receipt amount, at the right grain: the close/insert
+    // triggers sum ticket_items PER completed_services id, so it is this
+    // entry's own money. Prefer it.
     //
-    // This used to prefer completed_services.price_cents — a snapshot written
-    // once by trg_sync_completed_service_prices at ticket close. That snapshot
-    // is a second copy of the same fact, and a copy can be wrong: the trigger
-    // fires only on the transition to closed and prices whatever rows exist at
-    // that instant, so any row the client had not yet flushed was never priced
-    // and never would be. On 2026-08-14 that left 53 of 158 rows (~34%) with a
-    // null snapshot. Nothing was visibly wrong at the time only because this
-    // function fell through to the ticket anyway — it resolved 161/161 rows.
-    // Making that path primary removes the copy from the decision entirely.
+    // Do NOT prefer ticketAmountMap here. That map is keyed
+    // `${visitId}|${staffId}` and sums every line that tech has on the visit,
+    // so a tech with two entries on one visit gets the whole visit's total
+    // reported for EACH of them, and the day total doubles. Real case —
+    // TAMMY, visit ef43ecfe, 2026-08-13: Manicure $32 + Polish Change Feet
+    // $15. Per entry that is $32 and $15; the visit map returns $47 for both,
+    // totalling $94. (Briefly shipped that way in ef5fb06 and reverted.)
     //
-    // `ticketAmountMap` excludes voided tickets (see the fetch above), so
-    // voided work contributes nothing.
+    // The null-price_cents hole that motivated the inversion is closed
+    // properly instead, by trg_price_completed_service_on_insert, which prices
+    // a row that lands after its ticket closed.
+    if (entry.priceCents != null) return entry.priceCents / 100;
+    // Fallback while a ticket is still open (no snapshot written yet). Coarse
+    // for a multi-entry visit, but it is the only live figure available and
+    // the snapshot replaces it the moment the ticket closes.
     const visitId = getVisitId(entry.id);
     const fromTicket = ticketAmountMap.get(`${visitId}|${entry.manicuristId}`);
     if (typeof fromTicket === 'number') return fromTicket / 100;
-    // Archival snapshot: used once the ticket is no longer reachable for the
-    // selected date (daily_history rows carry priceCents through the nightly
-    // archive), which is the case this column genuinely exists for.
-    if (entry.priceCents != null) return entry.priceCents / 100;
-    // Last-resort: catalog price sum, for in-progress entries with no ticket
+    // Last resort: catalog price sum, for in-progress entries with no ticket
     // line yet and legacy rows from before price_cents existed.
+    return (entry.services ?? []).reduce((sum, name) => sum + (priceByService.get(name) ?? 0), 0);
+  }
+
+  // Amount for an ARCHIVED entry (daily_history). Past days have no live
+  // ticket to read, so the archived priceCents snapshot is the source — it is
+  // exactly what the day view shows for the same date, so the week totals and
+  // the day list can't disagree. Falls back to catalog price for legacy rows
+  // archived before price_cents existed.
+  function archivedEntryDollars(entry: CompletedEntry): number {
+    if (entry.priceCents != null) return entry.priceCents / 100;
     return (entry.services ?? []).reduce((sum, name) => sum + (priceByService.get(name) ?? 0), 0);
   }
 
@@ -976,14 +1123,62 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           <div className="px-4 py-3 border-b border-gray-100">
             <div className="flex items-center justify-between">
               <p className="font-mono text-xs font-semibold text-gray-900">Services</p>
-              <span className="font-mono text-[10px] text-gray-400 font-semibold">
-                {(isToday ? completedToday : historyEntries).reduce(
-                  (sum, e) => sum + (e.voided ? 0 : (e.services?.length || 1)),
-                  0,
-                )} completed
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[10px] text-gray-400 font-semibold">
+                  {viewMode === 'week'
+                    ? `${weekRows.reduce((s, r) => s + r.services, 0)} completed`
+                    : `${(isToday ? completedToday : historyEntries).reduce(
+                        (sum, e) => sum + (e.voided ? 0 : (e.services?.length || 1)),
+                        0,
+                      )} completed`}
+                </span>
+                {/* Day / Week toggle */}
+                <div className="flex rounded-lg bg-gray-100 p-0.5">
+                  {(['day', 'week'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setViewMode(m)}
+                      className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-semibold uppercase transition-colors ${
+                        viewMode === m ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className="flex items-center justify-between mt-2">
+            {viewMode === 'week' && (
+              <div className="flex items-center justify-between mt-2">
+                <button
+                  onClick={() => shiftWeek(-1)}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="font-bebas text-lg text-pink-600 tracking-wider">
+                    Week {formatMDY(weekStart)} - {formatMDY(weekEnd)}
+                  </span>
+                  {!atCurrentWeek && (
+                    <button
+                      onClick={() => setWeekStart(startOfWeek(todayStr))}
+                      className="px-2 py-0.5 rounded-md bg-pink-100 text-pink-600 font-mono text-[10px] font-semibold hover:bg-pink-200 transition-colors"
+                    >
+                      This week
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={() => shiftWeek(1)}
+                  disabled={atCurrentWeek}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
+            <div className={`flex items-center justify-between mt-2 ${viewMode === 'week' ? 'hidden' : ''}`}>
               <button
                 onClick={() => shiftDate(-1)}
                 className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
@@ -1013,8 +1208,59 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             </div>
           </div>
 
-          {/* Entries */}
-          {historyLoading ? (
+          {/* Week view: one row per day, grand total at the bottom. Tapping a
+              day drops into the normal day list for that date. */}
+          {viewMode === 'week' ? (
+            weekLoading ? (
+              <div className="px-4 py-8 text-center">
+                <p className="font-mono text-xs text-gray-400">Loading...</p>
+              </div>
+            ) : (
+              <div>
+                <div className="divide-y divide-gray-50">
+                  {weekRows.map((r) => (
+                    <button
+                      key={r.date}
+                      onClick={() => { setSelectedDate(r.date); setViewMode('day'); }}
+                      className="w-full px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors text-left"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm font-bold text-gray-900">
+                          {new Date(r.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
+                          <span className="text-gray-400 font-semibold ml-1.5">{formatMDY(r.date)}</span>
+                        </p>
+                        <p className="font-mono text-[10px] text-gray-400 font-semibold mt-0.5">
+                          {r.services} {r.services === 1 ? 'service' : 'services'}
+                        </p>
+                      </div>
+                      <span className="font-bebas text-xl text-gray-900 leading-none">
+                        ${r.dollars.toFixed(0)}
+                      </span>
+                    </button>
+                  ))}
+                  {weekRows.length === 0 && (
+                    <div className="px-4 py-8 text-center">
+                      <CheckCircle size={24} className="mx-auto text-gray-200 mb-2" />
+                      <p className="font-mono text-xs text-gray-400">No services recorded this week</p>
+                    </div>
+                  )}
+                </div>
+                {weekRows.length > 0 && (
+                  <div className="px-4 py-3 border-t-2 border-gray-200 bg-gray-50 flex items-center justify-between gap-3 rounded-b-2xl">
+                    <div>
+                      <p className="font-mono text-xs font-bold text-gray-900 uppercase tracking-wider">Total</p>
+                      <p className="font-mono text-[10px] text-gray-400 font-semibold mt-0.5">
+                        {weekRows.reduce((s, r) => s + r.services, 0)} services
+                      </p>
+                    </div>
+                    <span className="font-bebas text-3xl text-pink-600 leading-none">
+                      ${weekRows.reduce((s, r) => s + r.dollars, 0).toFixed(0)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )
+          ) : historyLoading ? (
             <div className="px-4 py-8 text-center">
               <p className="font-mono text-xs text-gray-400">Loading...</p>
             </div>
