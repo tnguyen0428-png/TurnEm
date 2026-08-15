@@ -174,6 +174,10 @@ function mapDbCompleted(row: Record<string, unknown>): CompletedEntry {
     isRequested: (row.is_requested as boolean) || false,
     edited: (row.edited as boolean) || false,
     voided: (row.voided as boolean) || false,
+    // Persisted since 2026-08-14. Previously memory-only, which silently
+    // disabled the multi-block darkening sweep at ticket close on any
+    // refreshed device — see the column comment in the DB.
+    originalAppointmentId: (row.original_appointment_id as string | null) ?? undefined,
     // Set by the trg_sync_completed_service_prices DB trigger on ticket close.
     // Null while the ticket is still open or for pre-trigger legacy rows.
     priceCents: row.price_cents == null ? null : Number(row.price_cents),
@@ -661,6 +665,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         requestedServices: isBadPattern ? undefined : (rawRequested.length > 0 ? rawRequested as ServiceType[] : undefined),
         isAppointment: (row.is_appointment as boolean) || false,
         isRequested: (row.is_requested as boolean) || false,
+        // `edited` and `voided` were previously NOT read here, only in the
+        // realtime mapper — yet syncCompleted writes them back as
+        // `!!c.voided` / `!!c.edited`. So after a page refresh a voided row
+        // came back undefined and the next flush could silently RE-CREDIT it
+        // as live work. Read them so a reload can't undo a void.
+        edited: (row.edited as boolean) || false,
+        voided: (row.voided as boolean) || false,
+        // Persisted since 2026-08-14 (was memory-only) so the ticket-close
+        // darkening sweep still finds every block on a multi-tech visit
+        // after a refresh or on another device.
+        originalAppointmentId: (row.original_appointment_id as string | null) ?? undefined,
         priceCents: row.price_cents == null ? null : Number(row.price_cents),
       };
     });
@@ -2494,6 +2509,7 @@ async function syncCompleted(
         previous.isRequested === c.isRequested &&
         !!previous.edited === !!c.edited &&
         !!previous.voided === !!c.voided &&
+        (previous.originalAppointmentId ?? null) === (c.originalAppointmentId ?? null) &&
         previous.manicuristClockInTime === c.manicuristClockInTime &&
         JSON.stringify(previous.services) === JSON.stringify(c.services) &&
         JSON.stringify(previous.requestedServices ?? []) === JSON.stringify(c.requestedServices ?? []);
@@ -2518,6 +2534,7 @@ async function syncCompleted(
       is_requested: !!c.isRequested,
       edited: !!c.edited,
       voided: !!c.voided,
+      original_appointment_id: c.originalAppointmentId ?? null,
       // Persisted so the History "Turns per Manicurist" clock-in order
       // survives a reload/resync before the nightly archive — previously
       // this only lived in local reducer state and any reload before
