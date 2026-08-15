@@ -2692,16 +2692,52 @@ export async function voidTicket(
   // out there crediting turns. The visit-prefix match also catches
   // SPLIT_AND_ASSIGN child rows and mid-visit "add" rows whose ids carry
   // suffixes off the parent visit id.
-  if (visitId) {
+  // Scope every step below to THIS ticket's own lines. Two tickets can share
+  // one visit id — that is exactly what void-and-recreate produces — and the
+  // old visit-prefix scoping then reached across into the other ticket's
+  // credited work: voiding Katie's ticket #30 (KELLY, one line) on 2026-08-13
+  // also deleted KATELYN's Gel Manicure row belonging to ticket #23, which was
+  // never voided. The refund pass had the same reach, so her turn was clawed
+  // back too.
+  //
+  // A line's queue_entry_id can carry a `#N` collision suffix (see
+  // appendItemsToTicket) that never appears in a completed_services id, so
+  // strip it before matching.
+  //
+  // No lines (the cashier removed every line before voiding) → fall back to
+  // the visit prefix, which is the case the prefix-only behaviour existed for.
+  let scopedIds: string[] = [];
+  {
+    const { data: lineRows, error: liErr } = await supabase
+      .from('ticket_items')
+      .select('queue_entry_id')
+      .eq('ticket_id', ticketId);
+    if (liErr) {
+      console.warn('[tickets] voidTicket fetch ticket_items:', liErr.message);
+    } else {
+      scopedIds = Array.from(new Set(
+        ((lineRows ?? []) as Array<{ queue_entry_id: string | null }>)
+          .map((r) => (r.queue_entry_id ?? '').split('#')[0])
+          .filter((id) => id.length > 0),
+      ));
+    }
+  }
+  const useLineScope = scopedIds.length > 0;
+
+  if (visitId || useLineScope) {
     try {
-      // 1. Pull every completed_services row tied to this visit so we know
-      //    which manicurists' total_turns to decrement and by how much.
-      //    Already-voided rows had their turns subtracted earlier via
+      // 1. Pull the completed_services rows this ticket is responsible for so
+      //    we know which manicurists' total_turns to decrement and by how
+      //    much. Already-voided rows had their turns subtracted earlier via
       //    TOGGLE_VOID_COMPLETED, so they don't contribute to the rollback.
-      const { data: completedRows, error: csFetchErr } = await supabase
+      const scopedSelect = supabase
         .from('completed_services')
-        .select('id, manicurist_id, turn_value, voided')
-        .or(`id.eq.${visitId},id.like.${visitId}-%`);
+        .select('id, manicurist_id, turn_value, voided');
+      const { data: completedRows, error: csFetchErr } = await (
+        useLineScope
+          ? scopedSelect.in('id', scopedIds)
+          : scopedSelect.or(`id.eq.${visitId},id.like.${visitId}-%`)
+      );
       if (csFetchErr) {
         console.warn('[tickets] voidTicket completed fetch:', csFetchErr.message);
       } else {
@@ -2741,10 +2777,14 @@ export async function voidTicket(
       //     Without this, a refund-succeeded-but-delete-failed void left
       //     non-voided rows that a second cleanup pass would double-credit-back
       //     (the only double-refund hole in the void path). (2026-06-20)
-      const { error: voidMarkErr } = await supabase
+      const scopedMark = supabase
         .from('completed_services')
-        .update({ voided: true })
-        .or(`id.eq.${visitId},id.like.${visitId}-%`);
+        .update({ voided: true });
+      const { error: voidMarkErr } = await (
+        useLineScope
+          ? scopedMark.in('id', scopedIds)
+          : scopedMark.or(`id.eq.${visitId},id.like.${visitId}-%`)
+      );
       if (voidMarkErr) {
         console.warn('[tickets] voidTicket completed_services void-mark:', voidMarkErr.message);
       }
@@ -2764,8 +2804,11 @@ export async function voidTicket(
       // every page load). void_completed_services_for_visit is a narrow
       // escape hatch that only deletes rows for a visit whose ticket is
       // ALREADY 'voided', so we route through it instead.
-      const { error: delErr } = await supabase.rpc('void_completed_services_for_visit', {
-        p_visit_id: visitId,
+      // void_completed_services_for_ticket applies the SAME line-scoping
+      // server-side (and the same no-lines visit-prefix fallback), so the
+      // delete can never outrun the refund pass above.
+      const { error: delErr } = await supabase.rpc('void_completed_services_for_ticket', {
+        p_ticket_id: ticketId,
       });
       if (delErr) {
         console.warn('[tickets] voidTicket completed_services delete:', delErr.message);
