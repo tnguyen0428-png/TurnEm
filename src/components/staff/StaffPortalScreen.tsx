@@ -73,7 +73,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   // ("Week 08/02/2026 - 08/08/2026" is Sun 8/2 through Sat 8/8).
   const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
   const [weekStart, setWeekStart] = useState<string>(() => startOfWeek(getBusinessDayLA()));
-  const [weekRows, setWeekRows] = useState<{ date: string; services: number; dollars: number }[]>([]);
+  const [weekRows, setWeekRows] = useState<{ date: string; services: number; dollars: number; turns: number }[]>([]);
   const [weekLoading, setWeekLoading] = useState(false);
 
   function startOfWeek(dateStr: string): string {
@@ -146,10 +146,11 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       }
 
       {
-        const byDate = new Map<string, { services: number; dollars: number }>();
+        const byDate = new Map<string, { services: number; dollars: number; turns: number }>();
         for (const row of (data ?? []) as Array<{ date: string; entries: CompletedEntry[] }>) {
           let services = 0;
           let dollars = 0;
+          let turns = 0;
           // Mirrors entryTotalDollars so the week and the day view can never
           // disagree: the archived priceCents snapshot is per-entry and is
           // preferred. The ticket map is keyed `${date}|${visit}|${staff}` and
@@ -162,6 +163,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             if (e.manicuristId !== initialManicurist.id) continue;
             if (e.voided) continue;
             services += e.services?.length || 1;
+            turns += Number(e.turnValue) || 0;
             if (e.priceCents != null) {
               dollars += e.priceCents / 100;
               continue;
@@ -177,7 +179,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               dollars += archivedEntryDollars(e);
             }
           }
-          byDate.set(row.date, { services, dollars });
+          byDate.set(row.date, { services, dollars, turns });
         }
         setWeekRows(days.map((date) => {
           if (date === todayStr) {
@@ -185,15 +187,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
             // two never disagree for today.
             let services = 0;
             let dollars = 0;
+            let turns = 0;
             for (const e of completedToday) {
               if (e.voided) continue;
               services += e.services?.length || 1;
+              turns += Number(e.turnValue) || 0;
               dollars += entryTotalDollars(e);
             }
-            return { date, services, dollars };
+            return { date, services, dollars, turns };
           }
           const hit = byDate.get(date);
-          return { date, services: hit?.services ?? 0, dollars: hit?.dollars ?? 0 };
+          return { date, services: hit?.services ?? 0, dollars: hit?.dollars ?? 0, turns: hit?.turns ?? 0 };
         }));
         setWeekLoading(false);
       }
@@ -608,6 +612,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     return (entry.services ?? []).reduce((sum, name) => sum + (priceByService.get(name) ?? 0), 0);
   }
 
+  // Turns for whatever period the list below is showing, so the headline
+  // number and the services under it always describe the same days.
+  //   today (day view) → the live counter, which includes in-progress work
+  //   a past day       → that day's archived entries
+  //   week view        → the visible week
+  const turnsShown = (() => {
+    if (viewMode === 'week') return weekRows.reduce((s, r) => s + r.turns, 0);
+    if (isToday) return manicurist.totalTurns;
+    return historyEntries.reduce((s, e) => s + (e.voided ? 0 : (Number(e.turnValue) || 0)), 0);
+  })();
+
   // First name only: split on whitespace and take the first non-empty token.
   // Empty client names render as the generic "Walk-in" so the row still has
   // a leading anchor.
@@ -1021,8 +1036,17 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
         <div className="grid grid-cols-2 gap-3">
           {/* Total Turns */}
           <div className="bg-white rounded-2xl border border-gray-100 p-4 text-center shadow-sm">
-            <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider uppercase mb-1">TOTAL TURNS</p>
-            <p className="font-bebas text-4xl text-gray-900 leading-none">{manicurist.totalTurns.toFixed(1)}</p>
+            <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider uppercase mb-1">
+              {isToday && viewMode === 'day' ? 'TOTAL TURNS' : 'TURNS'}
+            </p>
+            {/* Follow whatever the list below is showing. This used to always
+                print manicurist.totalTurns — the LIVE counter for today — so
+                paging back to a past day left the big number on today's total
+                while the services list underneath showed the older day. Katelyn
+                on 2026-08-12: 7 customers listed for that day, 8.5 turns shown,
+                which was that moment's live figure. Her real 8/12 total is 8.0.
+                (Tony, 2026-08-14) */}
+            <p className="font-bebas text-4xl text-gray-900 leading-none">{turnsShown.toFixed(1)}</p>
           </div>
 
           {/* Queue Position */}
@@ -1294,7 +1318,26 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                             </span>
                           )}
                           {entry.services.map((s, i) => {
-                            const isRequested = entry.requestedServices?.includes(s);
+                            // The R normally comes from the per-service list.
+                            // Fall back to the entry-level isRequested flag when
+                            // that list is empty: the multi-service cleanup in
+                            // AppContext (guarding against a past bug that
+                            // synthesised requested_services for EVERY service on
+                            // a split entry) can't tell a synthetic set from a
+                            // genuine one — a client who requests this tech really
+                            // does have all their services requested — so it
+                            // strips real requests too and the R vanished on every
+                            // multi-service request. 7 of today's rows were
+                            // flagged requested with an empty list; all 7
+                            // confirmed genuine (Tony, 2026-08-14). The flag
+                            // survives that cleanup, so it is the reliable signal.
+                            // Safe by construction: one entry is one tech, so if
+                            // the client requested them, every service on it is
+                            // requested.
+                            const hasReqList = (entry.requestedServices?.length ?? 0) > 0;
+                            const isRequested = hasReqList
+                              ? entry.requestedServices!.includes(s)
+                              : !!entry.isRequested;
                             return (
                               <span key={`${s}-${i}`} className="inline-flex items-center gap-1">
                                 <span className="inline-block px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600 font-semibold">
