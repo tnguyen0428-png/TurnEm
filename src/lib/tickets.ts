@@ -2706,19 +2706,22 @@ export async function voidTicket(
   //
   // No lines (the cashier removed every line before voiding) → fall back to
   // the visit prefix, which is the case the prefix-only behaviour existed for.
+  // ONE definition of the scope, shared with the delete: see
+  // completed_service_ids_for_ticket_void in the DB. Scoping to the ticket's
+  // own lines alone is not enough — a row whose id never appears as a line
+  // qid (an add-child, when the line fell back to the bare visit id) would
+  // survive the void still credited to the tech. The function returns
+  // everything on this visit plus this ticket's own lines, minus anything a
+  // different, non-voided ticket claims.
   let scopedIds: string[] = [];
   {
-    const { data: lineRows, error: liErr } = await supabase
-      .from('ticket_items')
-      .select('queue_entry_id')
-      .eq('ticket_id', ticketId);
-    if (liErr) {
-      console.warn('[tickets] voidTicket fetch ticket_items:', liErr.message);
+    const { data: idRows, error: idErr } = await supabase
+      .rpc('completed_service_ids_for_ticket_void', { p_ticket_id: ticketId });
+    if (idErr) {
+      console.warn('[tickets] voidTicket scope rpc:', idErr.message);
     } else {
       scopedIds = Array.from(new Set(
-        ((lineRows ?? []) as Array<{ queue_entry_id: string | null }>)
-          .map((r) => (r.queue_entry_id ?? '').split('#')[0])
-          .filter((id) => id.length > 0),
+        ((idRows ?? []) as unknown as string[]).filter((id) => typeof id === 'string' && id.length > 0),
       ));
     }
   }
