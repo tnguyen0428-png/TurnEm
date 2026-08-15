@@ -20,9 +20,13 @@ interface StaffPortalScreenProps {
 
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
   const { state, dispatch } = useApp();
-  // "Today" on the staff portal is the business day, which rolls over at
-  // 9 AM LA — so late-night services stay visible until the next morning
-  // instead of vanishing at midnight.
+  // "Today" on the staff portal is the business day = the LA calendar day.
+  // An earlier design shifted it back 9 hours so late-night close-out counted
+  // under the day the work was performed, but that was REMOVED on 2026-05-22
+  // because anything done between midnight and 9 AM then showed up under
+  // "yesterday" (see getBusinessDayLA in utils/time.ts). The archive cron runs
+  // 23:59 LA, one minute before the flip, so a finished day is already in
+  // daily_history and staff page back one day to see it.
   const [selectedDate, setSelectedDate] = useState<string>(getBusinessDayLA());
   const [historyEntries, setHistoryEntries] = useState<CompletedEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -37,9 +41,8 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     isDeviceSubscribed().then(setPushSubscribed);
   }, []);
 
-  // Business-day "today" — rolls over at 9 AM LA, not midnight. See
-  // getBusinessDayLA in utils/time.ts. Keeps the day's services on screen
-  // through the closing-time/early-morning window.
+  // Business-day "today" — the LA calendar day, rolling over at midnight.
+  // See getBusinessDayLA in utils/time.ts for why the old 9-hour shift went.
   const todayStr = getBusinessDayLA();
   const isToday = selectedDate === todayStr;
 
@@ -505,9 +508,8 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   }, [pushBusy, pushSubscribed, manicurist.id]);
 
   // Services completed during the current business day by this manicurist.
-  // Filter by business-day (rolls over at 9 AM LA) so services finished at,
-  // say, 11 PM still stay on the list through closing and the early morning,
-  // and don't disappear at midnight.
+  // Filter by business-day (the LA calendar day). A service finished at 11 PM
+  // belongs to that day and moves into history at the 23:59 archive.
   const completedToday = useMemo(() => {
     // In-progress entries (completedAt = null) fall back to startedAt for
     // the business-day check so they appear in today's list while the
