@@ -18,6 +18,96 @@ interface StaffPortalScreenProps {
   onLogout: () => void;
 }
 
+// visit_id = leading UUID of the completed_services / queue_entries id.
+// For non-split entries this equals the id itself; for SPLIT_AND_ASSIGN
+// children it strips the `-mani-N` / `-waiting` / `-add-N` suffix down to
+// the parent.
+function getVisitId(id: string): string {
+  const m = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return m ? m[0] : id;
+}
+
+interface FallbackInput {
+  id: string;
+  /** Bucket this entry shares with its siblings — `${visit}|${staff}`, plus a
+   *  date when the caller spans more than one day. */
+  visitKey: string;
+  priceCents: number | null;
+  voided?: boolean;
+  /** Catalog value of this entry's services, used only to split a shared
+   *  remainder between two unpriced siblings. */
+  catalogCents: number;
+}
+
+/**
+ * Money for entries whose `price_cents` snapshot never got written.
+ *
+ * The only live figure available is the ticket total for `${visit}|${staff}`,
+ * and that is the WRONG GRAIN: it sums every line that tech has on the visit.
+ * Handing it to an unpriced entry double-counts whatever its priced siblings
+ * already contributed — MIA, visit 08b9cd80, 2026-08-16: Polish Change Hand
+ * $20 (priced) + Kid's Pedicure $28 (unpriced) reported as $20 + $48 = $68
+ * against a $48 receipt, and her day read $378 against the blueprint's $358.
+ *
+ * So divide the REMAINDER instead: visit total minus what the priced siblings
+ * already claimed. With one unpriced entry — the ordinary case — it lands on
+ * exactly that entry's own lines. The invariant either way is that the sum
+ * over a (visit, staff) bucket equals the receipt, so the day total can never
+ * drift from the blueprint again.
+ *
+ * Buckets with no ticket at all are left out of the result entirely; the
+ * caller falls through to catalog price for those.
+ */
+function allocateVisitFallbacks(
+  entries: FallbackInput[],
+  visitTotalCents: Map<string, number>,
+): Map<string, number> {
+  const claimed = new Map<string, number>();
+  const pending = new Map<string, FallbackInput[]>();
+
+  for (const e of entries) {
+    // A voided entry reserves nothing. Voiding is how staff RE-DO a row: the
+    // original is voided and a replacement added, both pointing at the one
+    // ticket line. Letting the voided copy claim that line's money starves
+    // the replacement — KELLY, Sharon's $67 Pedi & Mani, 2026-08-15, which
+    // read $0 on a ticket that collected $67.
+    if (e.voided) continue;
+    if (e.priceCents != null) {
+      claimed.set(e.visitKey, (claimed.get(e.visitKey) ?? 0) + e.priceCents);
+      continue;
+    }
+    const list = pending.get(e.visitKey);
+    if (list) list.push(e);
+    else pending.set(e.visitKey, [e]);
+  }
+
+  const out = new Map<string, number>();
+  for (const [key, list] of pending) {
+    const total = visitTotalCents.get(key);
+    if (total == null) continue;
+    const remainder = Math.max(0, total - (claimed.get(key) ?? 0));
+    if (list.length === 1) {
+      out.set(list[0].id, remainder);
+      continue;
+    }
+    // Two or more unpriced siblings share one bucket: split by catalog value
+    // so a $28 pedicure and a $15 polish change don't come out equal. The
+    // last one absorbs the rounding so the bucket still sums to the receipt.
+    const weightTotal = list.reduce((s, e) => s + e.catalogCents, 0);
+    let handedOut = 0;
+    list.forEach((e, i) => {
+      const share = i === list.length - 1
+        ? remainder - handedOut
+        : weightTotal > 0
+          ? Math.round((remainder * e.catalogCents) / weightTotal)
+          : Math.floor(remainder / list.length);
+      out.set(e.id, share);
+      handedOut += share;
+    });
+  }
+  return out;
+}
+
 export default function StaffPortalScreen({ manicurist: initialManicurist, onLogout }: StaffPortalScreenProps) {
   const { state, dispatch } = useApp();
   // "Today" on the staff portal is the business day = the LA calendar day.
@@ -149,40 +239,43 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       }
 
       {
+        // Mirrors entryTotalDollars so the week and the day view can never
+        // disagree: the archived priceCents snapshot is per-entry and is
+        // preferred, and a missing one is filled from the SHARE of the
+        // `${date}|${visit}|${staff}` bucket its priced siblings have not
+        // already claimed. Handing an unpriced entry the whole bucket instead
+        // is what put MIA at $378 against a $358 blueprint on 2026-08-16 —
+        // her priced sibling's $20 got counted twice. See
+        // allocateVisitFallbacks.
+        const mine = (data ?? []).flatMap((row) =>
+          ((row as { date: string; entries: CompletedEntry[] }).entries ?? [])
+            .filter((e) => e.manicuristId === initialManicurist.id)
+            .map((e) => ({ date: (row as { date: string }).date, entry: e })),
+        );
+        const fallbacks = allocateVisitFallbacks(
+          mine.map(({ date, entry }) => ({
+            id: `${date}|${entry.id}`,
+            visitKey: `${date}|${getVisitId(entry.id)}|${entry.manicuristId}`,
+            priceCents: entry.priceCents ?? null,
+            voided: entry.voided,
+            catalogCents: Math.round(archivedEntryDollars(entry) * 100),
+          })),
+          amounts,
+        );
+
         const byDate = new Map<string, { services: number; dollars: number; turns: number }>();
-        for (const row of (data ?? []) as Array<{ date: string; entries: CompletedEntry[] }>) {
-          let services = 0;
-          let dollars = 0;
-          let turns = 0;
-          // Mirrors entryTotalDollars so the week and the day view can never
-          // disagree: the archived priceCents snapshot is per-entry and is
-          // preferred. The ticket map is keyed `${date}|${visit}|${staff}` and
-          // sums EVERY line that tech has on the visit, so it is only used
-          // when a snapshot is missing — and then only once per visit, or a
-          // tech with two entries on one visit would have that visit's money
-          // counted twice (mani-9 on 2026-08-12, mani-3 on 2026-08-13).
-          const countedVisits = new Set<string>();
-          for (const e of row.entries ?? []) {
-            if (e.manicuristId !== initialManicurist.id) continue;
-            if (e.voided) continue;
-            services += e.services?.length || 1;
-            turns += Number(e.turnValue) || 0;
-            if (e.priceCents != null) {
-              dollars += e.priceCents / 100;
-              continue;
-            }
-            const key = `${row.date}|${getVisitId(e.id)}|${e.manicuristId}`;
-            const fromTicket = amounts.get(key);
-            if (typeof fromTicket === 'number') {
-              if (!countedVisits.has(key)) {
-                dollars += fromTicket / 100;
-                countedVisits.add(key);
-              }
-            } else {
-              dollars += archivedEntryDollars(e);
-            }
+        for (const { date, entry: e } of mine) {
+          if (e.voided) continue;
+          const hit = byDate.get(date) ?? { services: 0, dollars: 0, turns: 0 };
+          hit.services += e.services?.length || 1;
+          hit.turns += Number(e.turnValue) || 0;
+          if (e.priceCents != null) {
+            hit.dollars += e.priceCents / 100;
+          } else {
+            const share = fallbacks.get(`${date}|${e.id}`);
+            hit.dollars += typeof share === 'number' ? share / 100 : archivedEntryDollars(e);
           }
-          byDate.set(row.date, { services, dollars, turns });
+          byDate.set(date, hit);
         }
         setWeekRows(days.map((date) => {
           if (date === todayStr) {
@@ -568,13 +661,31 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     return m;
   }, [state.salonServices]);
 
-  // visit_id = leading UUID of the completed_services / queue_entries id.
-  // For non-split entries this equals the id itself; for SPLIT_AND_ASSIGN
-  // children it strips the `-mani-N` / `-waiting` suffix down to the parent.
-  function getVisitId(id: string): string {
-    const m = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-    return m ? m[0] : id;
-  }
+  // Catalog value of an entry's services, in cents.
+  const catalogCents = useCallback((entry: CompletedEntry): number => {
+    return (entry.services ?? []).reduce(
+      (sum, name) => sum + Math.round((priceByService.get(name) ?? 0) * 100),
+      0,
+    );
+  }, [priceByService]);
+
+  // Fallback amounts for the day currently on screen, for the entries whose
+  // price_cents snapshot is missing. See allocateVisitFallbacks: the ticket
+  // map is per (visit, staff), so it can only be divided among siblings, never
+  // handed to each of them.
+  const dayFallbackCents = useMemo(() => {
+    const entries = isToday ? completedToday : historyEntries;
+    return allocateVisitFallbacks(
+      entries.map((e) => ({
+        id: e.id,
+        visitKey: `${getVisitId(e.id)}|${e.manicuristId}`,
+        priceCents: e.priceCents ?? null,
+        voided: e.voided,
+        catalogCents: catalogCents(e),
+      })),
+      ticketAmountMap,
+    );
+  }, [isToday, completedToday, historyEntries, ticketAmountMap, catalogCents]);
 
   function entryTotalDollars(entry: CompletedEntry): number {
     // price_cents IS the receipt amount, at the right grain: the close/insert
@@ -593,11 +704,11 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     // properly instead, by trg_price_completed_service_on_insert, which prices
     // a row that lands after its ticket closed.
     if (entry.priceCents != null) return entry.priceCents / 100;
-    // Fallback while a ticket is still open (no snapshot written yet). Coarse
-    // for a multi-entry visit, but it is the only live figure available and
-    // the snapshot replaces it the moment the ticket closes.
-    const visitId = getVisitId(entry.id);
-    const fromTicket = ticketAmountMap.get(`${visitId}|${entry.manicuristId}`);
+    // Fallback while a ticket is still open (no snapshot written yet), or for
+    // a row the pricing triggers structurally cannot reach. The ticket map is
+    // per (visit, staff), so what this entry gets is the share of that bucket
+    // its priced siblings have NOT already claimed — see allocateVisitFallbacks.
+    const fromTicket = dayFallbackCents.get(entry.id);
     if (typeof fromTicket === 'number') return fromTicket / 100;
     // Last resort: catalog price sum, for in-progress entries with no ticket
     // line yet and legacy rows from before price_cents existed.
