@@ -206,7 +206,9 @@ export default function ManicuristSalesReport() {
                       {r.staffName}
                     </button>
                     <span className="font-mono text-sm text-gray-700 text-right">{r.serviceCount}</span>
-                    <span className="font-mono text-sm font-bold text-gray-900 text-right">
+                    {/* Same size as the day total below it, so the per-staff
+                        figure and the per-day figures read as one scale. */}
+                    <span className="font-mono text-lg font-bold text-gray-900 text-right">
                       {formatMoney(r.grossCents)}
                     </span>
                     <button
