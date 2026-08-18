@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 /**
- * Nightly History Save — runs daily at 21:00 America/Los_Angeles (via pg_cron).
+ * Nightly History Save — runs daily at 23:30 America/Los_Angeles (via pg_cron).
  *
  * Reads all rows from completed_services whose completed_at falls on today's
  * date in the America/Los_Angeles timezone, maps them to the CompletedEntry
@@ -11,19 +11,19 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
  *
  * After archival, prunes:
  *   1. completed_services rows whose completed_at is older than
- *      COMPLETED_RETENTION_DAYS (10) days — keeps the live service list lean.
+ *      COMPLETED_RETENTION_DAYS (30) days — keeps the live service list lean.
  *   2. daily_history rows whose date is older than HISTORY_RETENTION_DAYS
- *      (10) days — ages out the archive so it doesn't grow forever.
+ *      (30) days — ages out the archive so it does not grow forever.
  *
  * Today's rows in completed_services are NOT cleared — the manual "clear" via
  * the UI is still the intended flow for end-of-day reset.
  */
 
 /** How many days of completed_services rows to retain before nightly purge. */
-const COMPLETED_RETENTION_DAYS = 10;
+const COMPLETED_RETENTION_DAYS = 30;
 
 /** How many days of daily_history rows to retain before nightly purge. */
-const HISTORY_RETENTION_DAYS = 10;
+const HISTORY_RETENTION_DAYS = 30;
 
 // MUST stay in sync with mapDbCompleted() in src/state/AppContext.tsx. This
 // archive is one of the LAST writers each night (the merge below lets fresh
