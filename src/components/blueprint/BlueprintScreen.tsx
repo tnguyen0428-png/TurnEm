@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Users, Shield, Sparkles, Scale, CalendarDays, UsersRound,
   Clock3, ChevronRight, GripVertical, KeyRound, Lock, X,
-  DollarSign, UserCheck, Gift, UserPlus,
+  DollarSign, UserCheck, Gift, UserPlus, BellRing,
 } from 'lucide-react';
 import SalesReport from './SalesReport';
 import StaffReport from './StaffReport';
 import GiftCertificatesReport from './GiftCertificatesReport';
 import CustomersScreen from './CustomersScreen';
+import OwnerAlertsScreen from './OwnerAlertsScreen';
 import { supabase } from '../../lib/supabase';
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
@@ -37,7 +38,8 @@ type BlueprintSection =
   | 'reports-sales'
   | 'reports-staff'
   | 'reports-gift-certs'
-  | 'customers';
+  | 'customers'
+  | 'owner-alerts';
 
 interface NavItem {
   id: BlueprintSection;
@@ -73,6 +75,12 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     heading: 'CUSTOMERS',
     items: [
       { id: 'customers', label: 'Customer Profiles', icon: UserPlus, description: 'Search and edit customer info, history, notes' },
+    ],
+  },
+  {
+    heading: 'NOTIFICATIONS',
+    items: [
+      { id: 'owner-alerts', label: 'Owner Alerts', icon: BellRing, description: 'Nightly report + shift-close sales to this device' },
     ],
   },
   {
@@ -392,7 +400,7 @@ export default function BlueprintScreen() {
 
   const visibleNavGroups = useMemo(() => {
     if (accessTier === 'admin') return NAV_GROUPS;
-    if (accessTier === 'receptionist') return NAV_GROUPS.filter((g) => g.heading === 'CUSTOMERS');
+    if (accessTier === 'receptionist') return NAV_GROUPS.filter((g) => g.heading === 'CUSTOMERS' || g.heading === 'NOTIFICATIONS');
     return [];
   }, [accessTier]);
 
@@ -444,6 +452,7 @@ export default function BlueprintScreen() {
       case 'reports-staff':        return <StaffReport />;
       case 'reports-gift-certs':   return <GiftCertificatesReport />;
       case 'customers':            return <CustomersScreen />;
+      case 'owner-alerts':         return <OwnerAlertsScreen />;
       default: return null;
     }
   }

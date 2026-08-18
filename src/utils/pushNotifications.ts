@@ -222,3 +222,66 @@ export async function sendPushNotification(
     return { success: false, error: 'Network error sending push notification' };
   }
 }
+
+// ─── Owner alerts ─────────────────────────────────────────────────────────
+//
+// The nightly reconciliation report and the shift-close sales summary are sent
+// to a SYNTHETIC push id rather than a manicurists row, so the owner never
+// appears on the board or in the turn rotation. Server side, the recipients
+// live in public.report_push_recipients.
+//
+// These deliberately do NOT reuse unsubscribeFromPush(): that revokes the
+// browser subscription and deletes every row for the endpoint, which would
+// also silence the staff service alerts of whoever is logged in on the same
+// device. Owner alerts are one extra row against the same endpoint, added and
+// removed on their own.
+export const OWNER_PUSH_ID = 'owner-tony';
+
+/** Is this device receiving owner alerts? */
+export async function isOwnerAlertsOn(): Promise<boolean> {
+  if (!isPushSupported()) return false;
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) return false;
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return false;
+    const { data, error } = await supabase
+      .from('push_subscriptions')
+      .select('manicurist_id')
+      .eq('endpoint', subscription.endpoint)
+      .eq('manicurist_id', OWNER_PUSH_ID)
+      .maybeSingle();
+    if (error) return false;
+    return !!data;
+  } catch {
+    return false;
+  }
+}
+
+/** Start sending owner alerts to this device. */
+export async function enableOwnerAlerts(): Promise<{ ok: boolean; error?: string }> {
+  return subscribeForPush(OWNER_PUSH_ID);
+}
+
+/**
+ * Stop owner alerts on this device WITHOUT touching the browser subscription,
+ * so any staff alerts bound to the same endpoint keep working.
+ */
+export async function disableOwnerAlerts(): Promise<{ ok: boolean; error?: string }> {
+  if (!isPushSupported()) return { ok: true };
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) return { ok: true };
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return { ok: true };
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .delete()
+      .eq('endpoint', subscription.endpoint)
+      .eq('manicurist_id', OWNER_PUSH_ID);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
