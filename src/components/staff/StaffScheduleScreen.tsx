@@ -52,7 +52,10 @@ function WeeklyTab() {
         {state.manicurists.map((m, idx) => (
           <div
             key={m.id}
-            className={`grid items-stretch transition-colors hover:bg-pink-50 ${idx < state.manicurists.length - 1 ? 'border-b border-gray-50' : ''}`}
+            // Striping + a press state: hover never fires on a touchscreen, so
+            // on the iPads this row was the hardest to track across seven day
+            // columns with nothing highlighting it.
+            className={`grid items-stretch transition-colors ${idx % 2 === 1 ? 'bg-gray-50' : 'bg-white'} hover:bg-pink-50 active:bg-pink-100 ${idx < state.manicurists.length - 1 ? 'border-b border-gray-50' : ''}`}
             style={{ gridTemplateColumns: '200px repeat(7, 1fr) 90px' }}
           >
             <div className="px-4 py-3 flex items-center gap-2.5">
@@ -225,7 +228,7 @@ function TimeOffTab() {
                   {list.map((t, idx) => (
                     <div
                       key={t.id}
-                      className={`px-4 py-3 flex items-center justify-between transition-colors hover:bg-pink-50 ${idx < list.length - 1 ? 'border-b border-gray-50' : ''}`}
+                      className={`px-4 py-3 flex items-center justify-between transition-colors ${idx % 2 === 1 ? 'bg-gray-50' : 'bg-white'} hover:bg-pink-50 active:bg-pink-100 ${idx < list.length - 1 ? 'border-b border-gray-50' : ''}`}
                     >
                       <div>
                         <div className="font-mono text-xs font-semibold text-gray-700">

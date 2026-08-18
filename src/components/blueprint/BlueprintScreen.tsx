@@ -95,10 +95,11 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
 
 // ─── Staff Group — sortable role table ────────────────────────────────────────
 function SortableStaffRow({
-  manicurist, isLast, onToggleBook, onToggleReceptionist,
+  manicurist, isLast, isOdd, onToggleBook, onToggleReceptionist,
 }: {
   manicurist: Manicurist;
   isLast: boolean;
+  isOdd: boolean;
   onToggleBook: (val: boolean) => void;
   onToggleReceptionist: (val: boolean) => void;
 }) {
@@ -109,7 +110,9 @@ function SortableStaffRow({
   return (
     <div
       ref={setNodeRef}
-      className={`grid items-center transition-colors ${!isLast ? 'border-b border-gray-50' : ''} ${isDragging ? '' : 'bg-white hover:bg-pink-50'}`}
+      // Striping + a press state: hover never fires on a touchscreen, so on the
+      // iPads a hover-only highlight gives nothing to follow while scrolling.
+      className={`grid items-center transition-colors ${!isLast ? 'border-b border-gray-50' : ''} ${isDragging ? '' : `${isOdd ? 'bg-gray-50' : 'bg-white'} hover:bg-pink-50 active:bg-pink-100`}`}
       style={{
         gridTemplateColumns: '1fr 130px 150px',
         transform: CSS.Transform.toString(transform),
@@ -199,6 +202,7 @@ function StaffGroupScreen() {
                 key={m.id}
                 manicurist={m}
                 isLast={idx === state.manicurists.length - 1}
+                isOdd={idx % 2 === 1}
                 onToggleBook={(val) => dispatch({ type: 'UPDATE_MANICURIST', id: m.id, updates: { showInBook: val } })}
                 onToggleReceptionist={(val) => dispatch({ type: 'UPDATE_MANICURIST', id: m.id, updates: { isReceptionist: val } })}
               />
