@@ -383,6 +383,7 @@ export default function RegisterScreen() {
           receptionists={receptionists}
           onClose={() => setShowOpenShift(false)}
           onOpened={() => { setShowOpenShift(false); void refreshShift(); }}
+          onClockIn={(id) => dispatch({ type: 'CLOCK_IN', id })}
         />
       )}
       {showCloseShift && shift && (
