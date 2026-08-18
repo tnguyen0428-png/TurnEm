@@ -198,7 +198,7 @@ export default function ManicuristSalesReport() {
                     <button
                       type="button"
                       onClick={() => setExpandedKey(expanded ? null : k)}
-                      className="font-mono text-sm font-semibold text-gray-900 truncate flex items-center gap-1.5 text-left hover:text-pink-700"
+                      className="font-mono text-lg font-semibold text-gray-900 truncate flex items-center gap-1.5 text-left hover:text-pink-700"
                     >
                       {expanded
                         ? <ChevronDown size={14} className="text-gray-400" />
