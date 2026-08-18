@@ -35,12 +35,12 @@ export default function CustomerNoteAlert({
       onClick={onDismiss}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in border-2 border-amber-300"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-modal-in border-2 border-amber-300"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 mb-3">
-          <StickyNote size={18} className="text-amber-500 flex-shrink-0" />
-          <p className="font-mono text-[11px] font-bold tracking-wider text-amber-700 uppercase">
+          <StickyNote size={22} className="text-amber-500 flex-shrink-0" />
+          <p className="font-mono text-sm font-bold tracking-wider text-amber-700 uppercase">
             Note on file — {name}
           </p>
         </div>
@@ -48,11 +48,11 @@ export default function CustomerNoteAlert({
           {permanent.length > 0 && (
             <div>
               {showLabels && (
-                <p className="font-mono text-[10px] font-bold tracking-wider text-amber-600 uppercase mb-1">
+                <p className="font-mono text-xs font-bold tracking-wider text-amber-600 uppercase mb-1">
                   Permanent note
                 </p>
               )}
-              <p className="text-gray-800 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+              <p className="text-gray-800 font-mono text-xl leading-relaxed whitespace-pre-wrap">
                 {permanent}
               </p>
             </div>
@@ -60,11 +60,11 @@ export default function CustomerNoteAlert({
           {appointment.length > 0 && (
             <div>
               {showLabels && (
-                <p className="font-mono text-[10px] font-bold tracking-wider text-amber-600 uppercase mb-1">
+                <p className="font-mono text-xs font-bold tracking-wider text-amber-600 uppercase mb-1">
                   This appointment
                 </p>
               )}
-              <p className="text-gray-800 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+              <p className="text-gray-800 font-mono text-xl leading-relaxed whitespace-pre-wrap">
                 {appointment}
               </p>
             </div>
@@ -73,7 +73,7 @@ export default function CustomerNoteAlert({
         <div className="flex justify-end">
           <button
             onClick={onDismiss}
-            className="px-4 py-2 rounded-lg text-sm font-mono font-semibold text-white bg-amber-500 hover:bg-amber-600 transition-colors"
+            className="px-5 py-2.5 rounded-lg text-base font-mono font-semibold text-white bg-amber-500 hover:bg-amber-600 transition-colors"
           >
             Got it
           </button>
