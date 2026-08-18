@@ -490,7 +490,7 @@ export default function ReceptionistHoursReport() {
               <button
                 key={t.staffId}
                 onClick={() => setDetail({ staffId: t.staffId, name: t.name })}
-                className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors hover:bg-pink-100 ${
+                className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors hover:bg-pink-100 active:bg-pink-100 ${
                   idx % 2 === 1 ? 'bg-gray-50' : 'bg-white'
                 }`}
               >
@@ -556,7 +556,7 @@ export default function ReceptionistHoursReport() {
                   return (
                     <div
                       key={shiftKey(s)}
-                      className={`grid grid-cols-[1fr_120px_120px_80px_80px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
+                      className={`grid grid-cols-[1fr_120px_120px_80px_80px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 active:bg-pink-100 ${
                         idx % 2 === 1 ? 'bg-gray-50' : ''
                       }`}
                     >

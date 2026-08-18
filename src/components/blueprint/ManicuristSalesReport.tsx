@@ -188,7 +188,10 @@ export default function ManicuristSalesReport() {
               return (
                 <div key={k} className="border-b border-gray-50 last:border-b-0">
                   <div
-                    className={`w-full grid grid-cols-[1fr_120px_140px_36px] gap-2 px-4 py-2.5 items-center transition-colors ${
+                    // The row itself had no background reaction at all: only the
+                    // name button inside it lit up (hover:text-pink-700), so the
+                    // line you are actually reading across never highlighted.
+                    className={`w-full grid grid-cols-[1fr_120px_140px_36px] gap-2 px-4 py-2.5 items-center transition-colors hover:bg-pink-50 active:bg-pink-100 ${
                       zebra ? 'bg-gray-50' : 'bg-white'
                     }`}
                   >
@@ -237,7 +240,7 @@ export default function ManicuristSalesReport() {
                             {day.lines.map((line, idx) => (
                               <div
                                 key={`${line.ticketId}:${idx}`}
-                                className={`grid grid-cols-[70px_1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-50 items-center transition-colors hover:bg-pink-100 ${
+                                className={`grid grid-cols-[70px_1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-50 items-center transition-colors hover:bg-pink-100 active:bg-pink-100 ${
                                   idx % 2 === 1 ? 'bg-gray-50' : ''
                                 }`}
                               >
