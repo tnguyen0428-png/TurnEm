@@ -252,11 +252,15 @@ export default function ManicuristSalesReport() {
                                 </span>
                               </div>
                             ))}
-                            <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50">
-                              <span className="font-mono text-[10px] tracking-wider font-semibold text-gray-500 uppercase">
+                            {/* The day total is the number this report exists to
+                                answer, so it is set apart from the line rows:
+                                pink and noticeably larger rather than the same
+                                12px gray as every price above it. */}
+                            <div className="flex items-center justify-between px-3 py-2 bg-pink-50 border-t border-pink-100">
+                              <span className="font-mono text-[11px] tracking-wider font-semibold text-pink-600 uppercase">
                                 Day total ({day.lines.length})
                               </span>
-                              <span className="font-mono text-xs font-bold text-gray-900">
+                              <span className="font-mono text-lg font-bold text-pink-600">
                                 {formatMoney(day.subtotalCents)}
                               </span>
                             </div>
