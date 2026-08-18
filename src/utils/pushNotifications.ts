@@ -285,3 +285,38 @@ export async function disableOwnerAlerts(): Promise<{ ok: boolean; error?: strin
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+
+/**
+ * Send one owner-level notification to every active recipient in
+ * report_push_recipients. Fire-and-forget: never throws, and the caller is not
+ * expected to await it before doing anything that matters.
+ */
+export async function pushToOwners(title: string, body: string): Promise<number> {
+  try {
+    const { data, error } = await supabase
+      .from('report_push_recipients')
+      .select('push_id')
+      .eq('active', true);
+    if (error || !data?.length) return 0;
+
+    let sent = 0;
+    for (const row of data as { push_id: string }[]) {
+      try {
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ manicuristId: row.push_id, title, body }),
+        });
+        if (res.ok) sent++;
+      } catch {
+        // one bad recipient must not stop the rest
+      }
+    }
+    return sent;
+  } catch {
+    return 0;
+  }
+}

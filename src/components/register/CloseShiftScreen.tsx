@@ -9,6 +9,7 @@ import {
   saveShiftDraft,
   type ShiftBalanceLine,
 } from '../../lib/shifts';
+import { pushToOwners } from '../../utils/pushNotifications';
 import {
   formatMoneyCents,
   fetchTicketsForDate,
@@ -171,6 +172,24 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
       setStep('main');
       return;
     }
+
+    // Owner notification for the drawer just closed. Built from the totals
+    // already on this screen rather than from a server call: shift_sales_summary
+    // is SECURITY DEFINER, so calling it with the public anon key would expose
+    // salon takings to anyone holding that key. Fire-and-forget, and
+    // deliberately not awaited — a failed notification must never leave a
+    // closed drawer looking like it did not close.
+    const varianceCents = declaredCents - expectedCashCents;
+    const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+    void pushToOwners(
+      `Shift closed ${shift.businessDate} - drawer ${shift.drawerNumber}`,
+      `${usd(breakdown.totalReceipts)} receipts, ${usd(breakdown.services)} services, ` +
+        `tips ${usd(breakdown.tips)}. ` +
+        (varianceCents === 0
+          ? 'Cash balanced.'
+          : `Cash ${varianceCents > 0 ? 'over' : 'short'} ${usd(Math.abs(varianceCents))}.`),
+    );
+
     onClosed();
   }
 
