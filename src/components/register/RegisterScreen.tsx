@@ -11,6 +11,9 @@ import {
   createTicketAtCheckin,
   reconcileMissingTicketsForDate,
   mergeOpenTicketsByClient,
+  fetchUnbilledDroppedLines,
+  resolveDroppedLine,
+  type DroppedLine,
 } from '../../lib/tickets';
 import { fetchShiftsForDate } from '../../lib/shifts';
 import { getTodayLA, getLocalDateStr } from '../../utils/time';
@@ -59,6 +62,16 @@ export default function RegisterScreen() {
   }, [dateLA]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Work the guards threw away: a service performed after its ticket was
+  // settled never reaches ticket_items, and the insert returns 200 anyway. The
+  // database now records each drop, so the cashier finds out on the day instead
+  // of the owner finding out from a reconciler three days later.
+  const [droppedLines, setDroppedLines] = useState<DroppedLine[]>([]);
+  const refreshDropped = useCallback(async () => {
+    setDroppedLines(await fetchUnbilledDroppedLines(dateLA));
+  }, [dateLA]);
+  useEffect(() => { void refreshDropped(); }, [refreshDropped, tickets]);
 
   // Realtime: any insert / update / delete on tickets, ticket_items, or
   // payments for any ticket on this business date should trigger a refetch
@@ -321,6 +334,38 @@ export default function RegisterScreen() {
             </button>
           </div>
         </div>
+
+        {droppedLines.length > 0 && (
+          <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 flex flex-col gap-2">
+            <div className="flex items-center gap-2 font-mono text-sm font-bold text-red-700">
+              <Lock size={16} />
+              {droppedLines.length === 1
+                ? '1 SERVICE PERFORMED AFTER CLOSE — NOT BILLED'
+                : `${droppedLines.length} SERVICES PERFORMED AFTER CLOSE — NOT BILLED`}
+            </div>
+            {droppedLines.map((d) => {
+              const t = tickets.find((x) => x.ticketNumber === d.ticketNumber);
+              return (
+                <div key={d.id} className="flex flex-wrap items-center gap-2 font-mono text-xs text-red-800">
+                  <span className="font-bold">#{d.ticketNumber ?? '?'}</span>
+                  {t && <span>{t.clientName}</span>}
+                  <span className="text-red-600">·</span>
+                  <span>{d.manicuristName ?? 'unknown staff'}</span>
+                  <span className="text-red-600">·</span>
+                  <span>{d.service ?? 'service'}</span>
+                  {d.priceCents != null && <span className="font-bold">{formatMoneyCents(d.priceCents)}</span>}
+                  <span className="text-red-600">— the ticket was already {d.ticketStatus ?? 'closed'}</span>
+                  <button
+                    onClick={async () => { if (await resolveDroppedLine(d.id)) void refreshDropped(); }}
+                    className="ml-auto px-2.5 py-1 rounded-lg border border-red-400 text-red-700 hover:bg-red-100 font-mono text-[11px] font-bold"
+                  >
+                    MARK HANDLED
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <Section
           title="OPEN TICKETS"

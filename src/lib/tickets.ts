@@ -3314,3 +3314,68 @@ export async function cleanupDuplicateLinesForEntry(
   return toDelete.length;
 }
 
+
+// ─── Dropped ticket lines ───────────────────────────────────────────────────
+//
+// Three BEFORE INSERT guards on ticket_items cancel a row and return NULL, so
+// PostgREST answers 200 and the app never learns the line is gone. That is how
+// LEO's $55.00 Gel Pedicure vanished from Penny's ticket on 08/18 while her
+// $55.00 cash was accepted. The guards now record every drop in
+// ticket_line_drop_log; these read it back so the register can say so out loud.
+
+export type DroppedLine = {
+  id: number;
+  droppedAt: number;
+  ticketId: string | null;
+  ticketNumber: number | null;
+  ticketStatus: string | null;
+  service: string | null;
+  manicuristName: string | null;
+  priceCents: number | null;
+};
+
+/**
+ * Work performed after its ticket was settled, still unbilled, for one business
+ * date. Filtered to the closed-ticket guards — `-add-` qid drops are structural
+ * (TicketModal owns those lines) and are not a loss.
+ */
+export async function fetchUnbilledDroppedLines(dateLA: string): Promise<DroppedLine[]> {
+  const { data, error } = await supabase
+    .from('ticket_line_drop_log')
+    .select('id, dropped_at, ticket_id, ticket_number, ticket_status, service, manicurist_name, unit_price_cents')
+    .eq('business_date', dateLA)
+    .eq('resolved', false)
+    .like('source', 'closed%')
+    .order('dropped_at', { ascending: true });
+  if (error) {
+    console.warn('[tickets] fetchUnbilledDroppedLines:', error.message);
+    return [];
+  }
+  return ((data ?? []) as Array<{
+    id: number; dropped_at: string; ticket_id: string | null; ticket_number: number | null;
+    ticket_status: string | null; service: string | null; manicurist_name: string | null;
+    unit_price_cents: number | null;
+  }>).map((r) => ({
+    id: r.id,
+    droppedAt: new Date(r.dropped_at).getTime(),
+    ticketId: r.ticket_id,
+    ticketNumber: r.ticket_number,
+    ticketStatus: r.ticket_status,
+    service: r.service,
+    manicuristName: r.manicurist_name,
+    priceCents: r.unit_price_cents,
+  }));
+}
+
+/** Mark one dropped line as dealt with, so it leaves the register banner. */
+export async function resolveDroppedLine(id: number): Promise<boolean> {
+  const { error } = await supabase
+    .from('ticket_line_drop_log')
+    .update({ resolved: true, resolved_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) {
+    console.warn('[tickets] resolveDroppedLine:', error.message);
+    return false;
+  }
+  return true;
+}
