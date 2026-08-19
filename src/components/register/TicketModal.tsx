@@ -389,7 +389,7 @@ export default function TicketModal({
   // client — otherwise we'd clobber their existing work pointer. We treat
   // "already busy with the same visit's primary OR add-child" as fine to
   // overwrite/extend.
-  function ensureManicuristBusyForAddedLine(line: DraftLine) {
+  function ensureManicuristBusyForAddedLine(line: DraftLine, idx: number) {
     if (line.kind !== 'service') return;
     if (line.existingId) return;
     if (!line.staff1Id) return;
@@ -429,6 +429,40 @@ export default function TicketModal({
       q.assignedManicuristId === line.staff1Id &&
       getVisitId(q.parentQueueId ?? q.id) === visitId
     );
+
+    // `reusable` can only see the LIVE queue. Once the tech presses DONE their
+    // entry leaves the queue for `completed`, so a cashier adding that same
+    // service afterwards finds nothing to reuse and mints an `-add-` child for
+    // work the board already recorded. DANNY on Brandy's ticket #32 (08/16)
+    // ended up with a second "Kid's Gel Mani" row beside the one he had
+    // finished; KIM and LY have the same shape on other visits.
+    //
+    // A duplicate row is not just untidy: it claims a second turn, and it can
+    // put the tech back on BUSY for work that is already done — on a ticket
+    // that is already closed there is no later close to clear it.
+    //
+    // So tie the line to the completed entry instead of inventing a sibling.
+    // That is also what prices it correctly: price_completed_service_on_insert
+    // matches a ticket line whose queue_entry_id IS the completed row's id.
+    const completedMatch = reusable
+      ? undefined
+      : state.completed.find((c) =>
+          c.manicuristId === line.staff1Id &&
+          !c.voided &&
+          getVisitId(c.id) === getVisitId(visitId) &&
+          c.services.includes(svcName as ServiceType),
+        );
+    if (completedMatch) {
+      if (line.queueEntryId !== completedMatch.id) {
+        setLines((prev) => prev.map((l, i) => (
+          i === idx ? { ...l, queueEntryId: completedMatch.id } : l
+        )));
+      }
+      // No card change: this tech finished this service already. Flipping them
+      // back to busy would take them out of the rotation for work they have
+      // completed.
+      return;
+    }
 
     const isAlreadyOnThisVisit =
       !target.currentClient ||
@@ -609,7 +643,7 @@ export default function TicketModal({
           }
         }
       }
-      ensureManicuristBusyForAddedLine({ ...before, ...patch });
+      ensureManicuristBusyForAddedLine({ ...before, ...patch }, idx);
     }
   }
   function removeLine(idx: number) {
