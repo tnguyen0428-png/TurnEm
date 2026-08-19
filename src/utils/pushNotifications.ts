@@ -287,36 +287,63 @@ export async function disableOwnerAlerts(): Promise<{ ok: boolean; error?: strin
 }
 
 /**
- * Send one owner-level notification to every active recipient in
- * report_push_recipients. Fire-and-forget: never throws, and the caller is not
- * expected to await it before doing anything that matters.
+ * The push ids that should receive owner-level alerts.
+ *
+ * report_push_recipients is the source of truth, but this read runs in the
+ * browser under the anon key, so an RLS gap on that table returns an empty list
+ * rather than an error -- which once turned the shift-close alert into a silent
+ * no-op for days. When the list cannot be read, or comes back empty, fall back
+ * to the owner id so a database-side problem costs at most the extra
+ * recipients, never the alert itself.
  */
-export async function pushToOwners(title: string, body: string): Promise<number> {
+async function ownerPushIds(): Promise<string[]> {
   try {
     const { data, error } = await supabase
       .from('report_push_recipients')
       .select('push_id')
       .eq('active', true);
-    if (error || !data?.length) return 0;
-
-    let sent = 0;
-    for (const row of data as { push_id: string }[]) {
-      try {
-        const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ manicuristId: row.push_id, title, body }),
-        });
-        if (res.ok) sent++;
-      } catch {
-        // one bad recipient must not stop the rest
-      }
+    if (error) {
+      console.warn('[push] recipient list unreadable, falling back to owner:', error.message);
+      return [OWNER_PUSH_ID];
     }
-    return sent;
-  } catch {
-    return 0;
+    const ids = ((data ?? []) as { push_id: string }[])
+      .map((r) => r.push_id)
+      .filter(Boolean);
+    if (!ids.length) {
+      console.warn('[push] recipient list empty, falling back to owner');
+      return [OWNER_PUSH_ID];
+    }
+    return ids;
+  } catch (err) {
+    console.warn('[push] recipient lookup threw, falling back to owner:', err);
+    return [OWNER_PUSH_ID];
   }
+}
+
+/**
+ * Send one owner-level notification to every active recipient in
+ * report_push_recipients. Fire-and-forget: never throws, and the caller is not
+ * expected to await it before doing anything that matters.
+ */
+export async function pushToOwners(title: string, body: string): Promise<number> {
+  const ids = await ownerPushIds();
+  let sent = 0;
+  for (const pushId of ids) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ manicuristId: pushId, title, body }),
+      });
+      if (res.ok) sent++;
+      else console.warn(`[push] send-push ${res.status} for ${pushId}`);
+    } catch (err) {
+      // one bad recipient must not stop the rest
+      console.warn(`[push] send failed for ${pushId}:`, err);
+    }
+  }
+  return sent;
 }
