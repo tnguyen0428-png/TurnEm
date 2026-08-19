@@ -66,6 +66,11 @@ interface DraftLine {
   staff2Name: string;
   staff2Color: string;
   priceInput: string;       // free-text dollar input
+  // True once the cashier types in the price box. Swapping the service then
+  // asks before replacing the number instead of silently re-stamping the
+  // catalog price over it — that is how MIA's $45 on ticket #95 (08/15) became
+  // $40 while the $45 payment went through unchallenged.
+  priceEdited?: boolean;
   discountInput: string;    // free-text dollar input (discount per line)
   quantity: number;
   kind: 'service' | 'retail' | 'discount' | 'gift_card_sale';
@@ -2317,10 +2322,35 @@ export default function TicketModal({
                                 onChange={(e) => {
                                   const svc = sortedServices.find((s) => s.id === e.target.value);
                                   if (!svc) return;
+                                  // A hand-set price is the cashier's decision and must not be
+                                  // overwritten by a service swap. "Hand-set" means either edited
+                                  // in this modal session, or already stored at something other
+                                  // than the catalog price of the line's current service (an edit
+                                  // from an earlier session, which `priceEdited` can't remember).
+                                  const catalogNow = sortedServices.find(
+                                    (s) => s.id === line.serviceId || s.name === line.name,
+                                  );
+                                  const currentCents = parseDollarsToCents(line.priceInput);
+                                  const custom =
+                                    line.priceEdited === true ||
+                                    (catalogNow != null &&
+                                      currentCents !== Math.round(catalogNow.price * 100));
+                                  const newCents = Math.round(svc.price * 100);
+                                  const replacePrice =
+                                    !custom ||
+                                    currentCents === newCents ||
+                                    window.confirm(
+                                      `This line's price is ${formatMoneyCents(currentCents)}, not the ` +
+                                        `catalog price. Replace it with the ${svc.name} price of ` +
+                                        `${formatMoneyCents(newCents)}?\n\n` +
+                                        `Cancel keeps ${formatMoneyCents(currentCents)}.`,
+                                    );
                                   updateLine(idx, {
                                     serviceId: svc.id,
                                     name: svc.name,
-                                    priceInput: svc.price.toFixed(2),
+                                    ...(replacePrice
+                                      ? { priceInput: svc.price.toFixed(2), priceEdited: false }
+                                      : {}),
                                   });
                                 }}
                                 disabled={!canEdit}
@@ -2361,7 +2391,7 @@ export default function TicketModal({
                           </select>
                           <input
                             type="text" inputMode="decimal" value={line.priceInput}
-                            onChange={(e) => updateLine(idx, { priceInput: e.target.value })}
+                            onChange={(e) => updateLine(idx, { priceInput: e.target.value, priceEdited: true })}
                             onBlur={(e) => updateLine(idx, { priceInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
                             disabled={!canEdit}
                             className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-right focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
@@ -2728,6 +2758,20 @@ canEdit && (
                   // Persist items/header via doSave, then for closed tickets
                   // also replace the payments table so method/amount edits
                   // (e.g. gift → card) actually stick.
+                  //
+                  // A closed ticket is settled: what was collected has to equal
+                  // what the ticket says it is owed. PROCESS enforces this on an
+                  // open ticket (canProcess demands an exact match) but this
+                  // path never did, so a $45 payment sat on a $40 ticket with no
+                  // warning — Tonya Jahan #95 on 08/15, and Penny #20 on 08/18.
+                  // Refuse the save and name both numbers instead.
+                  if (pendingPaidCents !== totalCents) {
+                    setError(
+                      `Payments ${formatMoneyCents(pendingPaidCents)} don't match the ticket total ` +
+                        `${formatMoneyCents(totalCents)}. Fix the line prices or the payment before saving.`,
+                    );
+                    return;
+                  }
                   const s = await doSave();
                   if (!s) return;
                   const payRes = await replaceTicketPayments(ticket.id, pending.map((p) => ({
