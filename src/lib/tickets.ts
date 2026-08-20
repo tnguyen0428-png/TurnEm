@@ -28,6 +28,47 @@ export function getVisitId(id: string): string {
   return m ? m[0] : id;
 }
 
+// ── walk-in block backing ───────────────────────────────────────────────────
+//
+// A walk-in block's id is `walkin:<queueEntryId>`, keyed by synthWalkInAppt off
+// the queue entry that existed WHEN THE BLOCK WAS CREATED. SPLIT_AND_ASSIGN then
+// RE-KEYS the visit: it drops the parent entry outright and replaces it with
+// `${parent}-${manicuristId}` / `${parent}-waiting` children. The block keeps
+// the parent's id, so an exact-id lookup against the live queue finds nothing and
+// the block looks orphaned the instant a second service goes to a second tech —
+// while its own tech is still mid-service.
+//
+// (Nanette x SAM/PANDA, 2026-08-20: the Gel Pedicure was split to PANDA at ~11:05
+// and the load-time orphan sweep deleted SAM's Gel Fill block at 11:07, ~17 min
+// into the service, then again at 11:36. Turn credit and ticket #16 both survived;
+// only the block died. Same shape as Jennifer Logan 2026-08-15.)
+//
+// So a block is ALSO backed when its id is an ANCESTOR of a live/completed id.
+// The DIRECTION is what preserves the sweep's original purpose:
+//   block `walkin:<parent>`, live `<parent>-mani-4`  -> a child is live -> KEEP
+//   block `walkin:<parent>-mani-9` (a stale forked child that some other device
+//     keeps re-uploading), live `<parent>-mani-4`    -> nothing beneath it is
+//     live and it is not live itself                 -> SWEEP
+// Sibling-level staleness — the regenerating phantom this sweep exists to kill —
+// is still caught; only a parent whose OWN descendants are alive is spared.
+// Deliberately NOT getVisitId(): collapsing both sides to the root UUID would
+// make every stale sibling look backed and resurrect that phantom.
+//
+// Matching on `${qid}-` rather than a bare prefix stops an unrelated id that
+// merely starts with the same characters from counting as a descendant.
+export function isWalkInBlockBacked(
+  qid: string,
+  liveQueueIds: ReadonlySet<string>,
+  completedIds: ReadonlySet<string>,
+): boolean {
+  if (!qid) return false;
+  if (liveQueueIds.has(qid) || completedIds.has(qid)) return true;
+  const childPrefix = `${qid}-`;
+  for (const id of liveQueueIds) if (id.startsWith(childPrefix)) return true;
+  for (const id of completedIds) if (id.startsWith(childPrefix)) return true;
+  return false;
+}
+
 // ── DB ↔ TS mappers ──────────────────────────────────────────────────────────
 
 interface DbTicket {

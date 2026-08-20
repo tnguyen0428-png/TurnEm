@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket, voidTicket } from '../lib/tickets';
+import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, isWalkInBlockBacked, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket, voidTicket } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -883,10 +883,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // closed and (per the tickets_complete_appointment_on_close DB trigger)
       // flipped this exact row's status server-side. Never sweep it.
       .filter((a) => a.status !== 'completed')
-      .filter((a) => {
-        const qid = a.id.slice('walkin:'.length);
-        return !liveQueueIds.has(qid) && !completedIds.has(qid);
-      })
+      // Backed = the block's queue entry is live, has a completed row, OR has
+      // live/completed DESCENDANTS — a SPLIT_AND_ASSIGN re-key leaves the block
+      // sitting on the now-deleted parent id while its children do the work.
+      // See isWalkInBlockBacked for why this is not just getVisitId().
+      .filter((a) => !isWalkInBlockBacked(a.id.slice('walkin:'.length), liveQueueIds, completedIds))
       .map((a) => a.id);
 
     dispatch({ type: 'LOAD_STATE', state: {
@@ -918,10 +919,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ]);
         const freshLiveQueueIds = new Set((freshQueue ?? []).map((r) => (r as { id: string }).id));
         const freshCompletedIds = new Set((freshCompleted ?? []).map((r) => (r as { id: string }).id));
-        const stillOrphanIds = orphanCandidateIds.filter((apptId) => {
-          const qid = apptId.slice('walkin:'.length);
-          return !freshLiveQueueIds.has(qid) && !freshCompletedIds.has(qid);
-        });
+        const stillOrphanIds = orphanCandidateIds.filter(
+          (apptId) =>
+            !isWalkInBlockBacked(
+              apptId.slice('walkin:'.length),
+              freshLiveQueueIds,
+              freshCompletedIds,
+            ),
+        );
         if (stillOrphanIds.length === 0) return;
         const BATCH = 100;
         for (let i = 0; i < stillOrphanIds.length; i += BATCH) {
