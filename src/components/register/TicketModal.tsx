@@ -357,10 +357,33 @@ export default function TicketModal({
     if (!pickerCategory) return [];
     return sortedServices.filter((s) => s.category === pickerCategory);
   }, [sortedServices, pickerCategory]);
-  const manicurists = useMemo(
-    () => [...state.manicurists].sort((a, b) => a.name.localeCompare(b.name)),
-    [state.manicurists],
-  );
+  // Front-desk-only staff are not service providers. KAYLA (is_receptionist,
+  // no skills, hidden from the book) was offered in the line STAFF picker and
+  // took DANNY's $55.00 Gel Pedicure plus 1.5 turns on ticket #79 (08/19) — the
+  // credit, the money and the rotation all moved to someone who does not do
+  // nails.
+  //
+  // The test is receptionist AND no skills, not the flag alone: StaffModal
+  // treats the two as independent, so a person can work the desk and take
+  // clients. Someone with skills stays selectable.
+  //
+  // Anyone the ticket ALREADY points at also stays, whatever their flags —
+  // dropping them would render the select blank and the next save would
+  // silently clear the staff off that line. Filter the choice, never the
+  // existing value.
+  const manicurists = useMemo(() => {
+    const alreadyOnTicket = new Set<string>();
+    if (ticket.primaryManicuristId) alreadyOnTicket.add(ticket.primaryManicuristId);
+    for (const l of lines) {
+      if (l.staff1Id) alreadyOnTicket.add(l.staff1Id);
+      if (l.staff2Id) alreadyOnTicket.add(l.staff2Id);
+    }
+    const deskOnly = (m: typeof state.manicurists[number]) =>
+      !!m.isReceptionist && (m.skills?.length ?? 0) === 0;
+    return [...state.manicurists]
+      .filter((m) => !deskOnly(m) || alreadyOnTicket.has(m.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [state.manicurists, ticket.primaryManicuristId, lines]);
   function manicuristById(id: string | null) {
     return id ? state.manicurists.find((m) => m.id === id) ?? null : null;
   }
