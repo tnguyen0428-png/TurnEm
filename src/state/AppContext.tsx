@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, isWalkInBlockBacked, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket, voidTicket } from '../lib/tickets';
+import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, completedServiceIdsForTicketVoid, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, isWalkInBlockBacked, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket, voidTicket } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -819,7 +819,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } else if (voidedTickets && voidedTickets.length > 0) {
         const hasLiveRows = (visitId: string) =>
           completed.some((c) => c.id === visitId || c.id.startsWith(`${visitId}-`));
-        const reconciledVisitIds: string[] = [];
+        // Match voidTicket's scope EXACTLY — same RPC, same meaning. A visit
+        // can carry rows belonging to a different, still-live ticket (ticket
+        // #59 held Leyla's paid $45 Gel Fill on the visit that dupe ticket #66
+        // was voided on, 2026-08-20). Prefix-matching here would re-run the
+        // void on someone else's credited work and then strip it out of the
+        // local `completed` array — which convergeTotalTurns reads, so the
+        // tech's floor-card turns would drop too. Resolved-but-empty means
+        // there is nothing for this void to finish: skip the ticket entirely.
+        const reconciledVisitIds: string[] = [];  // unresolved scope → prefix fallback
+        const reconciledExactIds: string[] = [];  // line-scoped ids we really voided
+        let reconciledCount = 0;
         for (const t of voidedTickets as Array<{
           id: string;
           queue_entry_id: string | null;
@@ -827,7 +837,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }>) {
           const visitId = t.queue_entry_id;
           if (!visitId) continue;          // no visit link → nothing keyed to refund
-          if (!hasLiveRows(visitId)) continue; // already fully cleaned → idempotent skip
+          const scope = await completedServiceIdsForTicketVoid(t.id);
+          if (scope.resolved) {
+            if (scope.ids.length === 0) continue;  // claimed elsewhere → not ours to finish
+            if (!scope.ids.some((id) => completed.some((c) => c.id === id))) continue;
+          } else if (!hasLiveRows(visitId)) {
+            continue;                      // already fully cleaned → idempotent skip
+          }
           const ok = await voidTicket(
             t.id,
             t.void_reason ?? 'reconcile: finish interrupted void',
@@ -836,15 +852,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
             console.warn('[loadInitialData] void reconcile: voidTicket retry returned false for', t.id);
             continue;
           }
-          reconciledVisitIds.push(visitId);
+          reconciledCount += 1;
+          if (scope.resolved) reconciledExactIds.push(...scope.ids);
+          else reconciledVisitIds.push(visitId);
         }
-        if (reconciledVisitIds.length > 0) {
+        if (reconciledCount > 0) {
+          const exact = new Set(reconciledExactIds);
           completed = completed.filter(
-            (c) => !reconciledVisitIds.some((v) => c.id === v || c.id.startsWith(`${v}-`)),
+            (c) => !exact.has(c.id)
+              && !reconciledVisitIds.some((v) => c.id === v || c.id.startsWith(`${v}-`)),
           );
           console.log(
-            `[loadInitialData] reconciled ${reconciledVisitIds.length} half-applied void(s):`,
-            reconciledVisitIds,
+            `[loadInitialData] reconciled ${reconciledCount} half-applied void(s):`,
+            [...reconciledExactIds, ...reconciledVisitIds],
           );
         }
       }

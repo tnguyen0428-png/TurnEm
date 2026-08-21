@@ -2645,6 +2645,35 @@ export async function reconcileTicketItemsFromCompleted(
 // void ticket --------------------------------------------------------------
 
 /**
+ * The completed_services rows a void of `ticketId` is allowed to touch.
+ *
+ * ONE definition, used by voidTicket() and by the load-time half-applied-void
+ * reconciliation in AppContext, so the local `completed` array is never
+ * stripped of rows the database itself refused to void.
+ *
+ * `resolved` distinguishes "the server answered" from "we could not ask".
+ * A resolved-but-EMPTY list is a real answer meaning *touch nothing* — every
+ * row on this visit is claimed by a different, non-voided ticket. Only an
+ * unresolved scope may fall back to visit-prefix matching.
+ */
+export async function completedServiceIdsForTicketVoid(
+  ticketId: string,
+): Promise<{ resolved: boolean; ids: string[] }> {
+  const { data, error } = await supabase
+    .rpc('completed_service_ids_for_ticket_void', { p_ticket_id: ticketId });
+  if (error) {
+    console.warn('[tickets] voidTicket scope rpc:', error.message);
+    return { resolved: false, ids: [] };
+  }
+  return {
+    resolved: true,
+    ids: Array.from(new Set(
+      ((data ?? []) as unknown as string[]).filter((id) => typeof id === 'string' && id.length > 0),
+    )),
+  };
+}
+
+/**
  * Mark an open ticket as voided. Idempotent at the status layer: a second
  * call where status is already 'voided' is a no-op. Manager-gated in the UI;
  * no database role check here yet.
@@ -2745,30 +2774,35 @@ export async function voidTicket(
   // appendItemsToTicket) that never appears in a completed_services id, so
   // strip it before matching.
   //
-  // No lines (the cashier removed every line before voiding) → fall back to
-  // the visit prefix, which is the case the prefix-only behaviour existed for.
   // ONE definition of the scope, shared with the delete: see
   // completed_service_ids_for_ticket_void in the DB. Scoping to the ticket's
   // own lines alone is not enough — a row whose id never appears as a line
   // qid (an add-child, when the line fell back to the bare visit id) would
   // survive the void still credited to the tech. The function returns
   // everything on this visit plus this ticket's own lines, minus anything a
-  // different, non-voided ticket claims.
-  let scopedIds: string[] = [];
-  {
-    const { data: idRows, error: idErr } = await supabase
-      .rpc('completed_service_ids_for_ticket_void', { p_ticket_id: ticketId });
-    if (idErr) {
-      console.warn('[tickets] voidTicket scope rpc:', idErr.message);
-    } else {
-      scopedIds = Array.from(new Set(
-        ((idRows ?? []) as unknown as string[]).filter((id) => typeof id === 'string' && id.length > 0),
-      ));
-    }
-  }
-  const useLineScope = scopedIds.length > 0;
+  // different, non-voided ticket claims. That subtraction is the whole point,
+  // so an EMPTY result is an answer, not a missing answer: it means every row
+  // on this visit is claimed by a live ticket and we must touch NOTHING.
+  //
+  // Reading empty as "no scope available" and sweeping the visit prefix
+  // instead is what cost SAM $45 and half a turn on 2026-08-20. Leyla
+  // Paziranzeh's Gel Fill was rung on ticket #59 (closed, $45 collected) but
+  // its line carried visit `f392634b…#1`; ticket #66 opened on the bare
+  // `f392634b…` and was voided as a dupe 30 min later. The RPC correctly
+  // returned zero rows — #59 claims that visit — the fallback fired anyway,
+  // and marked the completed row backing the PAID ticket voided=true while
+  // refunding its turn. (The server-side delete refused, which is why the row
+  // survived to be caught by the nightly reconcile instead of vanishing.)
+  //
+  // So: fall back to the visit prefix ONLY when the RPC could not answer.
+  // The no-lines case the prefix behaviour originally existed for (the
+  // cashier removed every line before voiding) is already covered inside the
+  // RPC — its `mine` CTE unions the visit-prefix rows itself.
+  const { resolved: scopeResolved, ids: scopedIds } =
+    await completedServiceIdsForTicketVoid(ticketId);
+  const useLineScope = scopeResolved;
 
-  if (visitId || useLineScope) {
+  if (useLineScope ? scopedIds.length > 0 : !!visitId) {
     try {
       // 1. Pull the completed_services rows this ticket is responsible for so
       //    we know which manicurists' total_turns to decrement and by how
