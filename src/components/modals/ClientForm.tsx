@@ -194,7 +194,7 @@ export default function ClientForm({
     <form onSubmit={handleSubmit} className="space-y-5">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
+          <label className="block font-mono text-[14px] text-gray-500 font-semibold tracking-wider mb-1.5">
             FIRST NAME
           </label>
           <input
@@ -203,11 +203,11 @@ export default function ClientForm({
             onChange={(e) => setClientFirstName(e.target.value)}
             onBlur={(e) => setClientFirstName(toTitleCase(e.target.value))}
             placeholder="First"
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-[17px] text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
           />
         </div>
         <div>
-          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider mb-1.5">
+          <label className="block font-mono text-[14px] text-gray-500 font-semibold tracking-wider mb-1.5">
             LAST NAME
           </label>
           <input
@@ -216,7 +216,7 @@ export default function ClientForm({
             onChange={(e) => setClientLastName(e.target.value)}
             onBlur={(e) => setClientLastName(toTitleCase(e.target.value))}
             placeholder="Last"
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-[17px] text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all"
           />
         </div>
       </div>
@@ -229,7 +229,7 @@ export default function ClientForm({
       >
         <div className="flex items-center gap-2.5">
           <CalendarCheck size={16} className={isAppointment ? 'text-blue-500' : 'text-gray-400'} />
-          <span className={`font-mono text-xs font-semibold ${isAppointment ? 'text-blue-700' : 'text-gray-600'}`}>
+          <span className={`font-mono text-[15px] font-semibold ${isAppointment ? 'text-blue-700' : 'text-gray-600'}`}>
             APPOINTMENT
           </span>
         </div>
@@ -248,11 +248,11 @@ export default function ClientForm({
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="block font-mono text-[11px] text-gray-500 font-semibold tracking-wider">
+          <label className="block font-mono text-[14px] text-gray-500 font-semibold tracking-wider">
             ADD SERVICES
           </label>
           {selectedServices.length > 0 && (
-            <span className="font-mono text-[11px] text-gray-400">
+            <span className="font-mono text-[14px] text-gray-400">
               {totalTurnValue.toFixed(1)} turns total
             </span>
           )}
@@ -266,7 +266,7 @@ export default function ClientForm({
                 setSelectedCategory(e.target.value);
                 setSelectedServiceId('');
               }}
-              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer"
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-[15px] text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer"
             >
               <option value="">Category...</option>
               {availableCategories.map((cat) => (
@@ -295,7 +295,7 @@ export default function ClientForm({
                 setSelectedCategory('');
               }}
               disabled={!selectedCategory}
-              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 font-mono text-[15px] text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-all appearance-none cursor-pointer disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
             >
               <option value="">Service...</option>
               {servicesInCategory.map((svc) => (
@@ -309,8 +309,8 @@ export default function ClientForm({
 
         {selectedServices.length === 0 ? (
           <div className="text-center py-6 border-2 border-dashed border-gray-200 rounded-xl">
-            <p className="font-mono text-xs text-gray-400">No services added yet</p>
-            <p className="font-mono text-[10px] text-gray-300 mt-1">
+            <p className="font-mono text-[15px] text-gray-400">No services added yet</p>
+            <p className="font-mono text-[13px] text-gray-300 mt-1">
               Select a category and service above
             </p>
           </div>
@@ -330,10 +330,10 @@ export default function ClientForm({
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <p className="font-mono text-xs font-semibold text-pink-700">
+                        <p className="font-mono text-[15px] font-semibold text-pink-700">
                           {s.serviceName}
                         </p>
-                        <span className="font-mono text-[10px] text-pink-400">
+                        <span className="font-mono text-[13px] text-pink-400">
                           {s.turnValue} turn{s.turnValue !== 1 ? 's' : ''}
                         </span>
                       </div>
@@ -344,7 +344,7 @@ export default function ClientForm({
                             return m ? (
                               <span
                                 key={id}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-pink-100 font-mono text-[10px] text-pink-700"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-pink-100 font-mono text-[13px] text-pink-700"
                               >
                                 <span
                                   className="w-1.5 h-1.5 rounded-full"
@@ -378,11 +378,11 @@ export default function ClientForm({
 
                   {isExpanded && (
                     <div className="mt-1 px-3 py-2.5 rounded-xl border border-gray-200 bg-white">
-                      <p className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider mb-2">
+                      <p className="font-mono text-[13px] text-gray-400 font-semibold tracking-wider mb-2">
                         REQUEST MANICURIST <span className="text-gray-300 font-normal">(optional)</span>
                       </p>
                       {skilledStaff.length === 0 ? (
-                        <p className="font-mono text-[10px] text-gray-400">
+                        <p className="font-mono text-[13px] text-gray-400">
                           No staff with this skill clocked in
                         </p>
                       ) : (
@@ -394,7 +394,7 @@ export default function ClientForm({
                                 key={m.id}
                                 type="button"
                                 onClick={() => toggleManicurist(idx, m.id)}
-                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[10px] font-semibold transition-all ${
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[13px] font-semibold transition-all ${
                                   isSelected ? 'bg-pink-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                 }`}
                               >
@@ -417,7 +417,7 @@ export default function ClientForm({
       <button
         type="submit"
         disabled={selectedServices.length === 0}
-        className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-sm font-semibold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
+        className="w-full py-3 rounded-xl bg-pink-500 text-white font-mono text-[17px] font-semibold hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
       >
         {submitLabel}{' '}
         {selectedServices.length > 0 &&
