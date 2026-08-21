@@ -34,3 +34,6 @@ vite.config.ts.timestamp-*.mjs
 break-preview.html
 PENDING_DEPLOY.md
 deploy.bat
+
+# Claude Code personal settings (permissions, auto-mode carve-outs) — machine-specific
+.claude/settings.local.json
