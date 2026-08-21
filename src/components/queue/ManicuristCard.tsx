@@ -301,28 +301,59 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
                   W
                 </button>
               </div>
-              <div className="flex flex-col items-center gap-0.5">
-                <button
-                  onClick={() => dispatch({ type: 'TOGGLE_CHECK3', id: manicurist.id })}
-                  className="flex items-center justify-center w-5 h-5"
-                  title="Toggle check 3"
-                >
-                  <CheckCircle
-                    size={14}
-                    className={`transition-colors ${manicurist.hasCheck3 ? 'text-red-500' : 'text-gray-200'}`}
-                  />
-                </button>
-                <button
-                  onClick={() => hasWaxSkill && dispatch({ type: 'TOGGLE_WAX3', id: manicurist.id })}
-                  className={`font-mono text-xs font-bold leading-none transition-colors h-4 ${
-                    !hasWaxSkill ? 'invisible' :
-                    manicurist.hasWax3 ? 'text-amber-400' : 'text-gray-200 hover:text-gray-300'
-                  }`}
-                  title="Toggle wax 3"
-                >
-                  W
-                </button>
-              </div>
+              {/* Third check/W column yields its space to the break shiba.
+                  Hidden ONLY while on break — a tech on break isn't taking
+                  clients, so the toggle isn't needed until they come back,
+                  and it returns the moment status flips. Deliberately not
+                  removed outright: reducer.nextCheckSlot / nextWaxSlot still
+                  auto-fill slot 3, and assignHelpers counts it, so a
+                  permanently hidden column would be a flag the desk can set
+                  but never see or clear. */}
+              {manicurist.status !== 'break' && (
+                <div className="flex flex-col items-center gap-0.5">
+                  <button
+                    onClick={() => dispatch({ type: 'TOGGLE_CHECK3', id: manicurist.id })}
+                    className="flex items-center justify-center w-5 h-5"
+                    title="Toggle check 3"
+                  >
+                    <CheckCircle
+                      size={14}
+                      className={`transition-colors ${manicurist.hasCheck3 ? 'text-red-500' : 'text-gray-200'}`}
+                    />
+                  </button>
+                  <button
+                    onClick={() => hasWaxSkill && dispatch({ type: 'TOGGLE_WAX3', id: manicurist.id })}
+                    className={`font-mono text-xs font-bold leading-none transition-colors h-4 ${
+                      !hasWaxSkill ? 'invisible' :
+                      manicurist.hasWax3 ? 'text-amber-400' : 'text-gray-200 hover:text-gray-300'
+                    }`}
+                    title="Toggle wax 3"
+                  >
+                    W
+                  </button>
+                </div>
+              )}
+              {/* Break shiba — same asset the staff portal shows a manicurist
+                  on their own phone (/lunch-break.webp). Fills the blank space
+                  to the right of the two remaining check/W columns. h-16 with
+                  -my-3 keeps the row at its natural ~38px, so the taller image
+                  still costs the card no height. Decorative only —
+                  BreakElapsedBadge below already announces "ON BREAK" with the
+                  elapsed time.
+                  min-w-0 (not shrink-0) matters: at the 5-column grid's
+                  narrowest, cards are ~118px and a fixed-width image runs past
+                  the card edge. An image's default min-width:auto resolves to
+                  its intrinsic 268px and refuses to shrink, so min-w-0 lets
+                  flex compress it and object-contain keeps the aspect. */}
+              {manicurist.status === 'break' && (
+                <img
+                  src="/lunch-break.webp"
+                  alt=""
+                  aria-hidden="true"
+                  draggable={false}
+                  className="ml-auto h-16 w-16 min-w-0 object-contain -mt-7 select-none pointer-events-none animate-break-bob"
+                />
+              )}
             </div>
           );
         })()}

@@ -50,6 +50,30 @@
   animation: modal-in 0.2s ease-out;
 }
 
+/* Gentle bob for the break shiba on a manicurist card. Deliberately NOT
+   named floatBob — StaffPortalScreen injects its own floatBob (-8px, sized
+   for the 180px portal image) via an inline <style>, and a shared name would
+   let whichever mounted last win. */
+@keyframes breakBob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-break-bob {
+  animation: breakBob 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-break-bob {
+    animation: none;
+  }
+}
+
 @keyframes slideUp {
   from {
     opacity: 0;
