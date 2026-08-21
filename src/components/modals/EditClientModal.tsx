@@ -79,7 +79,7 @@ export default function EditClientModal() {
   }
 
   return (
-    <Modal title="EDIT CLIENT" onClose={handleClose}>
+    <Modal title="EDIT CLIENT" onClose={handleClose} width="max-w-3xl">
       <ClientForm
         initialName={client.clientName}
         initialIsAppointment={client.isAppointment}

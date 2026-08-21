@@ -94,7 +94,11 @@ export default function AddClientModal() {
 
   return (
     <>
-      <Modal title="ADD CLIENT" onClose={() => dispatch({ type: 'SET_MODAL', modal: null })}>
+      <Modal
+        title="ADD CLIENT"
+        onClose={() => dispatch({ type: 'SET_MODAL', modal: null })}
+        width="max-w-3xl"
+      >
         <ClientForm
           salonServices={state.salonServices}
           manicurists={state.manicurists}
