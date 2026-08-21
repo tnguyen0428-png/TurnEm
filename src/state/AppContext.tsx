@@ -333,9 +333,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // and self-heals on the next load.
   const pendingCompletedDeletesRef = useRef<Set<string>>(new Set());
   const bulkCompletedClearRef = useRef<boolean>(false);
+  // The synthetic `walkin:` block ids that an action is about to remove as a
+  // deliberate part of its own job. REMOVE_CLIENT and CANCEL_SERVICE drop the
+  // queue entry and its block in ONE reducer pass, so the diff downstream can't
+  // tell them from a sync race — a reducer can't touch the intent ledger, which
+  // is why walk-in blocks used to bypass it entirely. This wrapper CAN, so we
+  // resolve the ids here, before the reducer runs and the evidence is gone.
+  //
+  // prevStateRef holds the state as of the last committed render, i.e. the
+  // state this action is about to be applied to — so the queue entry and the
+  // manicurist's currentClient pointer are both still present.
+  //
+  // Only `walkin:` ids are ever recorded. A real booking parked with
+  // isWalkIn=true after an appointment assignment must never be deletable this
+  // way (per Tony, 2026-06-06).
+  const walkInBlockIdsForAction = useCallback((action: AppAction): string[] => {
+    const s = prevStateRef.current;
+    const ids: string[] = [];
+    const pushIfSynth = (id: string | null | undefined) => {
+      if (id && id.startsWith('walkin:')) ids.push(id);
+    };
+    if (action.type === 'REMOVE_CLIENT') {
+      pushIfSynth(s.queue.find((c) => c.id === action.id)?.originalAppointment?.id);
+      // An add-child carries no originalAppointment pointer; ADD_CLIENT mints
+      // its block at this deterministic id, so resolve that one by shape.
+      pushIfSynth(`walkin:${action.id}`);
+    } else if (action.type === 'CANCEL_SERVICE') {
+      const mani = s.manicurists.find((m) => m.id === action.manicuristId);
+      const entry = mani?.currentClient
+        ? s.queue.find((c) => c.id === mani.currentClient)
+        : undefined;
+      pushIfSynth(entry?.originalAppointment?.id);
+    }
+    return ids;
+  }, []);
+
   const dispatch = useCallback<React.Dispatch<AppAction>>((action) => {
     if (action.type === 'DELETE_APPOINTMENT') {
       pendingApptDeletesRef.current.add(action.id);
+    } else if (action.type === 'REMOVE_CLIENT' || action.type === 'CANCEL_SERVICE') {
+      for (const id of walkInBlockIdsForAction(action)) {
+        pendingApptDeletesRef.current.add(id);
+      }
     } else if (action.type === 'DELETE_MANICURIST') {
       tombstoneManicurist(action.id);
     } else if (action.type === 'DELETE_COMPLETED') {
@@ -348,7 +387,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       bulkCompletedClearRef.current = true;
     }
     rawDispatch(action);
-  }, []);
+    // walkInBlockIdsForAction is a no-dep useCallback, so naming it here keeps
+    // dispatch referentially stable exactly as before.
+  }, [walkInBlockIdsForAction]);
   const [syncError, setSyncError] = useState<string | null>(null);
   const clearSyncError = useCallback(() => {
     setSyncError(null);
@@ -1323,25 +1364,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Measured across appointment_delete_log: 66% of all deleted
       // unconfirmed walk-in blocks died within 2 minutes of creation, vs
       // 1.4% of confirmed ones.)
-      const liveQueueIds = new Set(state.queue.map((q) => q.id));
-      const isOrphanWalkInBlock = (a: Appointment) =>
-        a.isWalkIn === true &&
-        a.id.startsWith('walkin:') &&
-        !liveQueueIds.has(a.id.slice('walkin:'.length));
-
       const deletedAppts = prev.appointments.filter(
         (a) =>
           !currentApptIds.has(a.id) &&
           !isTombstoned(a.id) &&
-          // Protect real bookings: only delete from DB if the user explicitly
-          // deleted it (recorded in the ledger) or it's an ORPHANED synthetic
-          // walk-in block (see above). A booked appt that merely went
-          // missing from state (a sync/realtime batching race) is left alone
-          // and self-heals on the next upsert/refresh instead of being
-          // permanently destroyed. The `walkin:` prefix guard also protects
-          // real appts that now carry isWalkIn=true while parked after an
-          // appointment assignment (per Tony, 2026-06-06).
-          (pendingApptDeletesRef.current.has(a.id) || isOrphanWalkInBlock(a)),
+          // ONE rule, for every block: it is deleted from the DB only if a
+          // human deleted it. Anything that merely went missing from in-memory
+          // state — a sync race, a realtime batching gap, a stale render — is
+          // left alone and self-heals on the next upsert/refresh.
+          //
+          // Walk-in blocks used to be exempt from this (`|| isOrphanWalkInBlock(a)`),
+          // and that exemption WAS the disappearing slot. Booked appointments
+          // have been protected by the intent ledger all along; walk-ins were
+          // carved out, and every documented incident is a walk-in — Katie
+          // 08/13 (two blocks destroyed 27s and 43s after creation, mid-
+          // service), Nanette 08/20, Robin 08/20. Measured over 30 days: 30
+          // walk-in blocks were deleted while non-voided work was still live on
+          // their visit — one a day.
+          //
+          // The exemption existed because REMOVE_CLIENT and CANCEL_SERVICE drop
+          // the queue entry and the block in the SAME action, so by the time
+          // the diff runs the entry is already gone and the block looks like an
+          // orphan — and a reducer can't record intent in the ref. The dispatch
+          // wrapper resolves those block ids up front instead (see
+          // walkInBlockIdsForAction), so both now arrive here as deliberate
+          // deletes and no blanket pass is needed.
+          pendingApptDeletesRef.current.has(a.id),
       );
       // Consume handled intent markers, and drop any whose appt is still present
       // (an explicit delete superseded by a concurrent re-add) so the set can't
