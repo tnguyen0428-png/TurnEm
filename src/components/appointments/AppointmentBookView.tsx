@@ -1487,6 +1487,29 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           // Service complete but ticket not yet closed — stays light gray.
           const isAwaitingPayment = !isCheckedOut && !isInService && !isWaitingQ && awaitingPaymentApptIds.has(appt.id);
           const isCheckedIn  = !isCheckedOut && !isInService && !isWaitingQ && !isAwaitingPayment && appt.status === 'checked-in';
+          // Stuck check-in rescue. `isCheckedIn` above is already precisely the
+          // broken state: the appointment says checked-in, but NOTHING backs it
+          // — no queue card, not in service, no completed work, not awaiting
+          // payment. Check-in writes the status flip and the queue card as two
+          // separate actions (see addApptToQueue below), so the card can fail to
+          // survive while the status stands.
+          //
+          // Until now there was no way out: this Q button required
+          // status === 'scheduled', and the Revert control lives ON the queue
+          // card that no longer exists. The only move left was to delete the
+          // appointment and re-book — which mints a FRESH visit id every time
+          // (crypto.randomUUID() in addApptToQueue). Leyla Paziranzeh, 08/20:
+          // several rounds of that left one physical visit spread over two visit
+          // ids, the ticket header pinned to one and the work landing on the
+          // other. Voiding the resulting duplicate ticket then ate SAM's $45 and
+          // half a turn. Re-queueing in place keeps the visit single.
+          //
+          // Gated to the appointment's own day: state.queue only ever holds
+          // today's entries, so a past-day block would ALWAYS look stuck and
+          // would offer to drop a historical client into today's queue.
+          // getTodayLA(), not the `isToday` above — that one compares a UTC date
+          // string and is wrong for the salon's late evening hours.
+          const canRequeue = isCheckedIn && appt.date === getTodayLA();
           // Walk-in pending placement: amber tint + a distinct border so the
           // receptionist can spot auto-placed blocks at a glance. Once they
           // drag it to the real slot, executeDrop clears isWalkIn and the
@@ -1814,14 +1837,18 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                     onMouseDown={(e) => e.stopPropagation()}
                     onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
                     onClick={(e) => e.stopPropagation()}>
-                    {appt.status === 'scheduled' && (
+                    {(appt.status === 'scheduled' || canRequeue) && (
                       <button
                         draggable={false}
                         onMouseDown={(e) => e.stopPropagation()}
                         onDragStart={(e) => e.preventDefault()}
                         onClick={(e) => addApptToQueue(e, appt)}
-                        title="Send whole appointment to waiting queue"
-                        className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-mono text-[10px] font-bold">
+                        title={canRequeue
+                          ? 'Checked in, but no queue card exists for this client — press to put them back in the waiting queue. Do NOT delete and re-book: that creates a second visit and can lose the tech’s credit.'
+                          : 'Send whole appointment to waiting queue'}
+                        className={canRequeue
+                          ? 'px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 font-mono text-[10px] font-bold ring-1 ring-amber-400 animate-pulse'
+                          : 'px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-mono text-[10px] font-bold'}>
                         Q
                       </button>
                     )}
