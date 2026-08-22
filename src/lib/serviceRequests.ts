@@ -21,6 +21,14 @@ function countByService(items: ReadonlyArray<{ service: string }>): Map<string, 
 }
 
 /**
+ * Service name -> the DISTINCT manicurists actually performing it on one
+ * appointment right now (live queue entries + non-voided completed rows).
+ * Deduped by manicurist: a service that is both in the queue and already has a
+ * completed row (the DONE-but-ticket-open window) is ONE worker, not two.
+ */
+export type BackedWorkers = ReadonlyMap<string, ReadonlySet<string>>;
+
+/**
  * Reassign the next pending manicurist(s) for each service name onto the
  * FIRST matching, NOT-client-requested occurrences in `requests`, in array
  * order. A client-requested entry is never overwritten by a pending
@@ -86,46 +94,116 @@ export function relocateServiceRequests(
  * deliberately renamed/removed from the appointment can't be silently
  * re-added just because a stale queue entry still lists the old name. Never
  * removes or reorders existing entries.
+ *
+ * `apptServices` is the appointment's OWN services[] as a LIST, not a Set.
+ * It used to be a Set, which made the gate presence-only: with
+ * services[] = ["Pedicure"] and two techs each doing a pedicure, this pushed
+ * a second request and left the row at 1 service / 2 requests. That shape is
+ * exactly what AppointmentBookView's getApptSvcs() renders as an extra
+ * phantom block — its rescue path draws every serviceRequests entry that
+ * services[] doesn't cover (Dee Dee 2026-08-22: a third pedicure slot, two of
+ * them stacked on KATELYN). Capping the push instead would have hidden a tech
+ * who really is on the floor, so we keep the entry and return a services[]
+ * grown to match: the two arrays stay in lockstep, which is the invariant
+ * reconcileServiceRequests relies on to tell a real slot from a stale one.
  */
 export function addMissingServiceRequests(
   currentReqs: ServiceRequest[],
   desired: Map<string, string[]>,
-  apptServices: ReadonlySet<string>,
-): { next: ServiceRequest[]; changed: boolean } {
+  apptServices: ReadonlyArray<ServiceType>,
+): { next: ServiceRequest[]; nextServices: ServiceType[]; changed: boolean; servicesChanged: boolean } {
   const coveredCount = countByService(currentReqs);
+  const wantedCount = countByService(apptServices.map((s) => ({ service: s })));
   const next = [...currentReqs];
+  const nextServices = [...apptServices];
   let changed = false;
+  let servicesChanged = false;
   for (const [svc, mids] of desired) {
-    if (!apptServices.has(svc)) continue;
+    if ((wantedCount.get(svc) ?? 0) === 0) continue;
+    // One entry per DISTINCT manicurist. Two queue rows for the same tech on
+    // the same service are one slot, and minting a second entry for it is how
+    // a duplicate block gets born.
+    const distinct = Array.from(new Set(mids));
     const already = coveredCount.get(svc) ?? 0;
-    const toAdd = mids.slice(already); // only the uncovered assignments
+    const toAdd = distinct.slice(already); // only the uncovered assignments
+    if (toAdd.length === 0) continue;
     for (const mid of toAdd) {
       next.push({ service: svc as ServiceType, manicuristIds: [mid], clientRequest: false });
       changed = true;
     }
-    if (toAdd.length > 0) coveredCount.set(svc, already + toAdd.length);
+    const covered = already + toAdd.length;
+    coveredCount.set(svc, covered);
+    // Grow services[] to cover the entries we just added, so the row never
+    // lands in the requests-outnumber-services state that renders a phantom.
+    for (let i = wantedCount.get(svc) ?? 0; i < covered; i++) {
+      nextServices.push(svc);
+      servicesChanged = true;
+    }
+    if (covered > (wantedCount.get(svc) ?? 0)) wantedCount.set(svc, covered);
   }
-  return { next, changed };
+  return { next, nextServices, changed, servicesChanged };
 }
 
 /**
  * Drop any serviceRequests entry beyond what `services[]` currently wants,
  * per service name — e.g. a checkout rename that shrinks services[] should
  * drop the matching stale request instead of leaving a phantom slot behind.
+ *
+ * `backedWorkers` makes this safe to run on writes that DON'T carry a new
+ * services[] (see the UPDATE_APPOINTMENT choke point). Without it the prune is
+ * blind in two ways that only bite once you run it that often:
+ *
+ *  1. It would prune below the work actually on the floor. So the count it
+ *     prunes to is `max(services[] count, distinct workers)` — a stale short
+ *     services[] can never take a block off a tech mid-service, which is the
+ *     Sara Feaver / Desiree Reyna failure mode.
+ *  2. It keeps occurrences in array order, so when it DOES have to drop one it
+ *     could drop the real slot and keep the stale twin. With `backedWorkers`,
+ *     entries naming a manicurist who is genuinely doing that service claim
+ *     their slot first (one slot per manicurist — a second entry for the same
+ *     tech is a duplicate, not a second slot), and only then does array order
+ *     decide the rest. Dee Dee 2026-08-22 was exactly this: entries
+ *     [KATELYN, KATELYN, LEO] against 1 service — plain array order would have
+ *     kept both KATELYNs and dropped LEO, who was mid-pedicure.
+ *
+ * Callers with no work context (e.g. TicketModal's rename scrub) omit it and
+ * get the original in-order, services[]-only behaviour.
  */
 export function reconcileServiceRequests(
   services: ServiceType[],
   requests: ServiceRequest[],
+  backedWorkers?: BackedWorkers,
 ): ServiceRequest[] {
   const countNeeded = countByService(services.map((s) => ({ service: s })));
-  const used = new Map<string, number>();
-  const result: ServiceRequest[] = [];
-  for (const r of requests) {
-    const have = used.get(r.service) ?? 0;
-    const needed = countNeeded.get(r.service) ?? 0;
-    if (have >= needed) continue; // services[] no longer wants this occurrence — drop it
-    used.set(r.service, have + 1);
-    result.push(r);
+  if (backedWorkers) {
+    for (const [svc, workers] of backedWorkers) {
+      if (workers.size > (countNeeded.get(svc) ?? 0)) countNeeded.set(svc, workers.size);
+    }
   }
-  return result;
+
+  const used = new Map<string, number>();
+  const keep = new Array<boolean>(requests.length).fill(false);
+  const claim = (i: number): boolean => {
+    const svc = requests[i].service;
+    const have = used.get(svc) ?? 0;
+    if (have >= (countNeeded.get(svc) ?? 0)) return false; // nothing wants this occurrence — drop it
+    used.set(svc, have + 1);
+    keep[i] = true;
+    return true;
+  };
+
+  if (backedWorkers) {
+    const taken = new Set<string>();
+    for (let i = 0; i < requests.length; i++) {
+      const r = requests[i];
+      const workers = backedWorkers.get(r.service);
+      if (!workers) continue;
+      const mid = (r.manicuristIds ?? []).find((m) => workers.has(m) && !taken.has(`${r.service} ${m}`));
+      if (mid && claim(i)) taken.add(`${r.service} ${mid}`);
+    }
+  }
+  for (let i = 0; i < requests.length; i++) {
+    if (!keep[i]) claim(i);
+  }
+  return requests.filter((_, i) => keep[i]);
 }

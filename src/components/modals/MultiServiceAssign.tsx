@@ -156,14 +156,14 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     const smsTargets: { id: string; phone: string; smsOptIn: boolean; name: string; clientName: string; service: string; notificationBody?: string }[] = [];
 
     for (const [mId, group] of manicuristGroups) {
-      // Upstream paths (addApptToQueue, handleCheckIn, ClientForm) ensure
-      // that only real customer requests carry populated manicuristIds on
-      // queue entries — column placements get stripped to manicuristIds: [].
-      // So the presence of mId in any source serviceRequest entry is
-      // sufficient to mark this group as a customer request.
+      // A request is a request only when the booking says clientRequest: true.
+      // The presence of mId in manicuristIds is NOT sufficient: a booking
+      // parked in a tech's column carries that tech with clientRequest: false.
+      // This used to rely on check-in stripping those ids — an invariant that
+      // lives in a different file and stopped holding (2026-08-22).
       const wasRequested = group.services.some((s) =>
         (client.serviceRequests || []).some(
-          (r) => r.service === s && r.manicuristIds.includes(mId)
+          (r) => r.service === s && r.clientRequest === true && r.manicuristIds.includes(mId)
         )
       );
       // Stamp clientRequest: true so downstream consumers (R badge, edit modal,
@@ -318,9 +318,11 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     for (const [mId, group] of assignableGroups) {
       const m = state.manicurists.find((x) => x.id === mId);
       if (!m) continue;
+      // Must use the SAME test as handleConfirm above, or the dialog shows a
+      // REQUESTED badge and a turn count that don't match what gets credited.
       const wasRequested = group.services.some((s) =>
         (client.serviceRequests || []).some(
-          (r) => r.service === s && r.manicuristIds.includes(mId)
+          (r) => r.service === s && r.clientRequest === true && r.manicuristIds.includes(mId)
         )
       );
       rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: group.turnValue, isRequested: wasRequested });

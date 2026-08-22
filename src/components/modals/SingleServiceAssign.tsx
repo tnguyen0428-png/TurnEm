@@ -54,13 +54,18 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
     turnsToAdd: number;
   } | null>(null);
 
-  // Upstream paths (addApptToQueue, handleCheckIn) already clear manicuristIds
-  // on non-request entries, so any populated manicuristIds here represents a
-  // real customer request — no need to also gate on clientRequest === true,
-  // which can be missing on older data even when the request is genuine.
+  // A request is a request only when the booking says clientRequest: true.
+  // This used to trust "populated manicuristIds means a real request", on the
+  // grounds that check-in strips manicuristIds off non-request entries — an
+  // invariant that lives in a different file and stopped holding. A booking
+  // parked in a tech's column carries that tech in manicuristIds with
+  // clientRequest: false, and treating it as a request locks the assign list
+  // to that one tech and halves the turn (2026-08-22).
   const requestedIds = new Set(
     (client.serviceRequests || [])
-      .filter((r) => Array.isArray(r.manicuristIds) && r.manicuristIds.length > 0)
+      .filter((r) =>
+        r.clientRequest === true &&
+        Array.isArray(r.manicuristIds) && r.manicuristIds.length > 0)
       .flatMap((r) => r.manicuristIds || [])
   );
 

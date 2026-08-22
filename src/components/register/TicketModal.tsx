@@ -214,27 +214,27 @@ export default function TicketModal({
         //     which otherwise makes the save-time turn recompute bake in a
         //     full (wrong) turn and clear the R. (Per Tony 2026-06-06: Lea's
         //     Gel Mani request for HANA was lost at the register → wrong turn.)
+        //     SCOPED TO THIS VISIT'S OWN APPOINTMENT. This used to fall back to
+        //     matching ANY appointment whose client name equalled the ticket's,
+        //     on ANY date — state.appointments is loaded unfiltered and holds
+        //     every booking ever made, not just today's. Kim x MIA 2026-08-22:
+        //     a non-request Pedicure was stamped as a request off a DIFFERENT
+        //     "Kim" booked 2026-07-24 (same service, same tech,
+        //     clientRequest: true), costing MIA half a turn. A month-old
+        //     booking says nothing about what this customer asked for today.
+        //     The link survives a reload via the ticket's own appointment_id,
+        //     which is why the name fallback is no longer needed for it.
         if (!isRequested) {
-          const norm = (s?: string) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-          // Prefer the in-memory appointment-id link (set by COMPLETE_SERVICE
-          // this session); fall back to matching today's appointment by client
-          // name, since the completed_services row loaded from the DB doesn't
-          // carry the link after a reload.
-          const apptId = entry?.originalAppointmentId ?? null;
-          const ticketName = norm(ticket.clientName);
-          const matched = state.appointments.some((a) => {
-            const idHit = apptId != null && a.id === apptId;
-            const nameHit = ticketName.length > 0 && norm(a.clientName) === ticketName;
-            if (!idHit && !nameHit) return false;
-            return (a.serviceRequests || []).some((r) =>
-              r.service === it.name &&
-              r.clientRequest === true &&
-              (r.manicuristIds || []).length > 0 &&
-              // Credit the request only when the staff who served this line is
-              // the one the customer requested — mirrors the completion rule.
-              (!it.staff1Id || (r.manicuristIds || []).includes(it.staff1Id)),
-            );
-          });
+          const apptId = entry?.originalAppointmentId ?? ticket.appointmentId ?? null;
+          const appt = apptId ? state.appointments.find((a) => a.id === apptId) : null;
+          const matched = (appt?.serviceRequests || []).some((r) =>
+            r.service === it.name &&
+            r.clientRequest === true &&
+            (r.manicuristIds || []).length > 0 &&
+            // Credit the request only when the staff who served this line is
+            // the one the customer requested — mirrors the completion rule.
+            (!it.staff1Id || (r.manicuristIds || []).includes(it.staff1Id)),
+          );
           if (matched) isRequested = true;
         }
       }

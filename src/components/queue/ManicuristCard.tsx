@@ -393,8 +393,12 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
                 <p className="font-mono text-[10px] font-semibold text-gray-900 truncate">
                   {currentClient.clientName}
                 </p>
+                {/* Only a real customer request earns the R — a booking parked
+                    in this tech's column carries her id with
+                    clientRequest: false and is not a request. */}
                 {currentClient.serviceRequests?.some(
-                  sr => Array.isArray(sr.manicuristIds) && sr.manicuristIds.includes(manicurist.id)
+                  sr => sr.clientRequest === true &&
+                    Array.isArray(sr.manicuristIds) && sr.manicuristIds.includes(manicurist.id)
                 ) && (
                   <span className="shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-bold text-[9px]">R</span>
                 )}

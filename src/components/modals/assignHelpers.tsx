@@ -84,9 +84,13 @@ export function getDistinctServices(
     const idx = serviceCountMap.get(s) ?? 0;
     serviceCountMap.set(s, idx + 1);
 
-    // Upstream paths (addApptToQueue, handleCheckIn) clear manicuristIds on
-    // non-request entries, so any populated manicuristIds here is a real
-    // customer request.
+    // Only entries the booking marks clientRequest: true are real customer
+    // requests. This used to accept any populated manicuristIds, trusting
+    // check-in to strip them off non-request entries — an invariant that lives
+    // in a different file and stopped holding. requestedId drives BOTH the
+    // pre-selected tech and the half-turn credit in MultiServiceAssign, so a
+    // booking parked in a tech's column was being paid 0.5 instead of its full
+    // catalog turn (2026-08-22).
     //
     // Two shapes of serviceRequests are supported and must both surface every
     // requested manicurist instead of only the first:
@@ -104,6 +108,7 @@ export function getDistinctServices(
     const flatRequested: string[] = [];
     for (const r of (client.serviceRequests || [])) {
       if (r.service !== s) continue;
+      if (r.clientRequest !== true) continue;
       if (!Array.isArray(r.manicuristIds)) continue;
       for (const id of r.manicuristIds) {
         if (id) flatRequested.push(id);

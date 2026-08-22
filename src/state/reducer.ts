@@ -540,17 +540,19 @@ function retainBackedServices(
 // appointment, to the manicurist ACTUALLY doing that work. Services with no
 // work behind them are untouched — an ordinary booking's slots should keep
 // following the primary column the way they always have.
-function pinBackedServiceAnchors(
-  services: ServiceType[],
-  requests: ServiceRequest[],
+// Who is actually working each service on this appointment, in first-seen
+// order, deduped by manicurist — a service that is BOTH in the queue and
+// already has a completed row (the DONE-but-ticket-open window) must not
+// count as two separate workers and mint two anchors.
+//
+// Shared by pinBackedServiceAnchors (which needs the `requested` flag) and by
+// the serviceRequests reconcile at the UPDATE_APPOINTMENT choke point (which
+// needs just the ids, to know which entries represent real work).
+function backedWorkersByService(
   apptId: string,
   queue: QueueEntry[],
   completed: CompletedEntry[],
-): ServiceRequest[] {
-  // Who is actually working each service on this appointment, in first-seen
-  // order, deduped by manicurist — a service that is BOTH in the queue and
-  // already has a completed row (the DONE-but-ticket-open window) must not
-  // count as two separate workers and mint two anchors.
+): Map<string, { manicuristId: string; requested: boolean }[]> {
   const workers = new Map<string, { manicuristId: string; requested: boolean }[]>();
   const addWorker = (svc: string, manicuristId: string | null, requested: boolean) => {
     if (!manicuristId) return;
@@ -570,6 +572,14 @@ function pinBackedServiceAnchors(
       addWorker(s, c.manicuristId, (c.requestedServices ?? []).includes(s));
     }
   }
+  return workers;
+}
+
+function pinBackedServiceAnchors(
+  services: ServiceType[],
+  requests: ServiceRequest[],
+  workers: Map<string, { manicuristId: string; requested: boolean }[]>,
+): ServiceRequest[] {
   if (workers.size === 0) return requests;
 
   const count = (items: ReadonlyArray<string>) => {
@@ -867,7 +877,9 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
             // Then re-anchor anything the patch would have left rendering off
             // a manicuristId that is about to move (see pinBackedServiceAnchors).
             nextRequests = pinBackedServiceAnchors(
-              nextServices, nextRequests, linkedAppt.id, updatedQueue, state.completed,
+              nextServices,
+              nextRequests,
+              backedWorkersByService(linkedAppt.id, updatedQueue, state.completed),
             );
             if (nextRequests !== prevRequests) {
               apptPatch.serviceRequests = nextRequests;
@@ -1682,8 +1694,21 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // Only mark a service as requested if the credited manicurist was specifically
       // the one requested for it. Without this check, a request for Manicurist X on
       // Service A would incorrectly show an R badge on Manicurist Y's Service B entry.
+      // A service is a REQUEST only when the booking says clientRequest: true.
+      // `manicuristIds` alone is not enough: a booked appointment parked in a
+      // tech's column carries that tech in manicuristIds with
+      // clientRequest: false, and reading that as a request stamps a false R
+      // in History and halves the turn. This filter used to check only
+      // manicuristIds and relied on check-in stripping them off non-requests —
+      // an invariant that lives in a different file and stopped holding
+      // (Allison x CHRISTINA, Gel Fill, 2026-08-22: a non-request booking in
+      // CHRISTINA's column came through DONE as a request, 1.0 turn -> 0.5).
+      // Ask the same question the appointment book asks, which has been right
+      // every time.
       const requestedServices = (client.serviceRequests || [])
-        .filter((r) => r.manicuristIds && r.manicuristIds.includes(creditId))
+        .filter((r) =>
+          r.clientRequest === true &&
+          r.manicuristIds && r.manicuristIds.includes(creditId))
         .map((r) => r.service);
       // Whole-entry request flag: set when the client was requested AND the credited
       // manicurist is the requested one. Covers the SingleServiceAssign path where
@@ -1913,34 +1938,54 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                 ? updates.services
                 : retainBackedServices(updates.services, a.services ?? [], a.id, state.queue, state.completed))
             : undefined;
-          // Any write that changes services[] gets serviceRequests[]
-          // reconciled against the NEW list — see reconcileServiceRequests
-          // above. Call sites that already pass a correctly-scrubbed
-          // serviceRequests (e.g. removeSvcFromAppt) are unaffected: this is
-          // idempotent on an already-consistent pair.
-          const reconciled = nextServices
-            ? reconcileServiceRequests(nextServices, updates.serviceRequests ?? a.serviceRequests ?? [])
-            : updates.serviceRequests;
+          // Any write that touches placement gets serviceRequests[] reconciled
+          // — see reconcileServiceRequests above. This used to run ONLY when
+          // the write carried a new services[], which meant a duplicate that
+          // got in via some other route was never pruned back out: nothing
+          // else in the app removes a serviceRequests entry, so it rendered as
+          // a phantom block forever (Dee Dee 2026-08-22, a duplicate KATELYN
+          // pedicure that survived every later write because none of them
+          // happened to include services[]).
+          //
+          // Widening it is only safe because the prune is now work-aware:
+          // `backedWorkers` gives it a floor of the techs actually on the
+          // floor, so a stale short services[] can't take a live block off the
+          // book, and real slots outrank stale twins when something has to go.
+          // Call sites that already pass a correctly-scrubbed serviceRequests
+          // (e.g. removeSvcFromAppt) are unaffected: this is idempotent on an
+          // already-consistent pair.
+          //
           // Retaining a service in services[] isn't enough on its own: if the
           // caller's serviceRequests don't cover it and this same write moves
           // `manicuristId`, the block loses its only column and vanishes
           // anyway. Re-anchor backed work whenever a write touches any of the
           // three fields that decide where a block renders. Status-only
-          // writes (check-in, complete, cancel — the common case) skip this
-          // entirely. A confirmed allowDroppingBackedServices removal is
-          // unaffected: the dropped service is no longer in nextServices, so
-          // nothing gets pinned for it.
+          // writes (check-in, complete, cancel — the common case) skip both
+          // passes entirely. A confirmed allowDroppingBackedServices removal
+          // is unaffected: the dropped service is no longer in nextServices,
+          // so nothing gets pinned or floored for it.
           const touchesPlacement =
             updates.services !== undefined ||
             updates.serviceRequests !== undefined ||
             updates.manicuristId !== undefined;
+          const workers = touchesPlacement
+            ? backedWorkersByService(a.id, state.queue, state.completed)
+            : new Map<string, { manicuristId: string; requested: boolean }[]>();
+          const backedWorkers = new Map(
+            Array.from(workers, ([svc, ws]) => [svc, new Set(ws.map((w) => w.manicuristId))]),
+          );
+          const reconciled = touchesPlacement
+            ? reconcileServiceRequests(
+                nextServices ?? a.services ?? [],
+                updates.serviceRequests ?? a.serviceRequests ?? [],
+                backedWorkers,
+              )
+            : updates.serviceRequests;
           const serviceRequests = touchesPlacement
             ? pinBackedServiceAnchors(
                 nextServices ?? a.services ?? [],
                 reconciled ?? a.serviceRequests ?? [],
-                a.id,
-                state.queue,
-                state.completed,
+                workers,
               )
             : reconciled;
           return {

@@ -1589,13 +1589,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // (Debbie Ma x Brian, 2026-08-05: a stale "Manicure" serviceRequests
       // entry kept reappearing after checkout correctly changed her services[]
       // to Gel Manicure.)
-      const apptServices = new Set(appt.services ?? []);
-      const { next, changed } = addMissingServiceRequests(currentReqs, desired, apptServices);
-      if (!changed) continue;
+      //
+      // The gate used to be a Set — presence-only. With services[] holding one
+      // "Pedicure" and two techs each doing a pedicure, it pushed the second
+      // request and left the row at 1 service / 2 requests, which getApptSvcs()
+      // renders as an extra block (Dee Dee 2026-08-22). It's now the services[]
+      // LIST, and when the added entries outrun it we send the grown services[]
+      // in the same dispatch rather than dropping a tech who is really working.
+      // Keeping the two in lockstep is also what stops this from fighting the
+      // reducer's reconcile: matched counts make that pass a no-op, so there's
+      // no add/prune loop.
+      const { next, nextServices, changed, servicesChanged } = addMissingServiceRequests(
+        currentReqs,
+        desired,
+        appt.services ?? [],
+      );
+      if (!changed && !servicesChanged) continue;
       dispatch({
         type: 'UPDATE_APPOINTMENT',
         id: apptId,
-        updates: { serviceRequests: next },
+        updates: servicesChanged
+          ? { serviceRequests: next, services: nextServices }
+          : { serviceRequests: next },
       });
     }
   }, [state.queue, state.appointments, state.loaded]);
