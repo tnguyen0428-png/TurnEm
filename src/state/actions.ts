@@ -17,7 +17,11 @@ export type AppAction =
   | { type: 'REMOVE_CLIENT'; id: string }
   | { type: 'ASSIGN_CLIENT'; clientId: string; manicuristId: string }
   | { type: 'COMPLETE_SERVICE'; manicuristId: string; queueEntryId?: string }
-  | { type: 'CANCEL_SERVICE'; manicuristId: string }
+  // `discard` = this card should not exist at all: delete the queue entry
+  // instead of returning it to the waiting list. Only meaningful for split
+  // children (see the reducer) — a backed-out split otherwise has no exit but
+  // DONE, which mints a phantom earnings entry.
+  | { type: 'CANCEL_SERVICE'; manicuristId: string; discard?: boolean }
   | { type: 'SET_SELECTED_CLIENT'; clientId: string | null }
   | { type: 'SET_EDITING_STAFF'; staffId: string | null }
   | { type: 'CLEAR_HISTORY' }

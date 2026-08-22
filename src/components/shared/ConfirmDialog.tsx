@@ -4,6 +4,12 @@ interface ConfirmDialogProps {
   onCancel: () => void;
   confirmLabel?: string;
   danger?: boolean;
+  // Optional THIRD choice, for the cases where "go back" and "confirm" aren't
+  // the only two outcomes — e.g. cancelling a split child, where the card can
+  // either return to the queue or be discarded outright. Rendered as an
+  // outlined button so it reads as a deliberate alternative, not the default.
+  secondaryLabel?: string;
+  onSecondary?: () => void;
 }
 
 export default function ConfirmDialog({
@@ -12,6 +18,8 @@ export default function ConfirmDialog({
   onCancel,
   confirmLabel = 'Confirm',
   danger = false,
+  secondaryLabel,
+  onSecondary,
 }: ConfirmDialogProps) {
   return (
     <div
@@ -22,7 +30,15 @@ export default function ConfirmDialog({
         className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in"
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="text-gray-800 font-mono text-sm leading-relaxed mb-6">{message}</p>
+        <p className="text-gray-800 font-mono text-sm leading-relaxed mb-6 whitespace-pre-line">{message}</p>
+        {secondaryLabel && onSecondary && (
+          <button
+            onClick={onSecondary}
+            className="w-full mb-3 px-4 py-2 rounded-lg text-sm font-mono font-semibold text-red-600 border-2 border-red-200 hover:bg-red-50 active:scale-[0.98] transition-all"
+          >
+            {secondaryLabel}
+          </button>
+        )}
         <div className="flex gap-3 justify-end">
           <button
             onClick={onCancel}

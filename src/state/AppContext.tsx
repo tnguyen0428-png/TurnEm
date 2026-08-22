@@ -360,10 +360,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       pushIfSynth(`walkin:${action.id}`);
     } else if (action.type === 'CANCEL_SERVICE') {
       const mani = s.manicurists.find((m) => m.id === action.manicuristId);
+      // Mirror the reducer's own fallback: currentClient can be null while the
+      // entry is still inProgress, and a discard dispatched from that state
+      // would otherwise record no intent and leave the block behind.
       const entry = mani?.currentClient
         ? s.queue.find((c) => c.id === mani.currentClient)
-        : undefined;
-      pushIfSynth(entry?.originalAppointment?.id);
+        : s.queue.find(
+            (c) => c.status === 'inProgress' && c.assignedManicuristId === action.manicuristId,
+          );
+      if (action.discard) {
+        // Split-child discard deletes the child's OWN block by exact id — the
+        // same id the reducer resolves. Deliberately not the inherited
+        // `originalAppointment` pointer, which can name the sibling's block.
+        if (entry) pushIfSynth(`walkin:${entry.id}`);
+      } else {
+        pushIfSynth(entry?.originalAppointment?.id);
+      }
     }
     return ids;
   }, []);

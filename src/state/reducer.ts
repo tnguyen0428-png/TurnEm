@@ -1494,6 +1494,22 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // reallocateTurnsForStaffChanges on ticket save).
       const isAddChild = /-add-/.test(currentClientId);
 
+      // Split-child discard: the receptionist opened MultiServiceAssign, split
+      // the visit, then decided the child shouldn't exist (a mis-split, or the
+      // service is being re-entered as its own walk-in instead). Returning it
+      // to `waiting` leaves an orphan card that duplicates the visit, so the
+      // only exit anyone could find on the floor was to park it on a spare
+      // tech and press DONE — which mints a completed_services row with a null
+      // price for work nobody did. That is exactly the Z-TEMPS husk from
+      // 2026-08-21 (Lisa / Gel Manicure, re-billed correctly as "Lisa 2").
+      //
+      // `discard` is only honoured for a SPLIT child (carries parentQueueId,
+      // and is not an `-add-` child, which already deletes on cancel). A plain
+      // walk-in keeps the old behaviour: cancel returns it to the queue, where
+      // WaitingPanel's remove button is the intended exit.
+      const isSplitChild = !isAddChild && !!client?.parentQueueId;
+      const discardChild = action.discard === true && isSplitChild;
+
       // Phantom-pointer recovery: if the manicurist's currentClient points
       // at an id that doesn't exist in the local queue (e.g. the queue
       // entry was deleted server-side, or the realtime DELETE arrived
@@ -1512,8 +1528,11 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         };
       }
 
+      // A discarded split child still refunds its turn credit — the tech was
+      // credited at assign time and did not do the work. Only `-add-` children
+      // refund nothing, because they always carry turnValue=0.
       const turnDeduction = isAddChild ? 0 : client.turnValue;
-      const updatedQueue = isAddChild
+      const updatedQueue = isAddChild || discardChild
         ? state.queue.filter((c) => c.id !== client.id)
         : state.queue.map((c) =>
             c.id === client.id
@@ -1532,11 +1551,32 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       // Synthetic walk-ins only (see REMOVE_CLIENT). A real appt parked via
       // assignment keeps its block on cancel instead of being deleted.
       const cancelDeleteAppt = !!(cancelApptStill && cancelApptStill.isWalkIn && cancelApptStill.id.startsWith('walkin:'));
+
+      // A discarded split child owns exactly ONE block: `walkin:${childId}`.
+      // synthWalkInAppt keys blocks on the queue entry id precisely so that
+      // each split child gets a distinct one (see its id comment). Drop that
+      // block and only that block.
+      //
+      // Do NOT follow `originalAppointment` here: a split child INHERITS that
+      // pointer from its parent (see SPLIT_AND_ASSIGN), so on a discard it can
+      // name the block belonging to the sibling who is still mid-service.
+      // Deleting by an inherited/visit-level pointer is the same collateral
+      // shape as the void-by-visit-prefix bug — match the exact id instead.
+      const discardOwnBlockId = discardChild ? `walkin:${client.id}` : null;
+      const discardOwnBlock = discardOwnBlockId
+        ? state.appointments.find((a) => a.id === discardOwnBlockId && a.isWalkIn)
+        : null;
+      const removeApptIds = new Set<string>();
+      if (discardChild) {
+        if (discardOwnBlock) removeApptIds.add(discardOwnBlock.id);
+      } else if (cancelDeleteAppt && cancelApptId) {
+        removeApptIds.add(cancelApptId);
+      }
       return {
         ...state,
         queue: updatedQueue,
-        appointments: cancelDeleteAppt
-          ? state.appointments.filter((a) => a.id !== cancelApptId)
+        appointments: removeApptIds.size > 0
+          ? state.appointments.filter((a) => !removeApptIds.has(a.id))
           : state.appointments,
         manicurists: state.manicurists.map((m) =>
           m.id === action.manicuristId

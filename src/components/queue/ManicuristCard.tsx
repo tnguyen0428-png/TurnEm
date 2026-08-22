@@ -118,6 +118,21 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
     setShowCancelConfirm(false);
   }
 
+  // A split child that shouldn't exist — a mis-split, or one the receptionist
+  // backed out of and re-entered as its own walk-in. Delete it outright
+  // (turns refunded) instead of returning it to the queue as an orphan card.
+  // Without this the only exit on the floor is DONE, which credits a service
+  // nobody performed.
+  function handleDiscard() {
+    dispatch({ type: 'CANCEL_SERVICE', manicuristId: manicurist.id, discard: true });
+    setShowCancelConfirm(false);
+  }
+
+  // `-add-` children already delete on cancel; only true SPLIT children carry a
+  // parentQueueId and currently survive as a waiting orphan.
+  const isSplitChild =
+    !!currentClient?.parentQueueId && !/-add-/.test(currentClient.id);
+
   function handleEditClient() {
     if (currentClient) {
       dispatch({ type: 'SET_EDITING_CLIENT', clientId: currentClient.id });
@@ -147,10 +162,16 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
     <>
     {showCancelConfirm && (
       <ConfirmDialog
-        message={`Cancel service and return ${currentClient?.clientName || 'client'} to the queue?`}
-        confirmLabel="Cancel Service"
+        message={
+          isSplitChild
+            ? `Cancel ${currentClient?.clientName || 'client'}'s ${currentClient?.services?.join(', ') || 'service'}?\n\nReturn it to the queue if someone else will do it. Remove it if this card shouldn't exist — a mis-split, or the service was re-entered separately.`
+            : `Cancel service and return ${currentClient?.clientName || 'client'} to the queue?`
+        }
+        confirmLabel={isSplitChild ? 'Return to Queue' : 'Cancel Service'}
         onConfirm={handleCancel}
         onCancel={() => setShowCancelConfirm(false)}
+        secondaryLabel={isSplitChild ? 'Remove — not a real service' : undefined}
+        onSecondary={isSplitChild ? handleDiscard : undefined}
       />
     )}
     {showClockOutConfirm && (
