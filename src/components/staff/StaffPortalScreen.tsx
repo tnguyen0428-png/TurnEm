@@ -164,6 +164,11 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
   // ── Week view ──────────────────────────────────────────────────────────
   // Weeks run Sunday → Saturday, matching how the salon reads a week
   // ("Week 08/02/2026 - 08/08/2026" is Sun 8/2 through Sat 8/8).
+  // DONE button on the in-progress banner. Two-tap: the first tap arms it, the
+  // second commits — a single mis-tap on a phone in a pocket must not complete
+  // a service. `doneBusy` blocks a double-fire while the writes are in flight.
+  const [doneArmed, setDoneArmed] = useState(false);
+  const [doneBusy, setDoneBusy] = useState(false);
   const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
   const [weekStart, setWeekStart] = useState<string>(() => startOfWeek(getBusinessDayLA()));
   const [weekRows, setWeekRows] = useState<{ date: string; services: number; dollars: number; turns: number }[]>([]);
@@ -637,6 +642,15 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     );
     return byStaff ?? null;
   }, [state.queue, manicurist.currentClient, manicurist.id]);
+
+  // Disarm the DONE confirm on its own so a half-tapped button can't sit armed
+  // in a pocket and complete on the next accidental touch. Also disarms if the
+  // in-service client changes underneath (front desk reassigned mid-tap).
+  useEffect(() => {
+    if (!doneArmed) return;
+    const t = setTimeout(() => setDoneArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [doneArmed, inProgressEntry?.id]);
 
   // Diagnostic — surfaces in Safari Web Inspector / Chrome remote debug.
   useEffect(() => {
@@ -1251,6 +1265,105 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 </span>
               )}
             </div>
+
+            {/* DONE — completes this service straight from the phone.
+                Two-tap to commit; see doneArmed. */}
+            <button
+              type="button"
+              disabled={doneBusy}
+              onClick={async () => {
+                if (!doneArmed) { setDoneArmed(true); return; }
+                if (doneBusy) return;
+                setDoneBusy(true);
+                try {
+                  const entry = inProgressEntry;
+                  // ─── MIRRORS reducer.ts COMPLETE_SERVICE — KEEP IN SYNC ───
+                  // Staff mode never syncs state back to Supabase (see
+                  // AppContext.tsx "Staff mode is read-only"), so a bare
+                  // dispatch would stay on this device. We write the rows
+                  // ourselves, then dispatch only to flip this screen. That
+                  // makes this a SECOND writer of completed_services with its
+                  // own copy of the turn-credit and request rules — chosen
+                  // deliberately (Tony, 2026-08-26). Any rule change in the
+                  // reducer has to be repeated here or the two will drift.
+                  //
+                  // Turn credit follows the ASSIGNED tech, not whoever tapped
+                  // DONE — the same rule that keeps split work off the wrong
+                  // manicurist.
+                  const credit =
+                    state.manicurists.find((m) => m.id === entry.assignedManicuristId) ?? manicurist;
+                  // A service is a REQUEST only when the booking says
+                  // clientRequest === true AND the credited tech is the one
+                  // requested for it. manicuristIds alone is a parked column.
+                  const requestedServices = (entry.serviceRequests ?? [])
+                    .filter((r) => r.clientRequest === true && r.manicuristIds?.includes(credit.id))
+                    .map((r) => r.service);
+                  const wholeEntryRequested =
+                    !!entry.isRequested && entry.requestedManicuristId === credit.id;
+                  // Fall back to this tech's own requests when services[] is
+                  // empty, so History never shows a blank service line.
+                  const recordedServices =
+                    entry.services && entry.services.length > 0
+                      ? entry.services
+                      : (entry.serviceRequests ?? [])
+                          .filter((r) => r.manicuristIds?.includes(credit.id))
+                          .map((r) => r.service);
+                  const now = Date.now();
+                  // id = the queue entry's own id, exactly as the reducer does,
+                  // so a re-fire upserts in place instead of duplicating.
+                  const { error: cErr } = await supabase.from('completed_services').upsert({
+                    id: entry.id,
+                    client_name: entry.clientName,
+                    service: recordedServices[0] || '',
+                    services: recordedServices,
+                    turn_value: entry.turnValue,
+                    manicurist_id: credit.id,
+                    manicurist_name: credit.name,
+                    manicurist_color: credit.color,
+                    started_at: new Date(entry.startedAt ?? now).toISOString(),
+                    completed_at: new Date(now).toISOString(),
+                    requested_services: requestedServices,
+                    is_appointment: !!entry.isAppointment,
+                    is_requested: wholeEntryRequested,
+                    edited: false,
+                    voided: false,
+                    original_appointment_id: entry.originalAppointment?.id ?? null,
+                    manicurist_clock_in_time:
+                      credit.clockInTime == null ? null : new Date(credit.clockInTime).toISOString(),
+                  }, { onConflict: 'id' });
+                  if (cErr) {
+                    console.error('[staff portal] DONE: completed_services upsert failed', cErr);
+                    setDoneArmed(false);
+                    return;
+                  }
+                  // Only remove the queue entry once the completed row is
+                  // safely written — never the other way round, or a failure
+                  // here loses the service entirely.
+                  const { error: qErr } = await supabase
+                    .from('queue_entries').delete().eq('id', entry.id);
+                  if (qErr) console.error('[staff portal] DONE: queue delete failed', qErr);
+                  const { error: mErr } = await supabase
+                    .from('manicurists')
+                    .update({ status: 'available', current_client_id: null })
+                    .eq('id', manicurist.id);
+                  if (mErr) console.error('[staff portal] DONE: manicurist free failed', mErr);
+                  dispatch({
+                    type: 'COMPLETE_SERVICE',
+                    manicuristId: manicurist.id,
+                    queueEntryId: entry.id,
+                  });
+                  setDoneArmed(false);
+                } finally {
+                  setDoneBusy(false);
+                }
+              }}
+              className={`mt-3 w-full px-6 py-3 rounded-xl active:scale-[0.98] text-white font-mono text-sm font-bold tracking-wider shadow-sm transition-all disabled:opacity-60 ${
+                doneArmed ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'
+              }`}
+              aria-label={doneArmed ? 'Tap again to confirm finishing this service' : 'Finish this service'}
+            >
+              {doneBusy ? 'SAVING…' : doneArmed ? 'TAP AGAIN TO CONFIRM' : "I'M DONE"}
+            </button>
           </div>
         )}
 
