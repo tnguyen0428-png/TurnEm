@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, completedServiceIdsForTicketVoid, createTicketAtCheckin, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, isWalkInBlockBacked, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket, voidTicket } from '../lib/tickets';
+import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, completedServiceIdsForTicketVoid, createTicketAtCheckin, fetchTicketByLineQueueEntry, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, isWalkInBlockBacked, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket, voidTicket } from '../lib/tickets';
 import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
@@ -2702,7 +2702,10 @@ async function syncCompleted(
       // Build this completed entry's items every time — appendItemsToTicket
       // dedupes by queue_entry_id so a re-fire of the same entry is silent.
       try {
-        const existing = await fetchTicketByQueueEntry(visitId);
+        // Header lookup first. When the ticket header is keyed to a different
+        // queue entry than this visit, fall back to finding it by its LINES.
+        const existing = (await fetchTicketByQueueEntry(visitId))
+          ?? (await fetchTicketByLineQueueEntry(visitId));
         const items = (c.services && c.services.length > 0 ? c.services : [''])
           .filter((name) => name.trim().length > 0)
           .map((svcName) => {

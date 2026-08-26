@@ -575,6 +575,44 @@ export async function fetchVoidedTicketsForRange(
 }
 
 /**
+ * Find a ticket that already has a LINE for this visit, even when the ticket
+ * itself is keyed to a different queue entry. Matches the visit id exactly or
+ * as the prefix of a split line (`${visitId}#...`).
+ *
+ * Returns the most recently opened non-voided match, or null.
+ */
+export async function fetchTicketByLineQueueEntry(visitId: string): Promise<Ticket | null> {
+  const { data: itemRows, error: itemErr } = await supabase
+    .from('ticket_items')
+    .select('ticket_id')
+    .or(`queue_entry_id.eq.${visitId},queue_entry_id.like.${visitId}#%`);
+  if (itemErr) {
+    console.warn('[tickets] fetchTicketByLineQueueEntry items:', itemErr.message);
+    return null;
+  }
+  if (!itemRows || itemRows.length === 0) return null;
+
+  const ids = Array.from(
+    new Set((itemRows as { ticket_id: string }[]).map((r) => r.ticket_id).filter(Boolean)),
+  );
+  if (ids.length === 0) return null;
+
+  const { data: tRows, error: tErr } = await supabase
+    .from('tickets')
+    .select('id')
+    .in('id', ids)
+    .neq('status', 'voided')
+    .order('opened_at', { ascending: false });
+  if (tErr) {
+    console.warn('[tickets] fetchTicketByLineQueueEntry tickets:', tErr.message);
+    return null;
+  }
+  if (!tRows || tRows.length === 0) return null;
+
+  return fetchTicket((tRows[0] as { id: string }).id);
+}
+
+/**
  * Find an existing OPEN ticket for the given client on a business date.
  * Matches in priority order:
  *   1. clientPhone (when both sides have one) — strict equality.
