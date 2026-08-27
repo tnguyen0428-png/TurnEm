@@ -257,11 +257,19 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                         {!isAlmostDone && m.id === suggestedId && !is4thSpecial && requestedIds.size === 0 && <Badge label="RECOMMENDED" variant="green" />}
                         {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
                         {(() => {
-                          const apptIn = getMinsToNextAppt(m.id, state.appointments, false, state.queue, state.completed);
+                          // includePast=true so an OVERDUE appointment still warns.
+                          // With false the helper skips a negative delta, so the pill
+                          // vanished exactly when it mattered most — the receptionist
+                          // saw a free tech and assigned them a walk-in while a
+                          // requested client was already late (Tony, 2026-08-27).
+                          // The helper already suppresses appointments in motion or
+                          // finished, so this only fires on one nobody has started.
+                          const apptIn = getMinsToNextAppt(m.id, state.appointments, true, state.queue, state.completed);
                           if (apptIn === null || apptIn >= 30) return null;
+                          const apptLate = apptIn < 0;
                           return (
-                            <span className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 bg-yellow-100 text-yellow-700 border border-yellow-400 animate-pulse">
-                              APPT IN {apptIn} MIN
+                            <span className={`inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 animate-pulse ${apptLate ? 'bg-red-100 text-red-700 border border-red-500' : 'bg-yellow-100 text-yellow-700 border border-yellow-400'}`}>
+                              {apptLate ? `APPT ${Math.abs(apptIn)} MIN LATE` : `APPT IN ${apptIn} MIN`}
                             </span>
                           );
                         })()}

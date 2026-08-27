@@ -503,11 +503,16 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                 {!isAlmostDone && m._isSuggested && !isRequested && !rowIs4thSpecial && !requestedId && <Badge label="RECOMMENDED" variant="green" />}
                                 {isAlmostDone && <Badge label="ALMOST DONE" variant="amber" />}
                                 {(() => {
-                                  const apptIn = getMinsToNextAppt(m.id, state.appointments, false, state.queue, state.completed);
+                                  // includePast=true — see the same block in
+                                  // SingleServiceAssign. A late appointment used to
+                                  // drop out of the list entirely, hiding the warning
+                                  // at the moment the receptionist most needs it.
+                                  const apptIn = getMinsToNextAppt(m.id, state.appointments, true, state.queue, state.completed);
                                   if (apptIn === null || apptIn >= 30) return null;
+                                  const apptLate = apptIn < 0;
                                   return (
-                                    <span className="inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 bg-yellow-100 text-yellow-700 border border-yellow-400 animate-pulse">
-                                      APPT IN {apptIn} MIN
+                                    <span className={`inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 animate-pulse ${apptLate ? 'bg-red-100 text-red-700 border border-red-500' : 'bg-yellow-100 text-yellow-700 border border-yellow-400'}`}>
+                                      {apptLate ? `APPT ${Math.abs(apptIn)} MIN LATE` : `APPT IN ${apptIn} MIN`}
                                     </span>
                                   );
                                 })()}
