@@ -1515,7 +1515,14 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
               <p className="font-mono text-xs text-gray-400">Loading...</p>
             </div>
           ) : (() => {
-            const entries = isToday ? completedToday : historyEntries;
+            // Hide voided rows outright on the STAFF portal. They already
+            // count 0 toward the day/week totals and the "N completed" header,
+            // so a struck-through line the tech can't act on only reads as
+            // "why am I not being paid for this?" (Tony, 2026-08-26 — SAM's
+            // removed Acrylic Removal). The VOID badge below is kept for the
+            // front desk's History screen, which still shows voided rows on
+            // purpose: there the audit trail is the point.
+            const entries = (isToday ? completedToday : historyEntries).filter((e) => !e.voided);
             if (entries.length === 0) {
               return (
                 <div className="px-4 py-8 text-center">
