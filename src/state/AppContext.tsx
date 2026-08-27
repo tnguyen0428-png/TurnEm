@@ -1969,27 +1969,35 @@ function manicuristUnchanged(a: Manicurist, b: Manicurist, aIdx: number, bIdx: n
 }
 
 function manicuristToRow(m: Manicurist, idx: number) {
-  // total_turns IS included in the sync payload. React local state is the
-  // source of truth for the manicurist's turn count. Design (2026-05-28):
-  //   - Assignment credits the turn to the manicurist card immediately.
-  //   - Edits in queue or on the ticket adjust the credit live.
-  //   - Checkout (DONE / PROCESS) locks in the final value recorded to
-  //     history.
+  // total_turns is DELIBERATELY ABSENT from this payload. The database is the
+  // single writer; see migration 20260827230000_total_turns_single_writer.sql.
   //
-  // The reducer owns all the arithmetic (SPLIT_AND_ASSIGN, CANCEL_SERVICE,
-  // TOGGLE_VOID_COMPLETED, apply-delta on edits, etc). Pushing total_turns
-  // from React to DB on each sync keeps the persisted value aligned with
-  // what the cashier sees, so a refresh or a second device on the same
-  // shift shows the correct number including in-flight assignments.
+  // WHY (Molani x BRIAN, 2026-08-27): including it made every device a writer
+  // of the same derived value, each pushing an ABSOLUTE number computed from
+  // its own local cache — correct only if that cache is complete. A credit
+  // reconcile repointed a visit KELLY → BRIAN at 14:41 with compare-and-swap
+  // (BRIAN 5.0 → 6.5); a phone open since 10:57 had been suspended by Safari,
+  // missed the realtime frame carrying that repoint, and at 14:44 pressed DONE
+  // on the next visit — recomputing BRIAN from a cache that never had the row,
+  // getting 5.0, and pushing it. The correction lasted three minutes. Voiding
+  // the duplicate ticket then subtracted the same 1.5 again, from a total that
+  // no longer held it. BRIAN finished on 3.5 for a $55 service that was
+  // collected on.
   //
-  // History (commit 48b38c1, 2026-05-27): total_turns was OMITTED here and
-  // a DB trigger sync_manicurist_total_turns_from_completed recomputed it
-  // from completed_services on every change. That made the DB authoritative
-  // — but the DB only sees DONE work, so in-flight assignments were
-  // invisible, and the realtime echo of the assignment UPDATE brought DB
-  // total_turns=0 back into React, wiping the local at-assignment credit.
-  // The trigger has been dropped (migration 2026-05-28) to match the
-  // restored design.
+  // CAS on this push would not have saved it: 5.0 was a faithful computation
+  // over an incomplete cache, so it would have won the swap and still been
+  // wrong. The defect is the writer count, not the locking.
+  //
+  // NOT a return to commit 48b38c1 (2026-05-27), which was reverted a day
+  // later. That trigger read ONLY completed_services, so the DB could not see
+  // in-flight work: an assignment recomputed to 0 and the realtime echo wiped
+  // the at-assignment credit off the card. The new formula counts in-progress
+  // queue entries too — it is the same formula recomputeTotalTurns() runs — so
+  // the DB and the client agree rather than fight.
+  //
+  // recomputeTotalTurns() in the reducer still runs on every action, so the
+  // card updates the instant you assign. It is now display-only: local state
+  // computes, the DB persists. If you change one formula, change both.
   return {
     id: m.id,
     name: m.name,
@@ -1998,7 +2006,6 @@ function manicuristToRow(m: Manicurist, idx: number) {
     skills: m.skills,
     clocked_in: m.clockedIn,
     clock_in_time: m.clockInTime ? new Date(m.clockInTime).toISOString() : null,
-    total_turns: m.totalTurns,
     current_client_id: m.currentClient,
     status: m.status,
     has_fourth_position_special: m.hasFourthPositionSpecial,
