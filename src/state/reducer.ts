@@ -1094,6 +1094,11 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                         }
                         return pending;
                       })(),
+                      // Protect slots held by a tech already working that
+                      // service — state.queue is still pre-assignment here, so
+                      // the tech being assigned NOW is correctly not backed and
+                      // stays free to take a slot.
+                      backedWorkersByService(a.id, state.queue, state.completed),
                     ).next,
                   }
                 : a,
@@ -1418,7 +1423,15 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
             // this FIFO just because a split sibling shares its service name
             // (same failure class as the ASSIGN_CLIENT relocate branch;
             // Linda Platten x Macy→Brian, 2026-08-07).
-            const { next: relocated, remaining } = relocateServiceRequests(a.serviceRequests ?? [], pending);
+            const { next: relocated, remaining } = relocateServiceRequests(
+              a.serviceRequests ?? [],
+              pending,
+              // Same protection as the ASSIGN_CLIENT branch: a sibling already
+              // mid-service keeps its slot instead of being overwritten by the
+              // tech this split is fanning out to. state.queue is pre-action,
+              // so the children being assigned right now are not yet backed.
+              backedWorkersByService(a.id, state.queue, state.completed),
+            );
             const nextReqs: ServiceRequest[] = [...relocated];
             // Any service whose tech is still pending had no existing request
             // entry — append one so the block fans into that tech's column.

@@ -57,27 +57,75 @@ export type BackedWorkers = ReadonlyMap<string, ReadonlySet<string>>;
 export function relocateServiceRequests(
   requests: ServiceRequest[],
   pending: Map<string, string[]>,
+  backed?: ReadonlyMap<string, ReadonlyArray<{ manicuristId: string }>>,
 ): { next: ServiceRequest[]; remaining: Map<string, string[]> } {
   const queues = new Map<string, string[]>(
     Array.from(pending, ([svc, ids]) => [svc, [...ids]]),
   );
-  const next = requests.map((r) => {
+
+  // Is this slot held by a manicurist who is ACTUALLY performing that service
+  // on this appointment right now (live queue entry or non-voided completed
+  // row)? Such a slot must not be handed to a different tech — see the two-pass
+  // note below. Without `backed` this is always false and the function behaves
+  // exactly as it did before the preference existed.
+  const heldByWorker = (r: ServiceRequest): boolean => {
+    if (!backed) return false;
+    const holder = r.manicuristIds?.[0];
+    if (!holder) return false;
+    return !!backed.get(r.service)?.some((w) => w.manicuristId === holder);
+  };
+
+  const next = requests.slice();
+  // Occupied, non-requested slots passed over in pass A. Kept in array order.
+  const deferred: number[] = [];
+
+  // ── Pass A — prefer a FREE slot ─────────────────────────────────────────
+  // Erinn, 2026-08-26: a booking with two "Gel Pedicure" slots — KIMBERLY
+  // mid-service in the first, a Z-TEMPS placeholder in the second. Assigning
+  // TAMMY walked the array in order, overwrote KIMBERLY's slot because the
+  // names matched, and left the placeholder untouched. The book then showed
+  // TAMMY + Z-TEMPS while KIMBERLY, still working, appeared nowhere. Array
+  // order is not visual order, so which slot got taken looked arbitrary.
+  //
+  // A slot held by a real worker now gets the same treatment a clientRequest
+  // slot already had: consumable only by its OWN manicurist (an idempotent
+  // re-assign of the same tech), never stolen by a different one.
+  for (let i = 0; i < next.length; i++) {
+    const r = next[i];
     const q = queues.get(r.service);
-    if (!q || q.length === 0) return r;
-    if (r.clientRequest === true) {
-      // Only consume a pending assignment that matches this request's
-      // current manicurist — that's the request being fulfilled, not an
-      // unrelated reassignment trying to steal the slot. Leave a
-      // different-manicurist assignment in the queue untouched so it can
-      // never overwrite (or duplicate against) the request.
-      const idx = q.indexOf(r.manicuristIds[0] ?? '');
-      if (idx === -1) return r;
+    if (!q || q.length === 0) continue;
+    if (r.clientRequest === true || heldByWorker(r)) {
+      // Only consume a pending assignment that matches this slot's current
+      // manicurist — that's the request/assignment being fulfilled, not an
+      // unrelated reassignment trying to steal the slot.
+      const idx = q.indexOf(r.manicuristIds?.[0] ?? '');
+      if (idx === -1) {
+        // A clientRequest slot is NEVER overwritten (Linda Platten x
+        // Macy→Brian, 2026-08-07). A merely-occupied one may be, but only
+        // after every free slot has been used — see pass B.
+        if (r.clientRequest !== true) deferred.push(i);
+        continue;
+      }
       q.splice(idx, 1);
-      return r;
+      continue;
     }
-    const manicuristId = q.shift()!;
-    return { ...r, manicuristIds: [manicuristId], startTime: undefined };
-  });
+    next[i] = { ...r, manicuristIds: [q.shift()!], startTime: undefined };
+  }
+
+  // ── Pass B — no free slot was left ──────────────────────────────────────
+  // Fall back to the original behaviour and overwrite an occupied slot in
+  // array order. This keeps the NUMBER of assignments consumed identical to
+  // before: the preference changes only WHICH slot is chosen, never how many.
+  // That matters because leftovers flow back to callers as `remaining`, and
+  // one of them appends a new entry for each — which is how a phantom extra
+  // block gets minted (Dee Dee 2026-08-22, a third pedicure slot).
+  for (const i of deferred) {
+    const r = next[i];
+    const q = queues.get(r.service);
+    if (!q || q.length === 0) continue;
+    next[i] = { ...r, manicuristIds: [q.shift()!], startTime: undefined };
+  }
+
   const remaining = new Map<string, string[]>();
   for (const [svc, ids] of queues) {
     if (ids.length > 0) remaining.set(svc, ids);
