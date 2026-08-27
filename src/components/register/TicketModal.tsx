@@ -34,7 +34,7 @@ import {
   reallocateTurnsForStaffChanges,
   reconcileTurnCreditToTicketLines,
   reconcileTicketItemsFromCompleted,
-  applyTurnDelta,
+  syncTurnTotal,
   type ClosingPaymentInput,
 } from '../../lib/tickets';
 import { fetchOpenShift } from '../../lib/shifts';
@@ -1746,14 +1746,14 @@ export default function TicketModal({
           console.error('[ticket modal] completed_services sync failed:', error.message);
           return;
         }
-        // Adjust the manicurist's totalTurns by the same delta so the queue
-        // card / staff portal reflect the new credit. Uses applyTurnDelta
-        // (compare-and-swap) so a concurrent writer — another tab's bucket
-        // recompute, a voidTicket rollback echo, syncManicurists — can't
-        // silently clobber this update with a stale snapshot.
-        // (2026-05-31 audit N31-H2)
+        // The turn_value write above already moved this manicurist's derived
+        // total — a row trigger on completed_services recomputes it from the
+        // source tables in the same transaction. Re-assert it explicitly so
+        // the queue card / staff portal converge immediately; idempotent.
+        // (2026-05-31 audit N31-H2; delta arithmetic removed 2026-08-27, it
+        // would now double-apply on top of the trigger — see syncTurnTotal.)
         if (turnDelta !== 0 && entry.manicuristId) {
-          await applyTurnDelta(entry.manicuristId, turnDelta);
+          await syncTurnTotal(entry.manicuristId);
         }
       })();
     }

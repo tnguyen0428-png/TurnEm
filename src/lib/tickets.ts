@@ -2840,15 +2840,27 @@ export async function voidTicket(
     await completedServiceIdsForTicketVoid(ticketId);
   const useLineScope = scopeResolved;
 
+  // Every manicurist whose credit this void touches, collected before the rows
+  // are deleted (afterwards there is nothing left to read them from) so the
+  // derived total can be re-asserted at the end.
+  const affectedStaff = new Set<string>();
+
   if (useLineScope ? scopedIds.length > 0 : !!visitId) {
     try {
-      // 1. Pull the completed_services rows this ticket is responsible for so
-      //    we know which manicurists' total_turns to decrement and by how
-      //    much. Already-voided rows had their turns subtracted earlier via
-      //    TOGGLE_VOID_COMPLETED, so they don't contribute to the rollback.
+      // 1. Note WHICH manicurists this void touches. We no longer need the
+      //    turn arithmetic — total_turns is derived in the database from
+      //    non-voided completed_services plus in-progress queue_entries, and
+      //    the row triggers recompute it as part of the void-mark and delete
+      //    below (migration 20260827230000_total_turns_single_writer.sql).
+      //    Subtracting a delta here as well would refund the same turn twice.
+      //
+      //    We still collect the ids so step 3b can re-assert the derived value
+      //    explicitly. The `voided` flag is deliberately NOT filtered now:
+      //    an already-voided row contributes 0 either way, and we want its
+      //    owner in the recompute set regardless.
       const scopedSelect = supabase
         .from('completed_services')
-        .select('id, manicurist_id, turn_value, voided');
+        .select('id, manicurist_id');
       const { data: completedRows, error: csFetchErr } = await (
         useLineScope
           ? scopedSelect.in('id', scopedIds)
@@ -2857,42 +2869,23 @@ export async function voidTicket(
       if (csFetchErr) {
         console.warn('[tickets] voidTicket completed fetch:', csFetchErr.message);
       } else {
-        const perStaff = new Map<string, number>();
         for (const r of (completedRows ?? []) as Array<{
           id: string;
           manicurist_id: string | null;
-          turn_value: number | string | null;
-          voided: boolean | null;
         }>) {
-          if (r.voided) continue;
-          if (!r.manicurist_id) continue;
-          const tv = Number(r.turn_value) || 0;
-          if (tv === 0) continue;
-          perStaff.set(r.manicurist_id, (perStaff.get(r.manicurist_id) ?? 0) + tv);
-        }
-
-        // 2. Compare-and-swap each affected manicurist's total_turns via
-        //    applyTurnDelta. The helper clamps at 0 and retries on CAS miss,
-        //    so a concurrent writer (TicketModal bucket recompute, another
-        //    void racing on an overlapping visit, syncManicurists) can't
-        //    silently clobber this rollback. The realtime publication will
-        //    echo the UPDATE to all clients (REMOTE_MANICURIST_UPSERT in
-        //    the reducer does a full-row replace), so every device's local
-        //    state converges. (2026-05-31 audit N31-H3)
-        for (const [mid, delta] of perStaff) {
-          await applyTurnDelta(mid, -delta);
+          if (r.manicurist_id) affectedStaff.add(r.manicurist_id);
         }
       }
 
       // 2b. Mark every row for this visit voided=true BEFORE deleting. If the
       //     delete below fails (network blip), the rows survive as voided=true
-      //     instead of as live credited work, so a later retry — or the
-      //     load-time half-applied-void reconciliation sweep in AppContext —
-      //     skips them in the refund loop above (`if (r.voided) continue`) and
-      //     can NEVER refund the same turn twice. The retry just re-deletes.
-      //     Without this, a refund-succeeded-but-delete-failed void left
-      //     non-voided rows that a second cleanup pass would double-credit-back
-      //     (the only double-refund hole in the void path). (2026-06-20)
+      //     instead of as live credited work. This is also what removes the
+      //     credit: the row trigger recomputes the owner's derived total the
+      //     moment `voided` flips, so a delete that never lands still leaves
+      //     the turns correct. Double-refunding is now impossible by
+      //     construction — a derived total cannot be applied twice — which is
+      //     what the old `if (r.voided) continue` guard was protecting against.
+      //     (2026-06-20; reworked 2026-08-27)
       const scopedMark = supabase
         .from('completed_services')
         .update({ voided: true });
@@ -2906,11 +2899,10 @@ export async function voidTicket(
       }
 
       // 3. Delete the completed_services rows for this visit. Doing this
-      //    AFTER the rollback above ensures we still have the turn_value /
-      //    manicurist_id information we need to compute the deltas. The
-      //    deletion is what keeps voided services off the staff portal's
-      //    "today's services" list (otherwise Kelly et al. keep showing
-      //    voided work).
+      //    AFTER the step above ensures we still have the manicurist_id
+      //    information we need for the recompute set. The deletion is what
+      //    keeps voided services off the staff portal's "today's services"
+      //    list (otherwise Kelly et al. keep showing voided work).
       //
       // A direct .delete() here is silently blocked by the
       // guard_completed_services_delete trigger for any row completed in
@@ -2921,13 +2913,19 @@ export async function voidTicket(
       // escape hatch that only deletes rows for a visit whose ticket is
       // ALREADY 'voided', so we route through it instead.
       // void_completed_services_for_ticket applies the SAME line-scoping
-      // server-side (and the same no-lines visit-prefix fallback), so the
-      // delete can never outrun the refund pass above.
+      // server-side (and the same no-lines visit-prefix fallback).
       const { error: delErr } = await supabase.rpc('void_completed_services_for_ticket', {
         p_ticket_id: ticketId,
       });
       if (delErr) {
         console.warn('[tickets] voidTicket completed_services delete:', delErr.message);
+      }
+
+      // 3b. Re-assert each affected manicurist's derived total. The triggers
+      //     already did this inside the void-mark and the delete; this is the
+      //     explicit, idempotent backstop described on syncTurnTotal.
+      for (const mid of affectedStaff) {
+        await syncTurnTotal(mid);
       }
     } catch (err) {
       console.warn('[tickets] voidTicket cleanup unexpected:', err);
@@ -2953,70 +2951,41 @@ export async function voidTicket(
  * actually change (caller pre-filters).
  */
 /**
- * Apply a delta (+/-) to a manicurist's total_turns using compare-and-swap so
- * the read-modify-write can't be silently clobbered by a concurrent writer.
+ * Re-derive one manicurist's total_turns from the source tables.
  *
- * Implementation: read the current value, compute next, write WITH a guard
- * filter `total_turns = $expected`. PostgREST returns the updated row(s); an
- * empty array means the value changed between our read and write, so we
- * retry with a fresh read. Bounded retries prevent a hot row from looping
- * forever (5 attempts is generous — the realistic concurrent-write rate per
- * manicurist row is well under 1/sec).
+ * REPLACES applyTurnDelta(staffId, delta) — deleted 2026-08-27. That helper
+ * read total_turns, added a delta, and wrote the result back under a
+ * compare-and-swap guard. Every call site had already made the underlying
+ * change (repointed a completed row, voided it, edited its turn_value), so the
+ * delta was a SECOND, independent expression of the same fact — and the two
+ * could disagree.
  *
- * Clamps at 0 to match the existing `Math.max(0, …)` invariant used in
- * CANCEL_SERVICE, voidTicket, and throughout the reducer. Returns true on
- * success, false if every retry hit a CAS miss or the underlying request
- * errored. Callers that need to surface failure should check the return
- * value; callers that only need best-effort can ignore it.
+ * total_turns is now derived in the database from non-voided completed_services
+ * plus in-progress queue_entries, recomputed by row triggers on both tables
+ * (migration 20260827230000_total_turns_single_writer.sql). The triggers fire
+ * in the same transaction as the row change, so by the time any of these call
+ * sites returns, the total is already right. Keeping the delta arithmetic on
+ * top of that would double-apply it.
  *
- * Without this guard the previous code did SELECT → UPDATE as two
- * statements, which loses any concurrent write (syncManicurists, voidTicket
- * rollback, a parallel reallocate call) that lands between them.
+ * This call is therefore belt-and-braces, not load-bearing: it re-asserts the
+ * derived value, is idempotent, and marks in the code where a credit changed.
+ * It also covers any future path that writes with triggers disabled.
+ *
+ * Why not CAS any more: CAS protects against a concurrent writer clobbering a
+ * read-modify-write. There is no read-modify-write left, and no second writer
+ * — that was the whole point. See the Molani x BRIAN note in the migration for
+ * why CAS would not have prevented the incident that motivated this.
  */
-export async function applyTurnDelta(
-  staffId: string,
-  delta: number,
-  maxAttempts = 5,
-): Promise<boolean> {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const { data: row, error: rErr } = await supabase
-      .from('manicurists')
-      .select('total_turns')
-      .eq('id', staffId)
-      .maybeSingle();
-    if (rErr) {
-      console.warn('[tickets] applyTurnDelta read failed:', rErr.message);
-      return false;
-    }
-    if (!row) return false;
-    const cur = Number((row as { total_turns?: number | string }).total_turns) || 0;
-    const next = Math.max(0, cur + delta);
-    // CAS: only write if total_turns hasn't moved. `.select('id')` makes
-    // PostgREST return the affected rows so we can detect a no-op write
-    // (zero-row response = the eq('total_turns', cur) filter excluded the
-    // row, i.e. someone else updated it between our read and write).
-    const { data: updated, error: uErr } = await supabase
-      .from('manicurists')
-      .update({ total_turns: next })
-      .eq('id', staffId)
-      .eq('total_turns', cur)
-      .select('id');
-    if (uErr) {
-      console.warn('[tickets] applyTurnDelta write failed:', uErr.message);
-      return false;
-    }
-    if (updated && updated.length > 0) return true; // CAS succeeded
-    // CAS missed — value changed between read and write. Loop with a fresh
-    // read. No sleep; the next read pulls the just-committed value and we
-    // re-derive `next` against it, so the retry is correct immediately.
+export async function syncTurnTotal(staffId: string): Promise<boolean> {
+  if (!staffId) return false;
+  const { error } = await supabase.rpc('recompute_total_turns', {
+    p_ids: [staffId],
+  });
+  if (error) {
+    console.warn('[tickets] syncTurnTotal failed for', staffId, error.message);
+    return false;
   }
-  console.warn(
-    '[tickets] applyTurnDelta gave up after',
-    maxAttempts,
-    'CAS retries for',
-    staffId,
-  );
-  return false;
+  return true;
 }
 
 export async function reallocateTurnsForStaffChanges(
@@ -3034,29 +3003,23 @@ export async function reallocateTurnsForStaffChanges(
     try {
       const { data: completed, error: cErr } = await supabase
         .from('completed_services')
-        .select('id, turn_value, manicurist_id')
+        .select('id, manicurist_id')
         .eq('id', c.queueEntryId)
         .maybeSingle();
       if (cErr || !completed) continue;
-      const turn = Number((completed as { turn_value: number }).turn_value) || 0;
 
-      // Decrement the old staff's totalTurns (when known). Atomic via CAS —
-      // see applyTurnDelta. Best-effort logging only; we still try the
-      // increment and repoint below even if this miss-fires, because the
-      // report attribution is the user-visible bit.
-      if (c.oldStaffId && turn > 0) {
-        await applyTurnDelta(c.oldStaffId, -turn);
-      }
-      // Increment the new staff's totalTurns. Same CAS path.
-      if (c.newStaffId && turn > 0) {
-        await applyTurnDelta(c.newStaffId, turn);
-      }
-      // Repoint the completed_services row.
+      // Repoint the completed_services row. This is the ONLY write needed: the
+      // row trigger recomputes BOTH the old and the new staff's derived total
+      // in the same transaction, so the credit moves atomically with the work.
+      // (Before 2026-08-27 this also applied +/- deltas by hand, which is now
+      // a double-application — see syncTurnTotal.)
       await supabase.from('completed_services').update({
         manicurist_id: c.newStaffId,
         manicurist_name: c.newStaffName,
         manicurist_color: c.newStaffColor,
       }).eq('id', c.queueEntryId);
+      if (c.oldStaffId) await syncTurnTotal(c.oldStaffId);
+      if (c.newStaffId) await syncTurnTotal(c.newStaffId);
     } catch (err) {
       console.warn('[tickets] reallocateTurnsForStaffChanges failed for', c.queueEntryId, err);
     }
@@ -3153,10 +3116,10 @@ export async function reconcileTurnCreditToTicketLines(
         console.warn('[tickets] credit reconcile: repoint failed for', qid, uErr.message);
         continue;
       }
-      if (turn > 0) {
-        if (row.manicurist_id) await applyTurnDelta(row.manicurist_id, -turn);
-        await applyTurnDelta(l.staff1Id, turn);
-      }
+      // The repoint's row trigger already moved the derived total off the old
+      // staff and onto the new one. These calls only re-assert it.
+      if (row.manicurist_id) await syncTurnTotal(row.manicurist_id);
+      await syncTurnTotal(l.staff1Id);
       report.corrected.push({
         queueEntryId: qid,
         serviceName: l.name,
