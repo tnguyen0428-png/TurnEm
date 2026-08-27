@@ -174,6 +174,9 @@ function mapDbCompleted(row: Record<string, unknown>): CompletedEntry {
     isRequested: (row.is_requested as boolean) || false,
     edited: (row.edited as boolean) || false,
     voided: (row.voided as boolean) || false,
+    voidedByReceptionistId: (row.voided_by_receptionist_id as string) ?? null,
+    voidedAt: row.voided_at ? new Date(row.voided_at as string).getTime() : null,
+    voidReason: (row.void_reason as string) ?? null,
     // Persisted since 2026-08-14. Previously memory-only, which silently
     // disabled the multi-block darkening sweep at ticket close on any
     // refreshed device — see the column comment in the DB.
@@ -744,6 +747,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // as live work. Read them so a reload can't undo a void.
         edited: (row.edited as boolean) || false,
         voided: (row.voided as boolean) || false,
+        voidedByReceptionistId: (row.voided_by_receptionist_id as string) ?? null,
+        voidedAt: row.voided_at ? new Date(row.voided_at as string).getTime() : null,
+        voidReason: (row.void_reason as string) ?? null,
         // Persisted since 2026-08-14 (was memory-only) so the ticket-close
         // darkening sweep still finds every block on a multi-tech visit
         // after a refresh or on another device.
@@ -2643,6 +2649,9 @@ async function syncCompleted(
         previous.isRequested === c.isRequested &&
         !!previous.edited === !!c.edited &&
         !!previous.voided === !!c.voided &&
+        (previous.voidedByReceptionistId ?? null) === (c.voidedByReceptionistId ?? null) &&
+        (previous.voidedAt ?? null) === (c.voidedAt ?? null) &&
+        (previous.voidReason ?? null) === (c.voidReason ?? null) &&
         (previous.originalAppointmentId ?? null) === (c.originalAppointmentId ?? null) &&
         previous.manicuristClockInTime === c.manicuristClockInTime &&
         JSON.stringify(previous.services) === JSON.stringify(c.services) &&
@@ -2668,6 +2677,12 @@ async function syncCompleted(
       is_requested: !!c.isRequested,
       edited: !!c.edited,
       voided: !!c.voided,
+      // Who/when/why for a void done through the History PIN gate. Sent as
+      // explicit nulls when absent so an un-void clears the stamp rather than
+      // leaving a stale name attached to a live row.
+      voided_by_receptionist_id: c.voidedByReceptionistId ?? null,
+      voided_at: c.voidedAt == null ? null : new Date(c.voidedAt).toISOString(),
+      void_reason: c.voidReason ?? null,
       original_appointment_id: c.originalAppointmentId ?? null,
       // Persisted so the History "Turns per Manicurist" clock-in order
       // survives a reload/resync before the nightly archive — previously

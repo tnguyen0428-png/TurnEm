@@ -126,9 +126,12 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
   function handleToggleVoid() {
     setShowVoidGate(true);
   }
-  function handleVoidConfirmed() {
+  // The gate hands back (receptionistId, reason). This used to take no
+  // arguments and drop both — which is why the Molani 2 void of 2026-08-27 had
+  // no actor, no timestamp and no reason to trace. Carry them through.
+  function handleVoidConfirmed(receptionistId: string, reason: string) {
     setShowVoidGate(false);
-    dispatch({ type: 'TOGGLE_VOID_COMPLETED', id: entry.id });
+    dispatch({ type: 'TOGGLE_VOID_COMPLETED', id: entry.id, receptionistId, reason });
     onClose();
   }
 
@@ -323,6 +326,11 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
         subtitle={`${entry.voided ? 'Restoring' : 'Voiding'} ${entry.clientName}'s service.`}
         confirmLabel={entry.voided ? 'UN-VOID' : 'VOID'}
         tone={entry.voided ? 'primary' : 'danger'}
+        // Optional, not required: a void is sometimes urgent and mid-rush, and
+        // blocking it behind a text box would push staff toward worse
+        // workarounds. An unexplained void is still fully attributed.
+        showReason={!entry.voided}
+        reasonPlaceholder="Reason (optional) — e.g. duplicate, wrong tech"
         receptionists={state.manicurists.filter((m) => m.isReceptionist)}
         onCancel={() => setShowVoidGate(false)}
         onConfirm={handleVoidConfirmed}

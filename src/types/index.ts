@@ -99,6 +99,18 @@ export interface CompletedEntry {
   edited?: boolean;
   /** Set to true when the row was voided (kept for visibility, excluded from turn totals). */
   voided?: boolean;
+  /** Who voided this row, via the PIN gate on the History edit modal, plus when
+   *  and (optionally) why. Mirrors the trio already on `tickets`.
+   *
+   *  UNDEFINED DOES NOT MEAN "never voided" — it means the void did not come
+   *  through that button. Molani 2's row (2026-08-27) was flipped by the bulk
+   *  state sync with no targeted write at all, which is why nothing could be
+   *  attributed. `completed_services_void_log` records EVERY transition
+   *  whatever the route; treat that as the source of truth and these as the
+   *  convenience copy for the deliberate case. */
+  voidedByReceptionistId?: string | null;
+  voidedAt?: number | null;
+  voidReason?: string | null;
   /** Snapshot id of the originating appointment, if this completion was promoted
    *  from an appointment book entry. Set in COMPLETE_SERVICE; lets the register
    *  flip the appt to 'completed' only when the ticket is closed (not when the

@@ -27,7 +27,12 @@ export type AppAction =
   | { type: 'CLEAR_HISTORY' }
   | { type: 'UPDATE_COMPLETED'; id: string; updates: Partial<CompletedEntry>; skipEditFlag?: boolean }
   | { type: 'DELETE_COMPLETED'; id: string }
-  | { type: 'TOGGLE_VOID_COMPLETED'; id: string }
+  // `receptionistId` / `reason` come from the PIN gate that already fronts this
+  // action in EditCompletedModal — it collects them and used to discard them.
+  // Optional so a caller without a gate (none today) still compiles; the stamp
+  // is simply left blank, and completed_services_void_log records the flip
+  // regardless.
+  | { type: 'TOGGLE_VOID_COMPLETED'; id: string; receptionistId?: string; reason?: string }
   | { type: 'REQUEST_ASSIGN'; client: QueueEntry; manicuristId: string }
   | { type: 'SPLIT_AND_ASSIGN'; originalId: string; entries: { client: QueueEntry; manicuristId: string | null }[] }
   | { type: 'ADD_APPOINTMENT'; appointment: Appointment }

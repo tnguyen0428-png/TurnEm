@@ -1878,15 +1878,27 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
           ? { ...m, totalTurns: Math.max(0, m.totalTurns + delta) }
           : m
       );
+      // Stamp who/when/why on a void; CLEAR it on an un-void, so the columns
+      // always describe the row's current state rather than the last person who
+      // touched it. This is a toggle, so both directions matter — the full
+      // history of flips lives in completed_services_void_log.
+      const voidStamp = willBeVoided
+        ? {
+            voided: true,
+            voidedByReceptionistId: action.receptionistId ?? null,
+            voidedAt: Date.now(),
+            voidReason: action.reason?.trim() ? action.reason.trim() : null,
+          }
+        : { voided: false, voidedByReceptionistId: null, voidedAt: null, voidReason: null };
       return {
         ...state,
         completed: state.completed.map((c) =>
-          c.id === action.id ? { ...c, voided: willBeVoided } : c
+          c.id === action.id ? { ...c, ...voidStamp } : c
         ),
         dailyHistory: state.dailyHistory.map((d) => ({
           ...d,
           entries: d.entries.map((e) =>
-            e.id === action.id ? { ...e, voided: willBeVoided } : e
+            e.id === action.id ? { ...e, ...voidStamp } : e
           ),
         })),
         manicurists: updatedManicurists,
