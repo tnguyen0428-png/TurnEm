@@ -310,6 +310,18 @@ export default function TicketModal({
   // mount) is preserved. See the diff-based save in lib/tickets.ts.
   const [removedItemIds, setRemovedItemIds] = useState<string[]>([]);
 
+  // ─── Removed SERVICE lines, for completed_services cleanup ────────────────
+  // Deleting a line used to leave the tech's completed_services row untouched,
+  // so the service stayed in their History AND inflated their portal day total
+  // — entryTotalDollars falls back to the CATALOG price when a row has no
+  // price_cents snapshot and no ticket line left to take a share of. (SAM,
+  // Acrylic Removal Only, ticket #18, 2026-08-26: customer changed her mind,
+  // line removed, SAM still read $20 up.) removedItemIds only carries
+  // ticket_items ids, so capture what the sync needs before the line is gone.
+  const [removedServiceLines, setRemovedServiceLines] = useState<
+    Array<{ queueEntryId: string; service: string; staffId: string | null }>
+  >([]);
+
   // ─── Derived totals ───────────────────────────────────────────────────────
   const subtotalCents = useMemo(
     () =>
@@ -677,6 +689,20 @@ export default function TicketModal({
     // so they don't need a tombstone — the trash icon click is enough.
     if (removed?.existingId) {
       setRemovedItemIds((prev) => (prev.includes(removed.existingId!) ? prev : [...prev, removed.existingId!]));
+      // Queue the completed_services cleanup for this line (see
+      // removedServiceLines). Only SAVED service lines matter: an unsaved add
+      // never produced a completed row, and retail / discount / gift-card
+      // lines have no tech credit behind them.
+      if (removed.kind === 'service' && removed.queueEntryId) {
+        setRemovedServiceLines((prev) => [
+          ...prev,
+          {
+            queueEntryId: removed.queueEntryId!,
+            service: (removed.name ?? '').trim(),
+            staffId: removed.staff1Id ?? null,
+          },
+        ]);
+      }
     }
 
     // Tear down the synthetic add-child if this was a just-added (unsaved)
@@ -1057,6 +1083,63 @@ export default function TicketModal({
     // longer exist (the second DELETE would be a no-op but the noise is
     // confusing in the logs).
     if (removedItemIds.length > 0) setRemovedItemIds([]);
+
+    // ─── Removed service lines → clean up the tech's completed_services row ──
+    // Without this the row survives the line's deletion and keeps showing (and
+    // paying, via the catalog fallback) work that was never billed.
+    //
+    // VOID, never DELETE: completed_services has a delete guard
+    // (guard_completed_services_delete — "Clearing completed turns is
+    // disabled"), and voiding is the established mechanism anyway; every
+    // reader skips voided rows for turns and dollars.
+    //
+    // A row can back SEVERAL services. Only void when the removed line was its
+    // LAST one — otherwise just drop that service, or we would erase work that
+    // really happened. total_turns needs no manual fix: recomputeTotalTurns
+    // derives from state.completed and skips voided rows once the realtime
+    // echo lands.
+    if (removedServiceLines.length > 0) {
+      const bareId = (q: string | null | undefined) =>
+        !q ? '' : (q.includes('#') ? q.split('#')[0] : q);
+      for (const rem of removedServiceLines) {
+        // Lines can carry a `#N` in-batch suffix; the completed row is keyed
+        // on the bare queue entry id.
+        const rowId = bareId(rem.queueEntryId);
+        // Delete-then-re-add is how a cashier re-points a service at another
+        // tech: the trash click queues a removal, but an equivalent line is
+        // back on the ticket by save time. Stripping the service then would
+        // erase work that IS still billed, so skip when the saved lines still
+        // carry this service for this visit.
+        const stillOnTicket = lines.some(
+          (l) =>
+            l.kind === 'service' &&
+            bareId(l.queueEntryId) === rowId &&
+            (l.name ?? '').trim() === rem.service,
+        );
+        if (stillOnTicket) continue;
+        const { data: row, error: fErr } = await supabase
+          .from('completed_services')
+          .select('id, services, voided')
+          .eq('id', rowId)
+          .maybeSingle();
+        if (fErr) { console.error('[ticket modal] removed-line lookup failed:', fErr.message); continue; }
+        if (!row) continue;
+        const current = ((row as { services: string[] | null }).services ?? []).slice();
+        // Drop ONE occurrence of the removed service — a row legitimately can
+        // list the same service twice.
+        const at = current.findIndex((s) => (s ?? '').trim() === rem.service);
+        const remaining = at === -1 ? current : [...current.slice(0, at), ...current.slice(at + 1)];
+        const patch = remaining.length === 0
+          ? { voided: true }
+          : { services: remaining, service: remaining[0] };
+        const { error: uErr } = await supabase
+          .from('completed_services')
+          .update(patch)
+          .eq('id', rowId);
+        if (uErr) console.error('[ticket modal] removed-line completed sync failed:', uErr.message);
+      }
+      setRemovedServiceLines([]);
+    }
     // Turn reallocation: any line whose staff1 changed reassigns the turn
     // credit from the old assignee to the new one. Only service-kind lines
     // with a queue_entry_id (i.e. ones tied to a completed entry) qualify;
