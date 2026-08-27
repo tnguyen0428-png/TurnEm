@@ -1309,6 +1309,37 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                           .filter((r) => r.manicuristIds?.includes(credit.id))
                           .map((r) => r.service);
                   const now = Date.now();
+                  // ─── Appointment link: read it from the DB, not from here ───
+                  // A tech's phone frequently does NOT hold the walk-in block in
+                  // its local queue copy, so `entry.originalAppointment` is
+                  // undefined and this used to save original_appointment_id as
+                  // NULL even though `walkin:<queueId>` exists. Confirmed on
+                  // Molani 2 (798c5a31…, 2026-08-27). The orphan walk-in sweep,
+                  // the void's appointment cleanup and several history joins all
+                  // read that column, so a portal-completed visit looked unbacked
+                  // to every one of them.
+                  //
+                  // queue_entries.original_appointment is authoritative and the
+                  // row is still here (we delete it below), so read it now.
+                  // Falls back to the local value if the read fails, which is no
+                  // worse than the old behaviour. Never guess `walkin:<id>`: a
+                  // pre-booked appointment carries a real uuid instead, and a
+                  // fabricated id would point at nothing.
+                  let originalAppointmentId = entry.originalAppointment?.id ?? null;
+                  {
+                    const { data: qRow, error: qReadErr } = await supabase
+                      .from('queue_entries')
+                      .select('original_appointment')
+                      .eq('id', entry.id)
+                      .maybeSingle();
+                    if (qReadErr) {
+                      console.warn('[staff portal] DONE: appt link read failed', qReadErr.message);
+                    } else {
+                      const dbApptId = (qRow as { original_appointment?: { id?: string } | null } | null)
+                        ?.original_appointment?.id;
+                      if (dbApptId) originalAppointmentId = dbApptId;
+                    }
+                  }
                   // id = the queue entry's own id, exactly as the reducer does,
                   // so a re-fire upserts in place instead of duplicating.
                   const { error: cErr } = await supabase.from('completed_services').upsert({
@@ -1327,7 +1358,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                     is_requested: wholeEntryRequested,
                     edited: false,
                     voided: false,
-                    original_appointment_id: entry.originalAppointment?.id ?? null,
+                    original_appointment_id: originalAppointmentId,
                     manicurist_clock_in_time:
                       credit.clockInTime == null ? null : new Date(credit.clockInTime).toISOString(),
                   }, { onConflict: 'id' });
