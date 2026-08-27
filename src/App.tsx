@@ -5,6 +5,7 @@ import TabBar from './components/layout/TabBar';
 import LoginScreen from './components/auth/LoginScreen';
 import QueueScreen from './components/queue/QueueScreen';
 import SmsToast from './components/shared/SmsToast';
+import LostRequestAlert from './components/shared/LostRequestAlert';
 import { Loader2 } from 'lucide-react';
 import type { Manicurist } from './types';
 
@@ -88,6 +89,11 @@ function AppContent() {
       </Suspense>
 
       <SmsToast />
+      {/* Raised the moment a booked request lands in the queue as a full turn —
+          the receptionist is the only person who can check it against the slot
+          while the client is still here. Front desk only; staff mode returns
+          before this. */}
+      <LostRequestAlert />
     </div>
   );
 }
