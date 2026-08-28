@@ -382,6 +382,7 @@ export const INITIAL_STATE: AppState = {
   editingAppointmentId: null,
   editingServiceId: null,
   appointmentDraft: null,
+  pendingAppointmentPreview: null,
   categoryPriority: [],
   servicePriority: {},
   loaded: false,
@@ -2067,6 +2068,12 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_APPOINTMENT_DRAFT':
       return { ...state, appointmentDraft: action.draft };
+
+    // Purely visual: ghost blocks for a staged booking awaiting confirmation.
+    // Deliberately NOT written into state.appointments, so nothing reaches the
+    // sync pipeline until CONFIRM dispatches the real ADD_APPOINTMENTs.
+    case 'SET_PENDING_APPOINTMENT_PREVIEW':
+      return { ...state, pendingAppointmentPreview: action.appointments };
 
     case 'ADD_SALON_SERVICE':
       return { ...state, salonServices: [...state.salonServices, action.service] };

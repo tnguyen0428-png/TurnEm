@@ -489,11 +489,35 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     }
     return ids;
   }, [state.completed, state.appointments, selectedDate]);
-  const dayAppts = state.appointments.filter(
-    (a) =>
-      a.date === selectedDate &&
-      a.status !== 'cancelled' &&
-      a.status !== 'no-show'
+  // Ghost blocks for a booking that has been staged but not yet confirmed.
+  // Merged in here rather than rendered separately so they inherit the whole
+  // layout pipeline for free — column assignment, per-service stacking, Same
+  // Time fan-out and the overlap lanes all treat them exactly like a real
+  // appointment. That is the point: the receptionist is confirming that the
+  // block lands where she expects, so a preview laid out by different rules
+  // would be worse than no preview at all.
+  const previewApptIds = useMemo(
+    () => new Set(
+      (state.pendingAppointmentPreview ?? [])
+        .filter((a) => a.date === selectedDate)
+        .map((a) => a.id),
+    ),
+    [state.pendingAppointmentPreview, selectedDate],
+  );
+  // Memoised so the identity is stable across renders — occupancyByColumn below
+  // depends on it, and a fresh array every render would rebuild that on each
+  // pass (and trip react-hooks/exhaustive-deps).
+  const dayAppts = useMemo(
+    () => [
+      ...state.appointments.filter(
+        (a) =>
+          a.date === selectedDate &&
+          a.status !== 'cancelled' &&
+          a.status !== 'no-show'
+      ),
+      ...(state.pendingAppointmentPreview ?? []).filter((a) => a.date === selectedDate),
+    ],
+    [state.appointments, state.pendingAppointmentPreview, selectedDate],
   );
 
   // Per-column busy intervals for the visible day, used by Same-Time fan-out
@@ -1515,23 +1539,30 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           // drag it to the real slot, executeDrop clears isWalkIn and the
           // block reverts to whatever its lifecycle color would otherwise be.
           const isWalkInPending = !!appt.isWalkIn && !isCheckedOut;
+          // Staged booking awaiting CONFIRM. Sky to match the confirm bar, and
+          // it wins over every lifecycle colour below — a preview block has no
+          // lifecycle yet, it isn't saved.
+          const isPendingPreview = previewApptIds.has(appt.id);
           // Color progression: scheduled → light-gray (waiting Q) → light-gray (in service / awaiting payment) → dark-gray (checked out after ticket close)
           // Note: in-service softened from #d1d5db → #e5e7eb, checked-out from #1f2937 → #4b5563 per user request.
-          const bg     = isCheckedOut       ? '#4b5563'
+          const bg     = isPendingPreview   ? '#f0f9ff'
+                       : isCheckedOut       ? '#4b5563'
                        : isWalkInPending    ? '#fef3c7'
                        : isInService        ? '#e5e7eb'
                        : isAwaitingPayment  ? '#e5e7eb'
                        : isWaitingQ         ? '#f3f4f6'
                        : isCheckedIn        ? '#d1fae5'
                        : palette.bg;
-          const border = isCheckedOut       ? '#1f2937'
+          const border = isPendingPreview   ? '#0284c7'
+                       : isCheckedOut       ? '#1f2937'
                        : isWalkInPending    ? '#f59e0b'
                        : isInService        ? '#9ca3af'
                        : isAwaitingPayment  ? '#9ca3af'
                        : isWaitingQ         ? '#9ca3af'
                        : isCheckedIn        ? '#10b981'
                        : palette.border;
-          const textColor = isCheckedOut       ? '#ffffff'
+          const textColor = isPendingPreview   ? '#0c4a6e'
+                          : isCheckedOut       ? '#ffffff'
                           : isWalkInPending    ? '#78350f'
                           : isInService        ? '#374151'
                           : isAwaitingPayment  ? '#374151'
@@ -1599,10 +1630,22 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
               } ${
                 hasRequest && !isCompleted && colManicuristId !== requestedManicuristId
                   ? 'ring-2 ring-pink-500 ring-offset-1 animate-pulse' : ''
+              } ${
+                // Ring + dashed edge so a staged block reads as provisional and
+                // is findable in a dense grid. Colour alone was not enough: the
+                // first attempt reused #e0f2fe/#38bdf8, which IS palette entry
+                // 'sky', so the ghost was indistinguishable from any real
+                // appointment that happened to be assigned that colour.
+                // Deliberately not the pink pulse above — that means "this
+                // client requested someone else", a different problem.
+                isPendingPreview ? 'ring-2 ring-sky-500 ring-offset-1' : ''
               }`}
               style={{
                 top: top + 1, height, backgroundColor: bg, borderLeftColor: border,
                 borderTop: `1px solid ${border}60`, borderRight: `1px solid ${border}40`, borderBottom: `1px solid ${border}40`,
+                // Dashed edges on a staged block — the visual shorthand for
+                // "not committed yet" that survives even at COMPACT zoom.
+                ...(isPendingPreview ? { borderStyle: 'dashed' as const } : {}),
                 // Side-by-side layout when this block shares time with others
                 // in the same column. Inline left/width/right override the
                 // Tailwind `left-1 right-1` so each block occupies 1/N of the

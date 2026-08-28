@@ -46,6 +46,7 @@ export type AppAction =
   | { type: 'DELETE_APPOINTMENT'; id: string }
   | { type: 'SET_EDITING_APPOINTMENT'; appointmentId: string | null }
   | { type: 'SET_APPOINTMENT_DRAFT'; draft: AppointmentDraft | null }
+  | { type: 'SET_PENDING_APPOINTMENT_PREVIEW'; appointments: Appointment[] | null }
   | { type: 'ADD_SALON_SERVICE'; service: SalonService }
   | { type: 'UPDATE_SALON_SERVICE'; id: string; updates: Partial<SalonService> }
   | { type: 'DELETE_SALON_SERVICE'; id: string }

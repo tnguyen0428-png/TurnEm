@@ -1129,6 +1129,13 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           permanentNote,
         },
       });
+      // Show the staged booking as ghost blocks in the book behind the confirm
+      // bar, on the day it lands, so the receptionist verifies the real slot —
+      // right column, right time — instead of re-reading the same form values
+      // she just typed. Still nothing saved: these are render-only until
+      // CONFIRM (see the Kayla Nguyen note on the recap payload above).
+      dispatch({ type: 'SET_PENDING_APPOINTMENT_PREVIEW', appointments: pendingAppts });
+      moveBookToDate(date);
       return;
     }
 
@@ -1175,6 +1182,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   }
 
   function handleClose() {
+    // Belt and braces: every exit clears the ghost blocks. Leaving a preview
+    // behind would paint an appointment in the book that does not exist.
+    dispatch({ type: 'SET_PENDING_APPOINTMENT_PREVIEW', appointments: null });
     dispatch({ type: 'SET_MODAL', modal: null });
     dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: null });
     dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: null });
@@ -1187,6 +1197,79 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     dispatch({ type: 'DELETE_APPOINTMENT', id: editing.id });
     setShowCancelConfirm(false);
     handleClose();
+  }
+
+  // Confirm step: the form and its right-docked panel come off screen
+  // entirely so the appointment book is visible, with the staged booking
+  // showing as a ghost block in its real slot. Only the bottom bar remains.
+  //
+  // An early return, not a conditional inside the Modal, because the docked
+  // panel covers the columns the receptionist needs to check. The component
+  // stays mounted either way, so EDIT drops straight back into the form with
+  // every input still intact.
+  if (recap) {
+    return (
+      <BookingRecapModal
+        info={recap}
+        onClose={() => {
+          // DONE: commit the staged booking. Dispatch every pending appt
+          // (primary + any standing-series rows), then run the customer
+          // upsert (Blueprint profile + permanent-note write), then close
+          // the modal. Nothing was written to state before this point so
+          // backing out via EDIT leaves no orphan rows.
+          const r = recap;
+          for (const appt of r.pendingAppts) {
+            dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
+          }
+          void (async () => {
+            const c = r.pendingCustomer;
+            const _first = (c.firstName ?? '').trim();
+            const _last = (c.lastName ?? '').trim();
+            const _phone = (c.phone ?? '').trim();
+            if (!_first || !_last || !_phone) return;
+            // The appointment is already dispatched above (intentionally
+            // optimistic), but the customer profile + permanent-note write
+            // here used to swallow errors with `void (async)()` and no catch.
+            // The receptionist would see the booking land and never know
+            // the note silently dropped. Surface a clear alert on failure so
+            // they know to re-enter via Blueprint > Customers.
+            // (2026-05-31 audit N31-H4)
+            try {
+              const cid = await upsertCustomerFromIntake({
+                firstName: c.firstName,
+                lastName: c.lastName,
+                phone: c.phone,
+              });
+              if (cid && c.permanentNote) {
+                const { error: noteErr } = await supabase
+                  .from('customers')
+                  .update({ notes: c.notes, updated_at: new Date().toISOString() })
+                  .eq('id', cid);
+                if (noteErr) throw noteErr;
+              }
+            } catch (err) {
+              console.error('[AppointmentModal] customer save failed:', err);
+              const msg = (err as { message?: string } | null)?.message ?? String(err);
+              window.alert(
+                `Appointment booked, but the customer profile / permanent note did not save:\n\n${msg}\n\nPlease re-enter the note via Blueprint > Customers.`,
+              );
+            }
+          })();
+          dispatch({ type: 'SET_PENDING_APPOINTMENT_PREVIEW', appointments: null });
+          setRecap(null);
+          handleClose();
+        }}
+        onEdit={() => {
+          // EDIT: discard the staged booking and return to the form. The
+          // form is still mounted with all the receptionist's inputs intact
+          // — they can fix whatever was wrong and press BOOK again. Dropping
+          // the preview here is what keeps a backed-out booking from leaving
+          // anything behind, in the book or in the data.
+          dispatch({ type: 'SET_PENDING_APPOINTMENT_PREVIEW', appointments: null });
+          setRecap(null);
+        }}
+      />
+    );
   }
 
   return (
@@ -1798,64 +1881,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         onCancel={() => setPendingAutoAssign(null)}
       />
     )}
-    {recap && (
-      <BookingRecapModal
-        info={recap}
-        onClose={() => {
-          // DONE: commit the staged booking. Dispatch every pending appt
-          // (primary + any standing-series rows), then run the customer
-          // upsert (Blueprint profile + permanent-note write), then close
-          // the modal. Nothing was written to state before this point so
-          // backing out via EDIT leaves no orphan rows.
-          const r = recap;
-          for (const appt of r.pendingAppts) {
-            dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
-          }
-          void (async () => {
-            const c = r.pendingCustomer;
-            const _first = (c.firstName ?? '').trim();
-            const _last = (c.lastName ?? '').trim();
-            const _phone = (c.phone ?? '').trim();
-            if (!_first || !_last || !_phone) return;
-            // The appointment is already dispatched above (intentionally
-            // optimistic), but the customer profile + permanent-note write
-            // here used to swallow errors with `void (async)()` and no catch.
-            // The receptionist would see the booking land and never know
-            // the note silently dropped. Surface a clear alert on failure so
-            // they know to re-enter via Blueprint > Customers.
-            // (2026-05-31 audit N31-H4)
-            try {
-              const cid = await upsertCustomerFromIntake({
-                firstName: c.firstName,
-                lastName: c.lastName,
-                phone: c.phone,
-              });
-              if (cid && c.permanentNote) {
-                const { error: noteErr } = await supabase
-                  .from('customers')
-                  .update({ notes: c.notes, updated_at: new Date().toISOString() })
-                  .eq('id', cid);
-                if (noteErr) throw noteErr;
-              }
-            } catch (err) {
-              console.error('[AppointmentModal] customer save failed:', err);
-              const msg = (err as { message?: string } | null)?.message ?? String(err);
-              window.alert(
-                `Appointment booked, but the customer profile / permanent note did not save:\n\n${msg}\n\nPlease re-enter the note via Blueprint > Customers.`,
-              );
-            }
-          })();
-          setRecap(null);
-          handleClose();
-        }}
-        onEdit={() => {
-          // EDIT: discard the staged booking and return to the form. The
-          // form is still mounted with all the receptionist's inputs intact
-          // — they can fix whatever was wrong and press BOOK again.
-          setRecap(null);
-        }}
-      />
-    )}
     </Modal>
   );
 }
@@ -2275,100 +2300,83 @@ function BookingRecapModal({
     const h12 = ((hh + 11) % 12) + 1;
     return `${h12}:${String(mm ?? 0).padStart(2, '0')} ${ampm}`;
   }
+  // A bar pinned to the bottom rather than a centred modal, and no dark
+  // backdrop: the whole point of this step is to look at the ghost block now
+  // sitting in the grid above, which a centred card covered up.
+  //
+  // The heading is imperative, not past tense. The old card read "BOOKING
+  // CONFIRMED — recap of what was just saved" while nothing had been saved yet
+  // (the rows are only dispatched by the CONFIRM handler), so it claimed a
+  // durable booking that a stray EDIT would have silently discarded.
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 flex flex-col gap-4">
-        <div>
-          <h2 className="font-bebas text-2xl tracking-[3px] text-gray-900">BOOKING CONFIRMED</h2>
-          <p className="font-mono text-xs text-gray-500 mt-0.5">Recap of what was just saved.</p>
-        </div>
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 flex flex-col gap-1.5">
-          <RecapLine label="Client" value={info.clientName || 'Walk-in'} />
-          <RecapLine label="When" value={`${formatDate(info.date)} · ${formatTime(info.time)}`} />
-          {/* One line per service so multi-staff bookings name every
-              manicurist involved. Each row: "<Service> -- <Staff>". */}
-          <div className="flex items-start justify-between gap-3 pt-1">
-            <span className="font-mono text-base uppercase tracking-wider text-gray-500 flex-shrink-0">With</span>
-            <ul className="flex flex-col gap-0.5 text-right max-w-[70%]">
-              {info.serviceLines.length === 0 ? (
-                <li className="font-mono text-base font-semibold text-gray-900">{info.staffName || '\u2014'}</li>
-              ) : info.serviceLines.map((sl, i) => (
-                <li key={i} className="font-mono text-base font-semibold text-gray-900">
-                  {sl.service} \u2014 <span className="text-emerald-700">{sl.staffName}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <RecapLine label="Booked by" value={info.receptionistName || '\u2014'} />
-        </div>
+    <div className="fixed inset-x-0 bottom-0 z-[70] border-t-2 border-sky-300 bg-white shadow-[0_-8px_24px_rgba(0,0,0,0.14)]">
+      <div className="max-w-6xl mx-auto px-5 py-3 flex flex-col gap-2">
+        {/* Warnings stay above the summary — a skipped or conflicting date is
+            the whole reason to press EDIT instead of CONFIRM. */}
         {info.seriesDates && info.seriesDates.length > 0 && (
-          <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 flex flex-col gap-2">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-indigo-700 font-bold">
-              Standing series \u2014 {info.seriesDates.length} extra visit{info.seriesDates.length === 1 ? '' : 's'} booked
-            </p>
-            <ul className="flex flex-col gap-0.5">
-              {info.seriesDates.map((d) => (
-                <li key={d} className="font-mono text-xs text-indigo-900">{formatDate(d)}</li>
-              ))}
-            </ul>
-          </div>
+          <p className="font-mono text-xs text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5">
+            <span className="font-bold uppercase tracking-wider">Standing series</span>
+            {' — '}{info.seriesDates.length} extra visit{info.seriesDates.length === 1 ? '' : 's'}:{' '}
+            {info.seriesDates.map(formatDate).join(' · ')}
+          </p>
         )}
         {info.skippedDates && info.skippedDates.length > 0 && (
-          <div className="rounded-xl border border-red-200 bg-red-50/50 p-4 flex flex-col gap-2">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-red-700 font-bold">
-              {info.skippedDates.length} date{info.skippedDates.length === 1 ? '' : 's'} skipped \u2014 calendar blocked
-            </p>
-            <ul className="flex flex-col gap-0.5">
-              {info.skippedDates.map((d) => (
-                <li key={d} className="font-mono text-xs text-red-700">{formatDate(d)}</li>
-              ))}
-            </ul>
-            <p className="font-mono text-[10px] text-red-500 mt-1">
-              These weren't booked. Open the Calendar tab to unblock the day or pick a new date manually.
-            </p>
-          </div>
+          <p className="font-mono text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+            <span className="font-bold uppercase tracking-wider">
+              {info.skippedDates.length} date{info.skippedDates.length === 1 ? '' : 's'} skipped
+            </span>
+            {' — calendar blocked: '}{info.skippedDates.map(formatDate).join(' · ')}.
+            {' '}Not booked. Unblock the day in the Calendar tab, or pick a new date.
+          </p>
         )}
         {info.conflictDates && info.conflictDates.length > 0 && (
-          <div className="rounded-xl border border-amber-300 bg-amber-50/60 p-4 flex flex-col gap-2">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-amber-800 font-bold">
-              {info.conflictDates.length} date{info.conflictDates.length === 1 ? '' : 's'} unavailable \u2014 slot already booked
+          <p className="font-mono text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5">
+            <span className="font-bold uppercase tracking-wider">
+              {info.conflictDates.length} date{info.conflictDates.length === 1 ? '' : 's'} unavailable
+            </span>
+            {' — slot already booked: '}{info.conflictDates.map(formatDate).join(' · ')}.
+            {' '}That staff member already has an appointment at this time.
+          </p>
+        )}
+
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-3 flex-wrap">
+              <h2 className="font-bebas text-xl tracking-[3px] text-gray-900">CONFIRM THIS BOOKING</h2>
+              <span className="font-mono text-[11px] text-sky-700">
+                Check the highlighted block in the book above.
+              </span>
+            </div>
+            <p className="font-mono text-sm font-semibold text-gray-900 truncate">
+              {info.clientName || 'Walk-in'}
+              {' · '}{formatDate(info.date)}
+              {' · '}{formatTime(info.time)}
             </p>
-            <ul className="flex flex-col gap-0.5">
-              {info.conflictDates.map((d) => (
-                <li key={d} className="font-mono text-xs text-amber-800">{formatDate(d)}</li>
-              ))}
-            </ul>
-            <p className="font-mono text-[10px] text-amber-700 mt-1">
-              The assigned staff already has an appointment at this time on these dates. Rebook them manually for a different time, or move the conflicting appt.
+            <p className="font-mono text-xs text-gray-600 truncate">
+              {info.serviceLines.length === 0
+                ? (info.staffName || '—')
+                : info.serviceLines.map((sl) => `${sl.service} — ${sl.staffName}`).join('   ·   ')}
+              {info.receptionistName ? `   ·   booked by ${info.receptionistName}` : ''}
             </p>
           </div>
-        )}
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onEdit}
-            className="px-4 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 font-mono text-xs font-bold hover:bg-gray-50"
-          >
-            EDIT
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800"
-          >
-            DONE
-          </button>
+          <div className="flex gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={onEdit}
+              className="px-4 py-2.5 rounded-lg bg-white border border-gray-300 text-gray-700 font-mono text-xs font-bold hover:bg-gray-50"
+            >
+              EDIT
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2.5 rounded-lg bg-sky-400 hover:bg-sky-500 text-white font-mono text-xs font-bold tracking-wider transition-colors"
+            >
+              CONFIRM APPOINTMENT
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function RecapLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className="font-mono text-[10px] uppercase tracking-wider text-gray-500 flex-shrink-0">{label}</span>
-      <span className="font-mono text-sm font-semibold text-gray-900 text-right truncate">{value}</span>
     </div>
   );
 }

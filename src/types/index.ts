@@ -414,6 +414,12 @@ export interface AppState {
   editingAppointmentId: string | null;
   editingServiceId: string | null;
   appointmentDraft: AppointmentDraft | null;
+  /** Staged-but-unsaved booking, shown as ghost blocks in the appointment book
+   *  while the receptionist confirms it. NEVER persisted and never synced — the
+   *  real rows are only dispatched via ADD_APPOINTMENT once CONFIRM is pressed
+   *  (see the Kayla Nguyen 2026-05-25 note in AppointmentModal: writing on BOOK
+   *  left an orphan row whenever the receptionist backed out to fix a typo). */
+  pendingAppointmentPreview: Appointment[] | null;
   // Priority list — persisted to system_state and synced via Realtime so every
   // device sees the same ordering. Mirrored into localStorage by AppContext for
   // legacy reads in assignHelpers.getDistinctServices.
