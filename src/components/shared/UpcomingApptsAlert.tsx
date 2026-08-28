@@ -21,6 +21,25 @@ import type { Appointment } from '../../types';
 //                       rather than a click-away backdrop, so the popup can't
 //                       be dismissed by a stray tap while the receptionist is
 //                       still reading it.
+// Pastel sky accent, picked over rose / lavender / peach (Tony 2026-08-28) —
+// the salon's palette is pastel throughout and the original blue-500 was too
+// saturated against it.
+//
+// Every class is written out in full rather than composed at runtime: Tailwind
+// scans source text, so a concatenated class name would be purged out of the
+// production build and the colour would silently vanish.
+//
+// Kept deliberately distinct from the other alert surfaces, which have already
+// claimed their colours — emerald is the matched-profile panel, amber is the
+// note alert, and pink-500 is the primary action everywhere.
+const C = {
+  border: 'border-sky-200', icon: 'text-sky-400', heading: 'text-sky-700',
+  tableBorder: 'border-sky-100', headRow: 'bg-sky-50/70 border-sky-100',
+  headText: 'text-sky-700', rowBorder: 'border-sky-50',
+  editBtn: 'text-sky-700 bg-sky-50 border-sky-200 hover:bg-sky-100 hover:text-sky-900',
+  cta: 'bg-sky-300 hover:bg-sky-400',
+} as const;
+
 export default function UpcomingApptsAlert({
   name,
   appointments,
@@ -34,6 +53,7 @@ export default function UpcomingApptsAlert({
   onEdit: (appointmentId: string) => void;
   onNew: () => void;
 }) {
+  const c = C;
   function formatDate(iso: string): string {
     // Noon anchor so a date-only string never lands on the previous day in a
     // negative-offset timezone.
@@ -54,11 +74,11 @@ export default function UpcomingApptsAlert({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6 animate-modal-in border-2 border-blue-300">
+      <div className={`bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6 animate-modal-in border-2 ${c.border}`}>
         <div className="flex items-start justify-between gap-3 mb-1">
           <div className="flex items-center gap-2 min-w-0">
-            <CalendarClock size={22} className="text-blue-500 flex-shrink-0" />
-            <p className="font-mono text-sm font-bold tracking-wider text-blue-700 uppercase truncate">
+            <CalendarClock size={22} className={`${c.icon} flex-shrink-0`} />
+            <p className={`font-mono text-sm font-bold tracking-wider ${c.heading} uppercase truncate`}>
               Already booked — {name}
             </p>
           </div>
@@ -76,8 +96,8 @@ export default function UpcomingApptsAlert({
           {count} upcoming appointment{count === 1 ? '' : 's'} on file. Edit one, or book a new one.
         </p>
 
-        <div className="rounded-xl border border-blue-100 overflow-hidden mb-6">
-          <div className="grid grid-cols-[125px_85px_1.3fr_1fr_84px] gap-2 px-3 py-2 bg-blue-50/70 border-b border-blue-100 font-mono text-[11px] tracking-wider font-semibold text-blue-700 uppercase">
+        <div className={`rounded-xl border ${c.tableBorder} overflow-hidden mb-6`}>
+          <div className={`grid grid-cols-[125px_85px_1.3fr_1fr_84px] gap-2 px-3 py-2 ${c.headRow} border-b font-mono text-[11px] tracking-wider font-semibold ${c.headText} uppercase`}>
             <span>Date</span>
             <span>Time</span>
             <span>Services</span>
@@ -93,7 +113,7 @@ export default function UpcomingApptsAlert({
               return (
                 <div
                   key={a.id}
-                  className="grid grid-cols-[125px_85px_1.3fr_1fr_84px] gap-2 px-3 py-2.5 border-b border-blue-50 last:border-b-0 items-center"
+                  className={`grid grid-cols-[125px_85px_1.3fr_1fr_84px] gap-2 px-3 py-2.5 border-b ${c.rowBorder} last:border-b-0 items-center`}
                 >
                   <span className="font-mono text-sm font-semibold text-gray-900">{formatDate(a.date)}</span>
                   <span className="font-mono text-sm text-gray-800">{formatTime(a.time)}</span>
@@ -106,7 +126,7 @@ export default function UpcomingApptsAlert({
                   <button
                     type="button"
                     onClick={() => onEdit(a.id)}
-                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg font-mono text-xs font-bold tracking-wider uppercase text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 hover:text-blue-900 transition-colors"
+                    className={`flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg font-mono text-xs font-bold tracking-wider uppercase border ${c.editBtn} transition-colors`}
                   >
                     <Pencil size={12} />
                     Edit
@@ -120,7 +140,7 @@ export default function UpcomingApptsAlert({
         <div className="flex justify-end">
           <button
             onClick={onNew}
-            className="px-5 py-2.5 rounded-lg text-base font-mono font-semibold tracking-wider uppercase text-white bg-blue-500 hover:bg-blue-600 transition-colors"
+            className={`px-5 py-2.5 rounded-lg text-base font-mono font-semibold tracking-wider uppercase text-white ${c.cta} transition-colors`}
           >
             New appointment
           </button>
