@@ -1151,6 +1151,29 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     handleClose();
   }
 
+  // Move the appointment book behind this modal to whatever date was just
+  // picked. Booking against a date the book ISN'T showing is how appointments
+  // land on the wrong day: the receptionist reads availability off the grid in
+  // front of her while the form quietly holds a different date. Keeping the two
+  // in step means the columns she is looking at are the columns she is booking
+  // into.
+  //
+  // Rides on appointmentDraft.date, which AppointmentsScreen already seeds from
+  // its own selectedDate when it opens this modal — so this closes that loop
+  // rather than adding a second source of truth. The rest of the draft is
+  // spread through untouched: it carries bookedByReceptionistId, which becomes
+  // the booking's audit trail.
+  //
+  // Add mode only. In edit mode the book jumping around while someone corrects
+  // a typo on an existing appointment would be movement they didn't ask for.
+  function moveBookToDate(d: string) {
+    if (mode !== 'add') return;
+    dispatch({
+      type: 'SET_APPOINTMENT_DRAFT',
+      draft: { ...(state.appointmentDraft ?? {}), date: d },
+    });
+  }
+
   function handleClose() {
     dispatch({ type: 'SET_MODAL', modal: null });
     dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: null });
@@ -1478,7 +1501,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
                 <DatePickerPopover
                   value={date}
                   today={today}
-                  onChange={(d) => { setDate(d); setDatePickerOpen(false); }}
+                  onChange={(d) => { setDate(d); setDatePickerOpen(false); moveBookToDate(d); }}
                   onClose={() => setDatePickerOpen(false)}
                 />
               )}

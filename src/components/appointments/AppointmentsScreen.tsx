@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import DatePickerPopover from '../shared/DatePickerPopover';
 import {
@@ -197,6 +197,50 @@ export default function AppointmentsScreen() {
     dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: { date: selectedDate } });
     dispatch({ type: 'SET_MODAL', modal: 'addAppointment' });
   }
+
+  // Follow the date the NEW APPOINTMENT form is pointed at, so the grid behind
+  // the modal always shows the day being booked into. Without this the form and
+  // the book could disagree and the receptionist would read availability off
+  // the wrong day (Tony 2026-08-28: a recurring source of wrong-date bookings).
+  //
+  // One-way on purpose. openNewAppointment seeds the draft FROM selectedDate;
+  // this only reads it back, and AppointmentModal writes the draft solely when
+  // a date is actually picked — so there's no cycle.
+  const draftDate = state.appointmentDraft?.date;
+  useEffect(() => {
+    if (!draftDate) return;
+    setSelectedDate((cur) => (cur === draftDate ? cur : draftDate));
+  }, [draftDate]);
+
+  // ...and put the book back where it was once the form closes, whether the
+  // booking went through or was abandoned. The jump is there to show the day
+  // being booked INTO; leaving the book parked there afterwards would strand
+  // the receptionist on a future date while the salon is running today.
+  //
+  // Restores the date the book was actually on when the form opened, not
+  // today: normally those are the same, but someone who had deliberately paged
+  // ahead to next Tuesday keeps their place instead of being yanked back.
+  //
+  // Keyed on state.modal rather than the NEW button so it covers every way in
+  // — the header button, the PIN-gated open, and clicking an empty slot in the
+  // book. A booking shows its recap before closing, so the book stays on the
+  // booked day while that recap is up and only restores on the final dismiss.
+  const selectedDateRef = useRef(selectedDate);
+  selectedDateRef.current = selectedDate;
+  const dateBeforeBooking = useRef<string | null>(null);
+  const addApptModalOpen = state.modal === 'addAppointment';
+  useEffect(() => {
+    if (addApptModalOpen) {
+      if (dateBeforeBooking.current === null) {
+        dateBeforeBooking.current = selectedDateRef.current;
+      }
+      return;
+    }
+    if (dateBeforeBooking.current === null) return;
+    const restore = dateBeforeBooking.current;
+    dateBeforeBooking.current = null;
+    setSelectedDate((cur) => (cur === restore ? cur : restore));
+  }, [addApptModalOpen]);
 
   const isToday = selectedDate === today;
   const dayTotal = state.appointments.filter((a) => a.date === selectedDate).length;
