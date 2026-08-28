@@ -2,7 +2,7 @@
 // (Closed-shift viewing wired in.)
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer } from 'lucide-react';
+import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer, X } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import {
@@ -209,6 +209,13 @@ export default function RegisterScreen() {
     }
   }, [tickets, openTicket]);
   const [showOpenShift, setShowOpenShift] = useState(false);
+  // "START THE DAY" is a full-screen overlay, so it also covers the date
+  // navigation — with no shift open there was no way to reach an earlier day
+  // and read past tickets. Dismissing it lets the register be browsed;
+  // `needsShiftOpen` is today-only, so stepping back a day keeps it away on
+  // its own. Resets on remount, so the prompt still greets the next open of
+  // the Register rather than being permanently silenced.
+  const [shiftPromptDismissed, setShiftPromptDismissed] = useState(false);
   const [showCloseShift, setShowCloseShift] = useState(false);
   const [viewShift, setViewShift] = useState<Shift | null>(null);
   const [showClockModal, setShowClockModal] = useState(false);
@@ -328,8 +335,16 @@ export default function RegisterScreen() {
                 <Unlock size={16} /> OPEN SHIFT
               </button>
             )}
+            {/* Dismissing the START THE DAY overlay is for BROWSING, not for
+                ringing up. handleNewBlank never referenced the shift, so
+                without this the X would quietly hand back the exact thing the
+                overlay exists to prevent: a ticket against an uncounted
+                drawer. Today-only (needsShiftOpen), so past dates are
+                unaffected. */}
             <button onClick={handleNewBlank}
-              className="h-12 px-4 flex items-center gap-2 rounded-lg border border-yellow-400 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 hover:border-yellow-500 font-mono text-sm font-bold transition-colors">
+              disabled={needsShiftOpen}
+              title={needsShiftOpen ? 'Open the shift before ringing up a ticket' : undefined}
+              className="h-12 px-4 flex items-center gap-2 rounded-lg border border-yellow-400 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 hover:border-yellow-500 font-mono text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-yellow-50 disabled:hover:border-yellow-400">
               + NEW TICKET
             </button>
           </div>
@@ -405,9 +420,17 @@ export default function RegisterScreen() {
           onChanged={(saved) => setOpenTicket(saved)}
         />
       )}
-      {needsShiftOpen && !showOpenShift && (
+      {needsShiftOpen && !showOpenShift && !shiftPromptDismissed && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 flex flex-col items-center text-center gap-4 animate-modal-in">
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 flex flex-col items-center text-center gap-4 animate-modal-in">
+            <button
+              onClick={() => setShiftPromptDismissed(true)}
+              title="Close — browse tickets without opening the shift"
+              aria-label="Close"
+              className="absolute top-3 right-3 p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            >
+              <X size={18} />
+            </button>
             <div className="h-14 w-14 rounded-full bg-gray-900 text-white flex items-center justify-center">
               <Unlock size={26} />
             </div>
@@ -420,6 +443,9 @@ export default function RegisterScreen() {
               className="mt-2 h-12 px-6 flex items-center gap-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800 font-mono text-sm font-bold">
               <Unlock size={16} /> OPEN SHIFT
             </button>
+            <p className="font-mono text-[11px] text-gray-400">
+              or close this to look back at past tickets
+            </p>
           </div>
         </div>
       )}
