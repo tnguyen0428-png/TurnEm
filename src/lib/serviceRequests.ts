@@ -246,8 +246,8 @@ export function reconcileServiceRequests(
       const r = requests[i];
       const workers = backedWorkers.get(r.service);
       if (!workers) continue;
-      const mid = (r.manicuristIds ?? []).find((m) => workers.has(m) && !taken.has(`${r.service} ${m}`));
-      if (mid && claim(i)) taken.add(`${r.service} ${mid}`);
+      const mid = (r.manicuristIds ?? []).find((m) => workers.has(m) && !taken.has(`${r.service}\u0000${m}`));
+      if (mid && claim(i)) taken.add(`${r.service}\u0000${mid}`);
     }
   }
   for (let i = 0; i < requests.length; i++) {
