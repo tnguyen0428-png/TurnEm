@@ -200,6 +200,39 @@ export function matchAppointments(c: Customer, appts: Appointment[]): Appointmen
   });
 }
 
+/**
+ * EVERY distinct manicurist on an appointment, in booking order.
+ *
+ * A multi-service booking routinely splits across two techs (Sherri Nunes'
+ * standing Saturday is Gel Manicure/JOE + Gel Manicure/KATELYN). Each of the
+ * three surfaces that lists a customer's upcoming appointments — the popup,
+ * the matched-profile panel, and the printed schedule handed to the client —
+ * used to take `serviceRequests[0].manicuristIds[0]` and show ONE name, so
+ * that booking read as "JOE has her". Shared here so the three can't drift
+ * apart again.
+ *
+ * serviceRequests wins over the raw manicuristId column, matching how every
+ * other surface resolves staff; manicuristId is the fallback only when there
+ * are no requests at all (a dragged placement with no client request).
+ */
+export function appointmentStaffIds(a: Appointment): string[] {
+  const requested = Array.from(
+    new Set((a.serviceRequests ?? []).flatMap((r) => r.manicuristIds ?? [])),
+  );
+  if (requested.length > 0) return requested;
+  return a.manicuristId ? [a.manicuristId] : [];
+}
+
+/** Display form of {@link appointmentStaffIds} — "JOE, KATELYN", or "—". */
+export function appointmentStaffLabel(
+  a: Appointment,
+  nameById: ReadonlyMap<string, string>,
+): string {
+  const ids = appointmentStaffIds(a);
+  if (ids.length === 0) return '—';
+  return ids.map((id) => nameById.get(id) ?? '—').join(', ');
+}
+
 /** Pull all tickets for the customer in one call so history view is one-shot. */
 export async function fetchCustomerTickets(c: Customer): Promise<Ticket[]> {
   // Phone match (cheapest, most specific)

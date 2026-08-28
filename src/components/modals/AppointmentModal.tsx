@@ -3,6 +3,7 @@ import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar, History, Receipt 
 import Modal from '../shared/Modal';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import CustomerNoteAlert from '../shared/CustomerNoteAlert';
+import UpcomingApptsAlert from '../shared/UpcomingApptsAlert';
 import DatePickerPopover from '../shared/DatePickerPopover';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
@@ -10,6 +11,7 @@ import { formatMoneyCents } from '../../lib/tickets';
 import {
   upsertCustomerFromIntake, toTitleCase, formatPhoneDashed,
   searchCustomers, displayCustomerName, normalizePhone, matchAppointments,
+  appointmentStaffLabel,
 } from '../../lib/customers';
 import type { Customer } from '../../types';
 import { SERVICE_CATEGORIES } from '../../constants/services';
@@ -123,6 +125,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // pre-filling the NOTES textarea further down the form where it's easy to
   // miss (Tony 2026-07-27: notes were getting silently skipped).
   const [noteAlert, setNoteAlert] = useState<{ name: string; note: string } | null>(null);
+  // Upcoming-appointments popup — fires when the receptionist matches a
+  // customer while starting a NEW booking and that person already has future
+  // appointments on the books. The MatchedCustomerBanner below lists the same
+  // rows, but it scrolls out of view on a long form and was being missed, so
+  // the salon ended up double-booked when the client actually wanted the
+  // EXISTING appointment moved. Same "surface it where it can't be missed"
+  // reasoning as noteAlert above.
+  const [apptsAlert, setApptsAlert] = useState<
+    { name: string; appts: Appointment[] } | null
+  >(null);
   // Pending delete for one of the matched-customer's upcoming appointments.
   // Holds the appt id while the ConfirmDialog is shown; cleared on confirm
   // (after dispatch) or cancel. Lets the receptionist scrub stale future
@@ -264,6 +276,42 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     setNoteAlert({ name: displayCustomerName(matchedCustomer), note: stored });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchedCustomer?.id]);
+
+  // Pop the upcoming-appointments alert on the same trigger as the note alert
+  // (a newly matched customer id), but only while BOOKING — in edit mode the
+  // receptionist is already looking at one of these rows, so interrupting them
+  // with a list containing it would be noise.
+  //
+  // "Upcoming" is deliberately date-gated to today-or-later. A `scheduled` row
+  // dated last month is a no-show nobody closed out, and letting those fire the
+  // popup on every booking is how a warning turns into a reflex click-through.
+  // Today's own overdue appointments still count — those are exactly the case
+  // where the client is standing at the counter (cf. the assign-list overdue
+  // bug, where filtering past deltas HID a live appointment).
+  useEffect(() => {
+    if (mode !== 'add') return;
+    if (!matchedCustomer) return;
+    const upcoming = matchAppointments(matchedCustomer, state.appointments)
+      .filter((a) => (a.status === 'scheduled' || a.status === 'checked-in') && a.date >= today)
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+    if (upcoming.length === 0) return;
+    setApptsAlert({ name: displayCustomerName(matchedCustomer), appts: upcoming });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchedCustomer?.id]);
+
+  // EDIT on a popup row: abandon the half-typed new booking and switch this
+  // modal over to editing the appointment they picked. The receptionist already
+  // cleared the PIN gate to open the booking modal, so carry that same identity
+  // through as the editor rather than re-prompting — SET_APPOINTMENT_DRAFT
+  // replaces the add-draft wholesale, matching what AppointmentsScreen does
+  // when it opens an appointment for edit.
+  function openApptForEdit(appointmentId: string) {
+    const receptionistId = state.appointmentDraft?.bookedByReceptionistId ?? null;
+    setApptsAlert(null);
+    dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: { editingReceptionistId: receptionistId } });
+    dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId });
+    dispatch({ type: 'SET_MODAL', modal: 'editAppointment' });
+  }
   const [sameTime, setSameTime] = useState(false);
   // Standing-appointment series. When `isStandingAppt` is checked the cashier
   // also picks an interval (in days) and an end date; on save we book the
@@ -1703,6 +1751,18 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         onDismiss={() => setNoteAlert(null)}
       />
     )}
+    {/* Queued behind the note alert rather than stacked on top of it — both
+        fire off the same matched-customer id, and two overlapping popups is
+        how the second one gets dismissed unread. */}
+    {apptsAlert && !noteAlert && (
+      <UpcomingApptsAlert
+        name={apptsAlert.name}
+        appointments={apptsAlert.appts}
+        manicuristNameById={new Map(state.manicurists.map((m) => [m.id, m.name]))}
+        onEdit={openApptForEdit}
+        onNew={() => setApptsAlert(null)}
+      />
+    )}
     {pendingAutoAssign && !pendingAutoAssign.approved && (
       <ConfirmDialog
         message={`Can't find enough free skilled manicurists for ${pendingAutoAssign.servicesLabel} at ${pendingAutoAssign.timeLabel} (one per service, no overlaps). Book as unassigned? You can drag each service to a manicurist's column later.`}
@@ -1884,8 +1944,9 @@ function MatchedCustomerBanner({
     const rows = openAppointments
       .map((a) => {
         const services = (a.services?.length ? a.services : [a.service]).join(', ');
-        const staffId = a.serviceRequests?.find((r) => r.manicuristIds?.length > 0)?.manicuristIds[0] ?? a.manicuristId ?? null;
-        const staff = staffId ? manicuristNameById.get(staffId) ?? '—' : '—';
+        // All techs, not just the first — this sheet goes home with the
+        // client, so dropping the second one is the worst place to do it.
+        const staff = appointmentStaffLabel(a, manicuristNameById);
         return `<tr>
           <td>${esc(fmtDate(a.date))}</td>
           <td>${esc(fmtTime(a.time))}</td>
@@ -2027,8 +2088,7 @@ ${rows
           </div>
           {openAppointments.slice(0, 5).map((a) => {
             const services = (a.services?.length ? a.services : [a.service]).join(', ');
-            const staffId = a.serviceRequests?.find((r) => r.manicuristIds?.length > 0)?.manicuristIds[0] ?? a.manicuristId ?? null;
-            const staff = staffId ? manicuristNameById.get(staffId) ?? '—' : '—';
+            const staff = appointmentStaffLabel(a, manicuristNameById);
             return (
               <div
                 key={a.id}
@@ -2036,8 +2096,11 @@ ${rows
               >
                 <span className="font-mono text-xs text-gray-800">{formatDate(a.date)}</span>
                 <span className="font-mono text-xs text-gray-700">{formatTime(a.time)}</span>
-                <span className="font-mono text-xs text-gray-700 truncate">{services || '—'}</span>
-                <span className="font-mono text-xs text-gray-700 truncate">{staff}</span>
+                {/* Both truncate in this narrow docked panel — the title
+                    attribute is the only way to read a long service list or a
+                    three-tech booking without opening the appointment. */}
+                <span className="font-mono text-xs text-gray-700 truncate" title={services || '—'}>{services || '—'}</span>
+                <span className="font-mono text-xs text-gray-700 truncate" title={staff}>{staff}</span>
                 <button
                   type="button"
                   onClick={() => onDelete(a.id)}

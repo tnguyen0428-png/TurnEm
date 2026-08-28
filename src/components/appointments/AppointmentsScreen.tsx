@@ -13,7 +13,7 @@ import CustomerNoteAlert from '../shared/CustomerNoteAlert';
 import AppointmentBookView from './AppointmentBookView';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import { getTodayLA, formatTimeOfDay, getNowMinutesLA } from '../../utils/time';
-import { getPermanentNoteByPhone } from '../../lib/customers';
+import { getPermanentNoteByPhone, appointmentStaffIds } from '../../lib/customers';
 import type { Appointment, QueueEntry, ServiceType } from '../../types';
 
 const STATUS_CONFIG: Record<Appointment['status'], { label: string; variant: 'green' | 'blue' | 'amber' | 'pink' | 'red' | 'gray' }> = {
@@ -311,10 +311,17 @@ export default function AppointmentsScreen() {
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                               <span className="font-mono text-xs text-gray-600">{formatTimeOfDay(appt.time)}</span>
                               <span className="font-mono text-xs text-gray-500">{(appt.services?.length ? appt.services : [appt.service]).join(' + ')}</span>
-                              {(appt.serviceRequests?.length ? appt.serviceRequests.filter((r) => r.manicuristIds.length > 0) : appt.manicuristId ? [{ manicuristIds: [appt.manicuristId] }] : []).map((r, i) => (
-                                <span key={i} className="flex items-center gap-1.5">
-                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getManicuristColor(r.manicuristIds[0]) }} />
-                                  <span className="font-mono text-xs text-gray-500">{getManicuristName(r.manicuristIds[0])}</span>
+                              {/* One chip per DISTINCT tech. This used to render
+                                  a chip per request and read manicuristIds[0]
+                                  from each, which showed both techs when they
+                                  were separate requests but silently dropped the
+                                  second when ONE service was split across two —
+                                  and double-printed a tech booked for two
+                                  services. */}
+                              {appointmentStaffIds(appt).map((id) => (
+                                <span key={id} className="flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getManicuristColor(id) }} />
+                                  <span className="font-mono text-xs text-gray-500">{getManicuristName(id)}</span>
                                 </span>
                               ))}
                               {appt.clientPhone && <span className="flex items-center gap-1 font-mono text-[10px] text-gray-400"><Phone size={10} />{appt.clientPhone}</span>}
