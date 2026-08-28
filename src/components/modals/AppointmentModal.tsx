@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar, History, Receipt } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar, History, Receipt, GripHorizontal } from 'lucide-react';
 import Modal from '../shared/Modal';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import CustomerNoteAlert from '../shared/CustomerNoteAlert';
@@ -1099,10 +1099,20 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const staff = appointmentManicuristId
         ? state.manicurists.find((m) => m.id === appointmentManicuristId)?.name ?? ''
         : '';
+      // Name a tech ONLY for a client request. requestedManicuristIds is
+      // populated only when clientRequest is true (see where serviceRequests is
+      // built below, and the reload at ~424), so a non-empty list IS the
+      // request test.
+      //
+      // The old `?? appointmentManicuristId` fallback is why this was wrong: a
+      // non-request line still gets a column placement — auto-assigned, or
+      // picked by the receptionist — but that placement is not a promise. The
+      // queue hands the client to whoever is free, and stripping manicuristIds
+      // from non-request entries is exactly what the book already does on the
+      // way to the queue. Naming that tech in the recap read as a commitment
+      // the booking never made (Tony 2026-08-28).
       const serviceLines = selectedServices.map((s) => {
-        const mId = s.requestedManicuristIds[0]
-          ?? appointmentManicuristId
-          ?? null;
+        const mId = s.requestedManicuristIds[0] ?? null;
         const staffName = mId
           ? (state.manicurists.find((m) => m.id === mId)?.name ?? '?')
           : 'Unassigned';
@@ -2300,28 +2310,98 @@ function BookingRecapModal({
     const h12 = ((hh + 11) % 12) + 1;
     return `${h12}:${String(mm ?? 0).padStart(2, '0')} ${ampm}`;
   }
-  // A bar pinned to the bottom rather than a centred modal, and no dark
+
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // null until the first drag — see the style prop for why centring stays in
+  // CSS rather than being measured up front.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  // Grab offset within the panel, so it doesn't jump to put its corner under
+  // the finger on the first move.
+  const grabRef = useRef<{ dx: number; dy: number } | null>(null);
+
+  function startDrag(e: React.PointerEvent<HTMLDivElement>) {
+    const el = panelRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    grabRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    // Freeze the CSS-centred position into real px before the first move, or
+    // the translate(-50%,-50%) would fight the left/top we're about to set.
+    setPos({ x: r.left, y: r.top });
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onDrag(e: React.PointerEvent<HTMLDivElement>) {
+    const grab = grabRef.current;
+    const el = panelRef.current;
+    if (!grab || !el) return;
+    const r = el.getBoundingClientRect();
+    // Clamp so the panel can never be stranded off screen: the handle stays on
+    // screen vertically, and at least a strip of the panel stays grabbable
+    // horizontally. Without this a hard flick could park CONFIRM somewhere
+    // nobody can reach.
+    const EDGE = 80;
+    setPos({
+      x: Math.min(Math.max(e.clientX - grab.dx, EDGE - r.width), window.innerWidth - EDGE),
+      y: Math.min(Math.max(e.clientY - grab.dy, 0), window.innerHeight - 40),
+    });
+  }
+  function endDrag(e: React.PointerEvent<HTMLDivElement>) {
+    grabRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  }
+
+  // A centred floating panel that the receptionist can DRAG, and no dark
   // backdrop: the whole point of this step is to look at the ghost block now
-  // sitting in the grid above, which a centred card covered up.
+  // sitting in the grid, so whatever the panel covers has to be movable out of
+  // the way rather than dismissed (Tony 2026-08-28). It opens centred because
+  // that is where the eye already is after pressing BOOK; the bottom bar it
+  // replaced was easy to miss on a wide tablet.
   //
   // The heading is imperative, not past tense. The old card read "BOOKING
   // CONFIRMED — recap of what was just saved" while nothing had been saved yet
   // (the rows are only dispatched by the CONFIRM handler), so it claimed a
   // durable booking that a stray EDIT would have silently discarded.
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[70] border-t-2 border-sky-300 bg-white shadow-[0_-8px_24px_rgba(0,0,0,0.14)]">
-      <div className="max-w-6xl mx-auto px-5 py-3 flex flex-col gap-2">
+    <div
+      ref={panelRef}
+      style={
+        // null = "still centred", expressed as a transform so the panel needs
+        // no measurement before first paint (no flash at 0,0). The first drag
+        // freezes the measured position into px and takes over from here.
+        pos
+          ? { left: pos.x, top: pos.y }
+          : { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }
+      }
+      className="fixed z-[70] w-[min(760px,calc(100vw-1.5rem))] rounded-xl border-2 border-sky-300 bg-white shadow-[0_10px_40px_rgba(0,0,0,0.22)]"
+    >
+      {/* Drag handle. Pointer events (not mouse) so this works with a finger on
+          the front-desk tablets; touch-none stops the browser panning the book
+          instead of moving the panel. */}
+      <div
+        onPointerDown={startDrag}
+        onPointerMove={onDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        className="flex items-center justify-center gap-2 rounded-t-lg border-b border-sky-200 bg-sky-50 px-5 py-2 cursor-grab active:cursor-grabbing touch-none select-none"
+      >
+        <GripHorizontal size={18} className="text-sky-500" />
+        <span className="font-mono text-xs font-bold uppercase tracking-wider text-sky-700">
+          Drag to move
+        </span>
+      </div>
+      <div className="px-6 py-5 flex flex-col gap-4">
         {/* Warnings stay above the summary — a skipped or conflicting date is
             the whole reason to press EDIT instead of CONFIRM. */}
         {info.seriesDates && info.seriesDates.length > 0 && (
-          <p className="font-mono text-xs text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5">
+          <p className="font-mono text-base text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-3 leading-relaxed">
             <span className="font-bold uppercase tracking-wider">Standing series</span>
             {' — '}{info.seriesDates.length} extra visit{info.seriesDates.length === 1 ? '' : 's'}:{' '}
             {info.seriesDates.map(formatDate).join(' · ')}
           </p>
         )}
         {info.skippedDates && info.skippedDates.length > 0 && (
-          <p className="font-mono text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+          <p className="font-mono text-base text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3 leading-relaxed">
             <span className="font-bold uppercase tracking-wider">
               {info.skippedDates.length} date{info.skippedDates.length === 1 ? '' : 's'} skipped
             </span>
@@ -2330,7 +2410,7 @@ function BookingRecapModal({
           </p>
         )}
         {info.conflictDates && info.conflictDates.length > 0 && (
-          <p className="font-mono text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5">
+          <p className="font-mono text-base text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 leading-relaxed">
             <span className="font-bold uppercase tracking-wider">
               {info.conflictDates.length} date{info.conflictDates.length === 1 ? '' : 's'} unavailable
             </span>
@@ -2339,42 +2419,69 @@ function BookingRecapModal({
           </p>
         )}
 
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <div className="flex items-baseline gap-3 flex-wrap">
-              <h2 className="font-bebas text-xl tracking-[3px] text-gray-900">CONFIRM THIS BOOKING</h2>
-              <span className="font-mono text-[11px] text-sky-700">
-                Check the highlighted block in the book above.
-              </span>
-            </div>
-            <p className="font-mono text-sm font-semibold text-gray-900 truncate">
-              {info.clientName || 'Walk-in'}
-              {' · '}{formatDate(info.date)}
-              {' · '}{formatTime(info.time)}
-            </p>
-            <p className="font-mono text-xs text-gray-600 truncate">
-              {info.serviceLines.length === 0
-                ? (info.staffName || '—')
-                : info.serviceLines.map((sl) => `${sl.service} — ${sl.staffName}`).join('   ·   ')}
-              {info.receptionistName ? `   ·   booked by ${info.receptionistName}` : ''}
+        {/* Summary above, buttons on their own row below. Side-by-side was a
+            hangover from the full-width bottom bar; in a floating panel it left
+            the text a cramped column beside the buttons. */}
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <h2 className="font-bebas text-4xl leading-tight tracking-[3px] text-gray-900">
+              CONFIRM THIS BOOKING
+            </h2>
+            <p className="font-mono text-base leading-relaxed text-sky-700">
+              Check the highlighted block in the book behind.
             </p>
           </div>
-          <div className="flex gap-2 flex-shrink-0">
-            <button
-              type="button"
-              onClick={onEdit}
-              className="px-4 py-2.5 rounded-lg bg-white border border-gray-300 text-gray-700 font-mono text-xs font-bold hover:bg-gray-50"
-            >
-              EDIT
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-5 py-2.5 rounded-lg bg-sky-400 hover:bg-sky-500 text-white font-mono text-xs font-bold tracking-wider transition-colors"
-            >
-              CONFIRM APPOINTMENT
-            </button>
-          </div>
+
+          {/* Separators are real elements with margin. They used to be
+              `{'   ·   '}` inside a string — HTML collapses a run of spaces to
+              one, so the padding that was meant to be there never rendered. */}
+          <p className="font-mono text-xl font-semibold leading-relaxed text-gray-900">
+            {info.clientName || 'Walk-in'}
+            <span className="mx-3 text-gray-300">·</span>
+            {formatDate(info.date)}
+            <span className="mx-3 text-gray-300">·</span>
+            {formatTime(info.time)}
+          </p>
+
+          {/* One element per service line, wrapping, instead of one joined and
+              truncated string — a two-tech booking now reads as two entries
+              rather than running together and being cut off. */}
+          <ul className="flex flex-wrap gap-x-7 gap-y-2 font-mono text-lg leading-relaxed text-gray-600">
+            {info.serviceLines.length === 0 ? (
+              <li>{info.staffName || '—'}</li>
+            ) : (
+              info.serviceLines.map((sl, i) => (
+                <li key={`${sl.service}-${sl.staffName}-${i}`}>
+                  <span className="text-gray-900">{sl.service}</span>
+                  <span className="mx-2 text-gray-300">—</span>
+                  {sl.staffName}
+                </li>
+              ))
+            )}
+          </ul>
+
+          {info.receptionistName && (
+            <p className="font-mono text-base leading-relaxed text-gray-400">
+              booked by {info.receptionistName}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-3 border-t border-gray-100 pt-4">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="px-7 py-3.5 rounded-lg bg-white border border-gray-300 text-gray-700 font-mono text-base font-bold tracking-wider hover:bg-gray-50"
+          >
+            EDIT
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-8 py-3.5 rounded-lg bg-sky-400 hover:bg-sky-500 text-white font-mono text-base font-bold tracking-wider transition-colors"
+          >
+            CONFIRM APPOINTMENT
+          </button>
         </div>
       </div>
     </div>
