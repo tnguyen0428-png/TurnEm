@@ -529,7 +529,13 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // Greedy backtracking; prefers manicurists whose columns are close
   // together (by sort_order proxy) so the resulting blocks appear "near
   // each other" in the book.
-  function findAutoAssignManicurists(): { kind: 'found'; perService: (string | null)[] } | { kind: 'noneAvailable' } {
+  // `anchorId` pins one service to a specific column and clusters the rest
+  // around it — used when the receptionist opened the form by clicking a
+  // column, where that column is an instruction rather than a suggestion.
+  function findAutoAssignManicurists(anchorId?: string | null):
+    { kind: 'found'; perService: (string | null)[] }
+    | { kind: 'noneAvailable' }
+    | { kind: 'anchorUnavailable' } {
     const [sh, sm] = time.split(':').map(Number);
     const apptStartMin = sh * 60 + sm;
     const occupancy = computeOtherAppointmentOccupancy();
@@ -593,35 +599,100 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     const serviceOrder = candidatesByService
       .map((_, idx) => idx)
       .sort((a, b) => candidatesByService[a].length - candidatesByService[b].length);
-    const used = new Set<string>();
-    const result: (string | null)[] = new Array(selectedServices.length).fill(null);
 
-    function pick(orderIdx: number): boolean {
-      if (orderIdx >= serviceOrder.length) return true;
-      const svcIdx = serviceOrder[orderIdx];
+    const colOf = (id: string) => orderIdxById.get(id) ?? 0;
+    // How far apart the chosen columns are, leftmost to rightmost. This is the
+    // thing being minimised: a party booked on one appointment should read as
+    // one group in the book, not be sprayed across the board.
+    const spreadOf = (picks: (string | null)[]) => {
+      const cols = picks.filter((p): p is string => !!p).map(colOf);
+      return cols.length === 0 ? 0 : Math.max(...cols) - Math.min(...cols);
+    };
+
+    // Fill every service in `order`, always taking the candidate nearest to the
+    // columns already chosen, backtracking when a branch dead-ends.
+    function pickFrom(orderIdx: number, order: number[], used: Set<string>, result: (string | null)[]): boolean {
+      if (orderIdx >= order.length) return true;
+      const svcIdx = order[orderIdx];
       const cands = candidatesByService[svcIdx].filter((id) => !used.has(id));
       if (cands.length === 0) return false;
-      // Sort by proximity to already-picked columns so adjacent service
-      // blocks land in adjacent (or close) columns.
-      cands.sort((a, b) => {
-        if (used.size === 0) return (orderIdxById.get(a) ?? 0) - (orderIdxById.get(b) ?? 0);
-        const dist = (id: string) => Math.min(
-          ...Array.from(used).map((u) => Math.abs((orderIdxById.get(id) ?? 0) - (orderIdxById.get(u) ?? 0))),
-        );
-        return dist(a) - dist(b);
-      });
+      const dist = (id: string) => Math.min(
+        ...Array.from(used).map((u) => Math.abs(colOf(id) - colOf(u))),
+      );
+      cands.sort((a, b) => dist(a) - dist(b) || colOf(a) - colOf(b));
       for (const c of cands) {
         used.add(c);
         result[svcIdx] = c;
-        if (pick(orderIdx + 1)) return true;
+        if (pickFrom(orderIdx + 1, order, used, result)) return true;
         used.delete(c);
         result[svcIdx] = null;
       }
       return false;
     }
 
-    if (!pick(0)) return { kind: 'noneAvailable' };
-    return { kind: 'found', perService: result };
+    // Run the greedy from each candidate starting assignment and keep the
+    // tightest complete result. Strictly-less on the comparison keeps the FIRST
+    // start on ties, so a single-service booking (every spread 0) picks exactly
+    // what it always did.
+    function bestOf(starts: Array<{ svcIdx: number; id: string }>): (string | null)[] | null {
+      let best: (string | null)[] | null = null;
+      let bestSpread = Infinity;
+      for (const start of starts) {
+        const used = new Set<string>([start.id]);
+        const result: (string | null)[] = new Array(selectedServices.length).fill(null);
+        result[start.svcIdx] = start.id;
+        const rest = serviceOrder.filter((i) => i !== start.svcIdx);
+        if (!pickFrom(0, rest, used, result)) continue;
+        const spread = spreadOf(result);
+        if (spread < bestSpread) {
+          bestSpread = spread;
+          best = result.slice();
+        }
+      }
+      return best;
+    }
+
+    // The old version seeded the first (most-constrained) service with the
+    // LEFTMOST available column and clustered everything around wherever that
+    // happened to land — the proximity sort only ever broke ties AFTER the
+    // anchor was fixed, and never reconsidered it. With pedicure techs in
+    // columns 1, 6, 7, 8 it took 1, then the nearest to 1 (6), then 7: spread 6,
+    // when 6/7/8 was sitting right there at spread 2.
+    //
+    // Measured over 2026-08-01..29, fully auto-placed multi-service bookings:
+    // 3-service averaged 8.1 columns apart and NOT ONE of 30 landed within 2.
+    //
+    // So try every candidate for the seed service as the anchor, run the same
+    // greedy to completion from each, and keep the tightest. Feasibility is
+    // unchanged — if any anchor yields a complete assignment we return one, and
+    // we only report noneAvailable when every anchor dead-ends, which is
+    // strictly harder to hit than before. Cost is (candidates x old cost), and
+    // candidates is at most the number of manicurists.
+    //
+    // ANCHORED case: the receptionist opened the form by clicking a column, so
+    // that column is not a suggestion — it is where they said this booking
+    // goes. Pin it and pack the rest around it, rather than picking freely.
+    // Try it against each service it is eligible for and keep the tightest.
+    if (anchorId) {
+      const starts = candidatesByService
+        .map((_, svcIdx) => svcIdx)
+        .filter((svcIdx) => candidatesByService[svcIdx].includes(anchorId))
+        .map((svcIdx) => ({ svcIdx, id: anchorId }));
+      // The clicked tech can't take any of these services at this time (not
+      // skilled, not scheduled, or already booked). Say so rather than quietly
+      // placing the booking somewhere the receptionist didn't ask for — the
+      // caller falls back to today's behaviour of anchoring everything on the
+      // clicked column.
+      if (starts.length === 0) return { kind: 'anchorUnavailable' };
+      const anchored = bestOf(starts);
+      if (!anchored) return { kind: 'anchorUnavailable' };
+      return { kind: 'found', perService: anchored };
+    }
+
+    const seedSvcIdx = serviceOrder[0];
+    const best = bestOf(candidatesByService[seedSvcIdx].map((id) => ({ svcIdx: seedSvcIdx, id })));
+    if (!best) return { kind: 'noneAvailable' };
+    return { kind: 'found', perService: best };
   }
 
   function findBookingPreview(): BookingPreview {
@@ -797,23 +868,39 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
     const firstRequestedId = serviceRequests.find((r) => r.clientRequest === true)?.manicuristIds?.[0] ?? null;
 
-    // Auto-assignment: brand-new booking, no specific manicurist requested,
-    // no draft column → pick a DISTINCT skilled+free manicurist for EACH
-    // service so they land in different columns at the same time slot
-    // ("near each other" instead of stacked under one person back-to-back).
-    // If we can't find enough distinct free staff, prompt the receptionist
-    // and let them book as unassigned.
+    // Auto-assignment: brand-new booking, no specific manicurist requested →
+    // pick a DISTINCT skilled+free manicurist for EACH service so they land in
+    // different columns at the same time slot ("near each other" instead of
+    // stacked under one person back-to-back). If we can't find enough distinct
+    // free staff, prompt the receptionist and let them book as unassigned.
+    //
+    // A DRAFT COLUMN (the form was opened by clicking a slot in the book) used
+    // to switch this off outright, so a party booked that way stacked every
+    // service on the clicked tech. It now anchors there instead — but only for
+    // a SAME TIME multi-service booking, because that is the one shape that
+    // cannot be one person: concurrent services need different techs. Without
+    // Same Time the services are sequential, which is one client having several
+    // things done, and they must stay on the tech whose column was clicked
+    // (Tony 2026-08-29). Note the auto-assign path already forces sameTime on
+    // for multi-service bookings below, so the two stay consistent.
     let autoPerService: (string | null)[] | null = null;
+    const anchorColumnId =
+      draft?.manicuristId && sameTime && selectedServices.length > 1 ? draft.manicuristId : null;
     const shouldAutoAssign =
       mode === 'add' &&
       firstRequestedId == null &&
-      !draft?.manicuristId &&
+      (!draft?.manicuristId || anchorColumnId != null) &&
       selectedServices.length > 0;
     if (shouldAutoAssign) {
       if (pendingAutoAssign === null) {
-        const result = findAutoAssignManicurists();
+        const result = findAutoAssignManicurists(anchorColumnId);
         if (result.kind === 'found') {
           autoPerService = result.perService;
+        } else if (result.kind === 'anchorUnavailable') {
+          // The clicked tech can't take these services at this time. Fall
+          // through with autoPerService null, which anchors everything on the
+          // clicked column exactly as it did before — no dialog, no surprise.
+          autoPerService = null;
         } else {
           setPendingAutoAssign({
             servicesLabel: selectedServices.map((s) => s.serviceName).join(', '),
