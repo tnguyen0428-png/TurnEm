@@ -1201,6 +1201,29 @@ export default function TicketModal({
         return hit?.id ?? null;
       };
 
+      // Queue-side rename, accumulated per entry so several line edits on one
+      // entry compose instead of clobbering each other.
+      //
+      // The block below mirrors the cashier's rename onto the APPOINTMENT, but
+      // the live queue entry kept the OLD service name. That stale name is
+      // precisely why the queue->appointment sync can't be trusted to add a
+      // service the booking doesn't list: addMissingServiceRequests gates on
+      // appt.services[] so a stale entry can't resurrect a renamed-away service
+      // (Debbie Ma x Brian, 2026-08-05). That gate is also what stops a service
+      // a customer ADDS mid-visit from ever reaching the booking, which is the
+      // larger half of the missing-block problem (27 tickets since 07/01).
+      //
+      // Renaming the entry removes the inconsistency at its source rather than
+      // defending against it downstream, so the gate can later be relaxed
+      // safely. On its own this is just correctness: after a rename the board
+      // and the queue currently disagree about what is being done.
+      //
+      // turnValue is deliberately NOT recomputed here. Turn credit for an
+      // edited line is reallocated at ticket save
+      // (reallocateTurnsForStaffChanges); adjusting it here too would correct
+      // the same change twice.
+      const queueRenames = new Map<string, Svc[]>();
+
       type Working = { services: Svc[]; serviceRequests: SvcReq[]; manicuristId: string | null; touched: boolean };
       const work = new Map<string, Working>();
       const getWork = (apptId: string): Working | null => {
@@ -1227,6 +1250,26 @@ export default function TicketModal({
         const nameChanged = !!oldName && !!newName && oldName !== newName;
         const staffChanged = orig.staff1Id !== l.staff1Id;
         if (!nameChanged && !staffChanged) continue;
+
+        // Rename the LIVE queue entry this line came from, if it's still on the
+        // floor. Matched by the line's own queueEntryId — the exact entry the
+        // cashier edited — never by service name alone, which on a split visit
+        // would rename a sibling tech's identical service instead.
+        if (nameChanged && oldName && newName && orig.queueEntryId) {
+          const qe = state.queue.find((q) => q.id === orig.queueEntryId);
+          if (qe) {
+            const cur = queueRenames.get(qe.id) ?? [...(qe.services ?? [])];
+            const qi = cur.findIndex((s) => s === oldName);
+            // Only the first matching occurrence, mirroring the services[]
+            // rename below. No match means this entry never carried the old
+            // name and renaming anything here would be a guess.
+            if (qi >= 0) {
+              cur[qi] = newName as Svc;
+              queueRenames.set(qe.id, cur);
+            }
+          }
+        }
+
         const apptId = resolveApptId(orig);
         if (!apptId) continue;
         const w = getWork(apptId);
@@ -1276,6 +1319,13 @@ export default function TicketModal({
         if (staffChanged && l.staff1Id && w.manicuristId === orig.staff1Id) {
           w.manicuristId = l.staff1Id;
         }
+      }
+
+      // Flush the queue-side renames. Dispatched BEFORE the appointment writes
+      // so the queue is never briefly the only place still holding the old
+      // name — the window in which the sync effect could act on it.
+      for (const [qid, renamed] of queueRenames) {
+        dispatch({ type: 'UPDATE_CLIENT', id: qid, updates: { services: renamed } });
       }
 
       for (const [apptId, w] of work) {
