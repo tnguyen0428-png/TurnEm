@@ -532,7 +532,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // `anchorId` pins one service to a specific column and clusters the rest
   // around it — used when the receptionist opened the form by clicking a
   // column, where that column is an instruction rather than a suggestion.
-  function findAutoAssignManicurists(anchorId?: string | null):
+  //
+  // `fixedByServiceIdx` holds services the CUSTOMER pinned by requesting a
+  // tech. Those are immovable and are not solved for at all: they are excluded
+  // from the search, their columns are seeded into `used` so the free services
+  // cluster around them (and never collide with them), and they come back as
+  // null so the caller leaves their existing clientRequest entry untouched.
+  function findAutoAssignManicurists(
+    anchorId?: string | null,
+    fixedByServiceIdx?: Map<number, string>,
+  ):
     { kind: 'found'; perService: (string | null)[] }
     | { kind: 'noneAvailable' }
     | { kind: 'anchorUnavailable' } {
@@ -593,19 +602,37 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         })
         .map((m) => m.id);
     });
-    if (candidatesByService.some((c) => c.length === 0)) return { kind: 'noneAvailable' };
+    // Services the customer pinned by requesting a tech are not solved for.
+    // Deliberately NOT filtered for availability: a requested tech who is
+    // already booked or off-shift still keeps their slot — that is the
+    // customer's choice and the receptionist's problem to resolve, and
+    // rejecting the whole booking over it would be a regression.
+    const fixedIdxs = new Set(fixedByServiceIdx?.keys() ?? []);
+    const fixedIds = Array.from(fixedByServiceIdx?.values() ?? []);
+    const freeIdxs = selectedServices.map((_, i) => i).filter((i) => !fixedIdxs.has(i));
+
+    // Every service is spoken for — nothing to place.
+    if (freeIdxs.length === 0) {
+      return { kind: 'found', perService: new Array(selectedServices.length).fill(null) };
+    }
+    // Only the services we're actually solving for need a candidate.
+    if (freeIdxs.some((i) => candidatesByService[i].length === 0)) return { kind: 'noneAvailable' };
 
     // Greedy backtracking ordered by most-constrained service first.
-    const serviceOrder = candidatesByService
-      .map((_, idx) => idx)
+    const serviceOrder = freeIdxs
+      .slice()
       .sort((a, b) => candidatesByService[a].length - candidatesByService[b].length);
 
     const colOf = (id: string) => orderIdxById.get(id) ?? 0;
     // How far apart the chosen columns are, leftmost to rightmost. This is the
     // thing being minimised: a party booked on one appointment should read as
     // one group in the book, not be sprayed across the board.
+    // Requested columns count toward the spread even though they were never
+    // chosen here — the group has to read as one group INCLUDING the tech the
+    // customer asked for, so the free services pack around them rather than
+    // forming a tidy cluster of their own somewhere else on the board.
     const spreadOf = (picks: (string | null)[]) => {
-      const cols = picks.filter((p): p is string => !!p).map(colOf);
+      const cols = [...fixedIds, ...picks.filter((p): p is string => !!p)].map(colOf);
       return cols.length === 0 ? 0 : Math.max(...cols) - Math.min(...cols);
     };
 
@@ -638,7 +665,15 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       let best: (string | null)[] | null = null;
       let bestSpread = Infinity;
       for (const start of starts) {
-        const used = new Set<string>([start.id]);
+        // A requested tech is already busy with their own service at this time,
+        // so they can't also take a free one. pickFrom's `!used.has(id)` covers
+        // the recursive picks, but the START is chosen before `used` exists and
+        // has to be filtered explicitly — without this, requesting CHRISTINA
+        // for one of three concurrent pedicures handed her a second one too.
+        if (fixedIds.includes(start.id)) continue;
+        // Seed with the requested techs so free services cluster around them
+        // and can never be handed the same person twice.
+        const used = new Set<string>([...fixedIds, start.id]);
         const result: (string | null)[] = new Array(selectedServices.length).fill(null);
         result[start.svcIdx] = start.id;
         const rest = serviceOrder.filter((i) => i !== start.svcIdx);
@@ -673,9 +708,12 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     // that column is not a suggestion — it is where they said this booking
     // goes. Pin it and pack the rest around it, rather than picking freely.
     // Try it against each service it is eligible for and keep the tightest.
-    if (anchorId) {
-      const starts = candidatesByService
-        .map((_, svcIdx) => svcIdx)
+    // A clicked column that is ALREADY one of the requested techs needs no
+    // anchoring — it is in `used` and the free services are clustering around
+    // it already. Anchoring it again would try to hand the same person two of
+    // the concurrent services.
+    if (anchorId && !fixedIds.includes(anchorId)) {
+      const starts = freeIdxs
         .filter((svcIdx) => candidatesByService[svcIdx].includes(anchorId))
         .map((svcIdx) => ({ svcIdx, id: anchorId }));
       // The clicked tech can't take any of these services at this time (not
@@ -883,17 +921,37 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     // things done, and they must stay on the tech whose column was clicked
     // (Tony 2026-08-29). Note the auto-assign path already forces sameTime on
     // for multi-service bookings below, so the two stay consistent.
+    //
+    // A CLIENT REQUEST on any one service used to switch this off for ALL of
+    // them — the same shape of bug as the draft column, different gate. So a
+    // party where one person asked for CHRISTINA and the other two didn't care
+    // put all three on CHRISTINA. The requested service is now held FIXED and
+    // only the rest are placed, clustering around the requested tech (Tony
+    // 2026-08-29). Gated on Same Time for exactly the same reason: without it
+    // the services are sequential and belong to one client, who should stay
+    // with the tech they asked for.
     let autoPerService: (string | null)[] | null = null;
-    const anchorColumnId =
-      draft?.manicuristId && sameTime && selectedServices.length > 1 ? draft.manicuristId : null;
+    const isConcurrentMulti = sameTime && selectedServices.length > 1;
+    const anchorColumnId = draft?.manicuristId && isConcurrentMulti ? draft.manicuristId : null;
+    // Services the customer pinned, by index, so the solver can hold them.
+    const fixedByServiceIdx = new Map<number, string>();
+    selectedServices.forEach((s, i) => {
+      const reqId = s.requestedManicuristIds[0];
+      if (reqId) fixedByServiceIdx.set(i, reqId);
+    });
+    const everyServiceRequested = fixedByServiceIdx.size === selectedServices.length;
     const shouldAutoAssign =
       mode === 'add' &&
-      firstRequestedId == null &&
-      (!draft?.manicuristId || anchorColumnId != null) &&
-      selectedServices.length > 0;
+      selectedServices.length > 0 &&
+      !everyServiceRequested &&
+      // A request, or a clicked column, means somebody already said where part
+      // of this booking goes. Only place the REST when the services run
+      // concurrently and therefore cannot all be one person.
+      (firstRequestedId == null || isConcurrentMulti) &&
+      (!draft?.manicuristId || anchorColumnId != null);
     if (shouldAutoAssign) {
       if (pendingAutoAssign === null) {
-        const result = findAutoAssignManicurists(anchorColumnId);
+        const result = findAutoAssignManicurists(anchorColumnId, fixedByServiceIdx);
         if (result.kind === 'found') {
           autoPerService = result.perService;
         } else if (result.kind === 'anchorUnavailable') {
@@ -922,10 +980,17 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const seen: Record<string, number> = {};
       for (let i = 0; i < selectedServices.length; i++) {
         const s = selectedServices[i];
-        const pickedId = autoPerService[i];
-        if (!pickedId) continue;
+        // Advance the per-name occurrence counter for EVERY service, including
+        // ones with no pick. `matches[occ]` indexes serviceRequests by name, so
+        // skipping the increment makes the NEXT same-named service resolve to
+        // the skipped entry: with Pedicure #1 requested (no pick) and #2 free,
+        // #2's pick would land on #1's row and overwrite the customer's
+        // requested tech. Latent until requested services began coming back
+        // null from the solver; every service used to get a pick.
         const occ = seen[s.serviceName] ?? 0;
         seen[s.serviceName] = occ + 1;
+        const pickedId = autoPerService[i];
+        if (!pickedId) continue;
         const matches = serviceRequests.filter((r) => r.service === s.serviceName);
         const existing = matches[occ];
         if (existing) {
