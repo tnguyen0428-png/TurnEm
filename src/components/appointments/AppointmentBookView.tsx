@@ -1462,8 +1462,14 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                       marks whole hours, so on a :15/:30/:45 slot there was
                       nothing on screen telling you what you were about to
                       book (Tony 2026-08-29). pointer-events-none so it can
-                      never swallow the double-click that opens the form. */}
-                  <span className="pointer-events-none absolute top-0.5 left-1 opacity-0 group-hover:opacity-100 font-mono text-[10px] font-bold leading-none text-pink-500 whitespace-nowrap">
+                      never swallow the double-click that opens the form.
+                      Drawn as a pill: in expanded mode a slot is only ~12px
+                      tall, so readable text is TALLER than its own slot and
+                      spills over the neighbours and any block beside it — the
+                      background and ring keep it legible against whatever it
+                      lands on, and z-20 keeps it above them. Only the hovered
+                      slot is ever visible, so the overlap costs nothing. */}
+                  <span className="pointer-events-none absolute top-0 left-0.5 z-20 opacity-0 group-hover:opacity-100 rounded px-1 py-0.5 bg-white/95 ring-1 ring-pink-300 shadow-sm font-mono text-sm font-bold leading-none text-pink-600 whitespace-nowrap">
                     {slotTimeLabel(i)}
                   </span>
                   <div className="absolute top-0.5 right-1 opacity-0 group-hover:opacity-100"><Plus size={9} className="text-pink-300" /></div>
