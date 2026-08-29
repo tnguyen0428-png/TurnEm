@@ -78,11 +78,28 @@ export default function LostRequestAlert() {
       const appt = state.appointments.find((a) => a.id === apptId);
       if (!appt) return [];
 
+      // The tech this entry is actually about. Assigned once someone picks the
+      // client up; before that, the request the entry was checked in with.
+      const entryTech = q.assignedManicuristId ?? q.requestedManicuristId ?? null;
+
       const wanted = (appt.serviceRequests ?? []).filter(
         (r) =>
           r.clientRequest === true &&
           (r.manicuristIds?.length ?? 0) > 0 &&
-          (q.services ?? []).includes(r.service),
+          (q.services ?? []).includes(r.service) &&
+          // The request must be THIS entry's. Matching on service name alone
+          // flagged every sibling of a party: Dina 2026-08-29 booked four Gel
+          // Pedicures, one of them a request for HANA, and the other three
+          // each matched that request by name and were reported as "booked as
+          // a request for HANA — counted as 1.5, should be 0.5". All four were
+          // already correct. A false alarm here is worse than silence — it
+          // teaches the front desk to click past a popup that exists to catch
+          // real turn errors.
+          //
+          // A request is only THIS entry's if the tech doing it is the tech the
+          // customer asked for. If they asked for HANA and got PANDA, PANDA
+          // earns a full turn and there is nothing to correct.
+          !!entryTech && (r.manicuristIds ?? []).includes(entryTech),
       );
       if (wanted.length === 0) return [];
 
