@@ -69,6 +69,19 @@ function hourLabel(i: number): string | null {
   return `${h} AM`;
 }
 
+// Slot time as the receptionist reads it — "10:45 AM". hourLabel only covers
+// exact hours (it returns null on :15/:30/:45), and the ruler down the left
+// only marks the hour, so a quarter-slot has nothing on screen saying what
+// time it is. This labels the slot under the pointer.
+function slotTimeLabel(i: number): string {
+  const totalMins = START_HOUR * 60 + i * SLOT_MINUTES;
+  const h24 = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  const h12 = h24 % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 function slotType(i: number): 'hour' | 'half' | 'quarter' {
   const m = (START_HOUR * 60 + i * SLOT_MINUTES) % 60;
   if (m === 0) return 'hour';
@@ -1443,7 +1456,19 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
               onDoubleClick={() => !dragInfo && openAddModal(mId, i)}
               onDragOver={(e) => onSlotDragOver(e, mId, i)}
               onDrop={(e) => onSlotDrop(e, mId, i)}>
-              {!dragInfo && <div className="absolute top-0.5 right-1 opacity-0 group-hover:opacity-100"><Plus size={9} className="text-pink-300" /></div>}
+              {!dragInfo && (
+                <>
+                  {/* Time of the slot under the pointer. The left ruler only
+                      marks whole hours, so on a :15/:30/:45 slot there was
+                      nothing on screen telling you what you were about to
+                      book (Tony 2026-08-29). pointer-events-none so it can
+                      never swallow the double-click that opens the form. */}
+                  <span className="pointer-events-none absolute top-0.5 left-1 opacity-0 group-hover:opacity-100 font-mono text-[10px] font-bold leading-none text-pink-500 whitespace-nowrap">
+                    {slotTimeLabel(i)}
+                  </span>
+                  <div className="absolute top-0.5 right-1 opacity-0 group-hover:opacity-100"><Plus size={9} className="text-pink-300" /></div>
+                </>
+              )}
             </div>
           );
         })}
