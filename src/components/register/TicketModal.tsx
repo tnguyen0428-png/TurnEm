@@ -1224,7 +1224,12 @@ export default function TicketModal({
       // the same change twice.
       const queueRenames = new Map<string, Svc[]>();
 
-      type Working = { services: Svc[]; serviceRequests: SvcReq[]; manicuristId: string | null; touched: boolean };
+      // `renamed` tracks whether any line on this appointment had its SERVICE
+      // NAME changed, as opposed to only its staff. It gates the
+      // allowDroppingBackedServices opt-out on the dispatch below: a rename
+      // legitimately drops the old name, a staff-only edit has no business
+      // switching the guard off.
+      type Working = { services: Svc[]; serviceRequests: SvcReq[]; manicuristId: string | null; touched: boolean; renamed: boolean };
       const work = new Map<string, Working>();
       const getWork = (apptId: string): Working | null => {
         const existing = work.get(apptId);
@@ -1236,6 +1241,7 @@ export default function TicketModal({
           serviceRequests: (appt.serviceRequests ?? []).map((r) => ({ ...r, manicuristIds: [...(r.manicuristIds ?? [])] })),
           manicuristId: appt.manicuristId ?? null,
           touched: false,
+          renamed: false,
         };
         work.set(apptId, w);
         return w;
@@ -1281,6 +1287,7 @@ export default function TicketModal({
           if (si >= 0) w.services[si] = newName as Svc;
           else if (!w.services.includes(newName as Svc)) w.services.push(newName as Svc);
           w.touched = true;
+          w.renamed = true;
         }
 
         // serviceRequests[]: update the request that owns this line (matched by
@@ -1325,7 +1332,17 @@ export default function TicketModal({
       // so the queue is never briefly the only place still holding the old
       // name — the window in which the sync effect could act on it.
       for (const [qid, renamed] of queueRenames) {
-        dispatch({ type: 'UPDATE_CLIENT', id: qid, updates: { services: renamed } });
+        // Deliberate rename: opt out of retainBackedServices on the mirror this
+        // action runs onto the linked appointment. Without the flag the guard
+        // sees the OLD name still backed by its completed_services row and
+        // keeps it beside the new one — the Debbie Ma phantom. The appointment
+        // side of this rename is written explicitly just below.
+        dispatch({
+          type: 'UPDATE_CLIENT',
+          id: qid,
+          updates: { services: renamed },
+          allowDroppingBackedServices: true,
+        });
       }
 
       for (const [apptId, w] of work) {
@@ -1349,7 +1366,17 @@ export default function TicketModal({
           serviceRequests: scrubbedRequests,
           manicuristId: w.manicuristId,
         };
-        dispatch({ type: 'UPDATE_APPOINTMENT', id: apptId, updates });
+        // A rename drops the old name on purpose, so opt out of
+        // retainBackedServices — the old name is still backed by its queue
+        // entry / completed row and the guard would otherwise keep it beside
+        // the new one (Debbie Ma x Brian, 2026-08-05). Gated on `renamed`: a
+        // staff-only edit changes no service names and must stay guarded.
+        dispatch({
+          type: 'UPDATE_APPOINTMENT',
+          id: apptId,
+          updates,
+          allowDroppingBackedServices: w.renamed,
+        });
       }
     }
 

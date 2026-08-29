@@ -449,16 +449,22 @@ function sanitizeQueueEntryId(id: string): string {
 // (2026-08-05). Length is the discriminator: a 1->1 rename never engages, a
 // 2->1 removal does.
 //
-// KNOWN LIMITATION: an equal-length SWAP in a single write (drop Gel Fill,
-// add Nail Art) is structurally identical to a rename from here — same
-// length, one name out and one in — so this guard deliberately lets it
-// through rather than risk re-adding a stale renamed-away service. The swap
-// case is covered one layer up instead: AppointmentModal's confirm dialog
-// diffs dropped services count-aware (not by length), so a human swapping a
-// service that has work on the floor is still warned. Only a silent /
-// automated equal-length swap is uncovered, and none is known to exist.
-// Closing it fully would mean giving the TicketModal rename path an explicit
-// `allowDroppingBackedServices` opt-out and dropping the length gate.
+// The equal-length SWAP used to be uncovered here, on the reasoning that a
+// swap is structurally identical to a rename — same length, one name out and
+// one in — and that the AppointmentModal dialog covered the human case. That
+// held only while every swap came through that modal. Measured 2026-08-29:
+// 20 tickets since 07/01 lost a block to a silent equal-length swap, against
+// 27 to the never-added case. Ruthie Samson 08/29 was one — her booking went
+// [Gel Full Set, Gel Pedicure] -> [Gel Full Set, Nail Art] as a Nail Art was
+// added, and TOMMY's finished Gel Pedicure lost its block while keeping its
+// ticket line and 1.5 turn.
+//
+// So the length gate is gone and intent is explicit instead: a caller that
+// really is renaming sets `allowDroppingBackedServices` (TicketModal's
+// rename sync, AppointmentModal's confirmed removal). Everything else gets
+// checked, swaps included. Without the flag a rename would keep the old name
+// alongside the new one, which is the Debbie Ma phantom — so any NEW rename
+// path must set it.
 //
 // Order is preserved by walking the previous list, so a retained service
 // keeps its original position (and therefore its stacking start time in
@@ -470,8 +476,11 @@ function retainBackedServices(
   queue: QueueEntry[],
   completed: CompletedEntry[],
 ): ServiceType[] {
-  if (nextServices.length >= prevServices.length) return nextServices;
-
+  // No length short-circuit at all. `>=` missed the equal-length swap, and a
+  // LONGER list can drop a backed service just as easily ([A,B] -> [A,C,D]
+  // loses B). The walk below already appends anything the caller added, so a
+  // pure add is a no-op through it and the scan costs one pass over the
+  // queue + completed rows for this appointment.
   const backed = new Map<string, number>();
   for (const q of queue) {
     if (q.originalAppointment?.id !== apptId) continue;
@@ -851,13 +860,15 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
             // removing a service from THIS entry still works — only a
             // SIBLING entry's live work, or a non-voided completed row,
             // pins a service the caller didn't mean to touch.
-            nextServices = retainBackedServices(
-              action.updates.services,
-              prevServices,
-              linkedAppt.id,
-              updatedQueue,
-              state.completed,
-            );
+            nextServices = action.allowDroppingBackedServices
+              ? action.updates.services
+              : retainBackedServices(
+                  action.updates.services,
+                  prevServices,
+                  linkedAppt.id,
+                  updatedQueue,
+                  state.completed,
+                );
             apptPatch.services = nextServices;
             apptPatch.service = nextServices[0] ?? linkedAppt.service;
           }

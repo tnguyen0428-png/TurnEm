@@ -12,7 +12,13 @@ export type AppAction =
   | { type: 'SET_BREAK'; id: string }
   | { type: 'END_BREAK'; id: string }
   | { type: 'ADD_CLIENT'; client: QueueEntry }
-  | { type: 'UPDATE_CLIENT'; id: string; updates: Partial<QueueEntry> }
+  // `allowDroppingBackedServices` has the same meaning as on
+  // UPDATE_APPOINTMENT below: this action mirrors the entry's services onto
+  // the linked appointment, and that mirror runs retainBackedServices. A
+  // RENAME must set it, or the guard sees the old name still backed by a
+  // completed row and keeps it alongside the new one — the exact phantom the
+  // Debbie Ma fix removed. Set it only where the rename is deliberate.
+  | { type: 'UPDATE_CLIENT'; id: string; updates: Partial<QueueEntry>; allowDroppingBackedServices?: boolean }
   | { type: 'SET_EDITING_CLIENT'; clientId: string | null }
   | { type: 'REMOVE_CLIENT'; id: string }
   | { type: 'ASSIGN_CLIENT'; clientId: string; manicuristId: string }
