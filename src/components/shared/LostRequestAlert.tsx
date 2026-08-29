@@ -67,66 +67,91 @@ export default function LostRequestAlert() {
     const now = Date.now();
     const nameById = new Map(state.manicurists.map((m) => [m.id, m.name]));
 
-    return state.queue.flatMap((q) => {
-      // Already flagged correctly, or never came from a booking.
-      if (q.isRequested === true) return [];
+    // Walk per BOOKING, not per queue entry, so each request slot can be
+    // claimed once and once only.
+    //
+    // Matching per entry on service NAME alone flagged every sibling of a
+    // party: Dina 2026-08-29 booked four Gel Pedicures, one a request for
+    // HANA, and the other three each matched that request by name and were
+    // reported as "booked as a request for HANA — counted as 1.5, should be
+    // 0.5". All four were already correct. A false alarm here is worse than
+    // silence: it teaches the front desk to click past the popup that exists
+    // to catch real turn errors.
+    //
+    // Two rules together make a request THIS entry's:
+    //   - the tech actually doing it is a tech the customer asked for. Asked
+    //     for HANA and got PANDA? PANDA earns a full turn, nothing to correct.
+    //   - the request slot hasn't already been claimed by another entry. One
+    //     request for HANA explains ONE pedicure, not both of HANA's (Janie
+    //     Vera 2026-07-11 is the shape: same tech, two slots of one service,
+    //     one of them a request).
+    const byAppt = new Map<string, typeof state.queue>();
+    for (const q of state.queue) {
       const apptId = q.originalAppointment?.id;
-      if (!apptId) return [];
+      if (!apptId) continue; // never came from a booking
+      const list = byAppt.get(apptId) ?? [];
+      list.push(q);
+      byAppt.set(apptId, list);
+    }
 
+    const out: Offender[] = [];
+    for (const [apptId, entries] of byAppt) {
       // Compare against the CURRENT booking, not the check-in snapshot: the
       // booking is the authority and it is what the receptionist can see.
       const appt = state.appointments.find((a) => a.id === apptId);
-      if (!appt) return [];
-
-      // The tech this entry is actually about. Assigned once someone picks the
-      // client up; before that, the request the entry was checked in with.
-      const entryTech = q.assignedManicuristId ?? q.requestedManicuristId ?? null;
-
-      const wanted = (appt.serviceRequests ?? []).filter(
-        (r) =>
-          r.clientRequest === true &&
-          (r.manicuristIds?.length ?? 0) > 0 &&
-          (q.services ?? []).includes(r.service) &&
-          // The request must be THIS entry's. Matching on service name alone
-          // flagged every sibling of a party: Dina 2026-08-29 booked four Gel
-          // Pedicures, one of them a request for HANA, and the other three
-          // each matched that request by name and were reported as "booked as
-          // a request for HANA — counted as 1.5, should be 0.5". All four were
-          // already correct. A false alarm here is worse than silence — it
-          // teaches the front desk to click past a popup that exists to catch
-          // real turn errors.
-          //
-          // A request is only THIS entry's if the tech doing it is the tech the
-          // customer asked for. If they asked for HANA and got PANDA, PANDA
-          // earns a full turn and there is nothing to correct.
-          !!entryTech && (r.manicuristIds ?? []).includes(entryTech),
+      if (!appt) continue;
+      const reqs = (appt.serviceRequests ?? []).filter(
+        (r) => r.clientRequest === true && (r.manicuristIds?.length ?? 0) > 0,
       );
-      if (wanted.length === 0) return [];
+      if (reqs.length === 0) continue;
 
-      if ((accepted[q.id] ?? 0) > now) return [];
-      if ((snoozed[q.id] ?? 0) > now) return [];
+      // Entries ALREADY flagged correctly claim their slot first, so a
+      // correctly-recorded request can never be left over to explain a
+      // sibling that legitimately earns a full turn.
+      const ordered = [...entries].sort(
+        (a, b) => Number(b.isRequested === true) - Number(a.isRequested === true),
+      );
 
-      const techIds = Array.from(new Set(wanted.flatMap((r) => r.manicuristIds ?? [])));
+      const claimed = new Set<number>();
+      for (const q of ordered) {
+        const entryTech = q.assignedManicuristId ?? q.requestedManicuristId ?? null;
+        if (!entryTech) continue;
+        const idx = reqs.findIndex(
+          (r, i) =>
+            !claimed.has(i) &&
+            (q.services ?? []).includes(r.service) &&
+            (r.manicuristIds ?? []).includes(entryTech),
+        );
+        if (idx < 0) continue;
+        claimed.add(idx);
+        if (q.isRequested === true) continue; // already correct — slot consumed, nothing to report
+        if ((accepted[q.id] ?? 0) > now) continue;
+        if ((snoozed[q.id] ?? 0) > now) continue;
 
-      // Same formula check-in uses (AppointmentBookView.addApptToQueue): a
-      // requested service is worth half a turn, except Combos which stay at 1.
-      const correctedTurns = (q.services ?? []).reduce((sum, svc) => {
-        const s = state.salonServices.find((ss) => ss.name === svc);
-        const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc as ServiceType] ?? 1;
-        const isReq = wanted.some((r) => r.service === svc);
-        return sum + (isReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
-      }, 0);
+        const wanted = [reqs[idx]];
+        const techIds = Array.from(new Set(wanted.flatMap((r) => r.manicuristIds ?? [])));
 
-      return [{
-        id: q.id,
-        clientName: q.clientName,
-        services: Array.from(new Set(wanted.map((r) => String(r.service)))),
-        techIds,
-        techs: techIds.map((id) => nameById.get(id) ?? id),
-        turnValue: Number(q.turnValue) || 0,
-        correctedTurns,
-      }];
-    });
+        // Same formula check-in uses (AppointmentBookView.addApptToQueue): a
+        // requested service is worth half a turn, except Combos which stay at 1.
+        const correctedTurns = (q.services ?? []).reduce((sum, svc) => {
+          const s = state.salonServices.find((ss) => ss.name === svc);
+          const base = s?.turnValue ?? SERVICE_TURN_VALUES[svc as ServiceType] ?? 1;
+          const isReq = wanted.some((r) => r.service === svc);
+          return sum + (isReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
+        }, 0);
+
+        out.push({
+          id: q.id,
+          clientName: q.clientName,
+          services: Array.from(new Set(wanted.map((r) => String(r.service)))),
+          techIds,
+          techs: techIds.map((id) => nameById.get(id) ?? id),
+          turnValue: Number(q.turnValue) || 0,
+          correctedTurns,
+        });
+      }
+    }
+    return out;
     // `tick` is intentionally a dependency and intentionally unused in the body:
     // it is what re-runs this memo once a minute so an expired snooze re-raises
     // the alert without needing a queue change to wake it.
