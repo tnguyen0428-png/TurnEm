@@ -342,6 +342,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // marker that fires seconds after it was armed is ordinary cleanup; one that
   // fires after a re-create, or long after arming, is this bug.
   const apptDeleteArmLogRef = useRef<Map<string, { at: number; why: string; blockExisted: boolean }>>(new Map());
+  // Per-page-load id so the table can tell tablets apart — a device still on an
+  // old bundle, or one device doing all the damage, is only visible if the rows
+  // can be grouped by who wrote them.
+  const ledgerSessionIdRef = useRef<string>(Math.random().toString(36).slice(2, 10));
+  // Fire-and-forget mirror of the console lines into appt_delete_ledger_log.
+  // NEVER awaited and never throws: a logging round-trip must not sit in the
+  // delete path, and a failed insert must not change what gets deleted. The
+  // console lines stay as the live view; this is the unattended record, because
+  // nobody has devtools open on a front-desk tablet mid-shift.
+  const logLedgerEvent = useCallback((row: {
+    event: 'armed' | 'fired' | 'near_miss';
+    apptId: string;
+    why?: string;
+    blockExisted?: boolean;
+    armedAgeMs?: number;
+  }) => {
+    try {
+      void supabase.from('appt_delete_ledger_log').insert({
+        event: row.event,
+        appt_id: row.apptId,
+        why: row.why ?? null,
+        block_existed: row.blockExisted ?? null,
+        armed_age_ms: row.armedAgeMs ?? null,
+        session_id: ledgerSessionIdRef.current,
+      }).then(({ error }) => {
+        if (error) console.warn('[apptDeleteLedger] log insert failed:', error.message);
+      });
+    } catch { /* diagnostics only */ }
+  }, []);
   //
   // ORDER MATTERS: the ledger add happens FIRST and outside the try. It is the
   // real behaviour — an un-armed delete is a delete that silently doesn't
@@ -358,8 +387,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         (blockExisted ? '' : '  ⚠ NO SUCH BLOCK IN STATE — this marker can outlive its cause and hit a later block with the same id') +
         `  (ledger now ${pendingApptDeletesRef.current.size})`,
       );
+      logLedgerEvent({ event: 'armed', apptId: id, why, blockExisted });
     } catch { /* diagnostics only */ }
-  }, []);
+  }, [logLedgerEvent]);
   // Same protection for completed_services as for appointments above: a completed
   // row must only be DELETED from the DB when the user explicitly removed it, never
   // because it transiently fell out of in-memory `state.completed` during a sync /
@@ -1473,6 +1503,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
               `This is the Virgina Rosalez 2026-08-28 shape.`,
             );
           }
+          logLedgerEvent({
+            event: 'fired',
+            apptId: a.id,
+            why: armed?.why,
+            blockExisted: armed?.blockExisted,
+            armedAgeMs: age ?? undefined,
+          });
         } catch { /* diagnostics only */ }
       }
       for (const id of Array.from(pendingApptDeletesRef.current)) {
@@ -1491,6 +1528,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 `via ${armed.why}, no block at the time) cleared because the block is present. ` +
                 `A render with it briefly absent would have deleted it.`,
               );
+              logLedgerEvent({
+                event: 'near_miss',
+                apptId: id,
+                why: armed.why,
+                blockExisted: armed.blockExisted,
+                armedAgeMs: Date.now() - armed.at,
+              });
             }
           } catch { /* diagnostics only */ }
         }
