@@ -40,12 +40,29 @@ function shiftDate(dateStr: string, delta: number): string {
   return d.toISOString().split('T')[0];
 }
 
+// "Sun 8/30" — the quick-jump tab label.
+function formatTabLabel(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  const wd = d.toLocaleDateString('en-US', { weekday: 'short' });
+  return `${wd} ${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+// How many days the quick-jump strip shows, and how far each arrow moves it.
+const TAB_DAYS = 14;
+
 export default function AppointmentsScreen() {
   const { state, dispatch } = useApp();
   const today = getTodayLA();
 
   const [bookMode, setBookMode] = useState<'book' | 'list'>('book');
   const [selectedDate, setSelectedDate] = useState(today);
+  // The strip starts TOMORROW, never today: the TODAY button right beside it
+  // already covers today, so a tab for it was a wasted slot (Tony 2026-08-29).
+  const tomorrow = shiftDate(today, 1);
+  // Left edge of the 10-day quick-jump strip. Moves in TAB_DAYS steps via its
+  // own arrows, independently of selectedDate — paging the strip to look ahead
+  // must NOT change which day the book is showing.
+  const [tabStart, setTabStart] = useState(tomorrow);
   // Custom popover replaces the browser's tiny native date picker. We keep a
   // hidden <input type="date"> mounted purely as a screen-reader / form fallback,
   // but the visible Calendar buttons now toggle our DatePickerPopover instead.
@@ -246,6 +263,89 @@ export default function AppointmentsScreen() {
   const dayTotal = state.appointments.filter((a) => a.date === selectedDate).length;
   const dayScheduled = state.appointments.filter((a) => a.date === selectedDate && a.status === 'scheduled').length;
 
+  const tabDates = Array.from({ length: TAB_DAYS }, (_, i) => shiftDate(tabStart, i));
+  // Pull the strip back over the selected day when it lands outside — TODAY,
+  // the < > arrows and the date picker all move selectedDate and the strip
+  // would otherwise be showing a window with nothing highlighted. Guarded on
+  // the date having ACTUALLY changed so paging the strip's own arrows (which
+  // leaves selectedDate alone) doesn't immediately snap it back.
+  const lastSelDateRef = useRef(selectedDate);
+  useEffect(() => {
+    if (lastSelDateRef.current === selectedDate) return;
+    lastSelDateRef.current = selectedDate;
+    // Today or earlier: leave the strip showing the next ten days. Pressing
+    // TODAY shouldn't drag a today-tab back into a strip that starts tomorrow.
+    if (selectedDate <= today) return;
+    if (selectedDate < tabStart || selectedDate > shiftDate(tabStart, TAB_DAYS - 1)) {
+      setTabStart(selectedDate);
+    }
+  }, [selectedDate, tabStart, today]);
+
+  // 10-day quick-jump strip. Booking a week or two out meant stepping through
+  // the < > arrows a day at a time or going via the date picker; this puts the
+  // next ten days one tap away, and its own arrows page the window WITHOUT
+  // disturbing the day the book is showing.
+  //
+  // Rendered into BOTH top bars. `expanded` defaults to true, so the compact
+  // bar is what the receptionist actually sees on opening the book — putting
+  // the strip only in the full toolbar meant it was invisible by default.
+  // Shared rather than duplicated so the two can't drift apart. Deliberately
+  // ONE size in both bars: sitting inline, the constraint is horizontal, and
+  // the full toolbar's larger date heading leaves it LESS room, not more —
+  // scaling the tabs up there fit only 2 of the 10.
+  function renderDateStrip() {
+    return (
+      // Sits INLINE to the right of the date heading (Tony 2026-08-29), so it
+      // takes the flexible middle of the bar and scrolls within it rather than
+      // adding a row and costing the book height.
+      <div className="flex-1 min-w-0 flex items-center gap-1">
+        <button
+          onClick={() => {
+            // Never page back past tomorrow — the strip's whole premise is the
+            // days AHEAD, and today is the TODAY button's job.
+            const prev = shiftDate(tabStart, -TAB_DAYS);
+            setTabStart(prev < tomorrow ? tomorrow : prev);
+          }}
+          disabled={tabStart === tomorrow}
+          title={`Previous ${TAB_DAYS} days`}
+          className="flex-shrink-0 p-2 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-25 disabled:hover:bg-transparent transition-all"
+        >
+          <ChevronLeft size={18} />
+        </button>
+        {/* Scrolls rather than wraps or squashes: a wrapped second row would
+            push the book down the screen, which is the opposite of what
+            expanded mode is for. */}
+        <div className="flex-1 min-w-0 flex gap-1 overflow-x-auto">
+          {tabDates.map((d) => {
+            const isSelected = d === selectedDate;
+            return (
+              <button
+                key={d}
+                onClick={() => setSelectedDate(d)}
+                className={`flex-shrink-0 whitespace-nowrap rounded-xl px-3.5 py-2.5 font-mono text-base font-bold tracking-wide transition-all ${
+                  isSelected
+                    ? 'bg-pink-500 text-white shadow-sm'
+                    // Pink on hover, matching the selected state, so the day
+                    // under the pointer is unmistakable before you commit to it.
+                    : 'bg-gray-50 text-gray-600 hover:bg-pink-100 hover:text-pink-700 hover:ring-1 hover:ring-pink-300 hover:ring-inset'
+                }`}
+              >
+                {formatTabLabel(d)}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          onClick={() => setTabStart(shiftDate(tabStart, TAB_DAYS))}
+          title={`Next ${TAB_DAYS} days`}
+          className="flex-shrink-0 p-2 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+        >
+          <ChevronRight size={18} />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
@@ -265,7 +365,8 @@ export default function AppointmentsScreen() {
 
       {/* ── Compact top bar (expanded book mode) ─────────────────────────────── */}
       {expanded && bookMode === 'book' && (
-        <div className="flex-shrink-0 border-b border-gray-100 bg-white px-4 py-3 flex items-center gap-4">
+        <div className="flex-shrink-0 border-b border-gray-100 bg-white px-4 py-3">
+          <div className="flex items-center gap-4">
           <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1">
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={18} /></button>
             <button onClick={() => setSelectedDate(today)} className={`px-3 py-1.5 rounded-lg font-mono text-sm font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
@@ -282,12 +383,14 @@ export default function AppointmentsScreen() {
               )}
             </div>
           </div>
-          <span className="font-bebas text-xl tracking-[2px] text-gray-700 flex-1 truncate">{formatDateFull(selectedDate)}</span>
+          <span className="font-bebas text-xl tracking-[2px] text-gray-700 flex-shrink-0 whitespace-nowrap">{formatDateFull(selectedDate)}</span>
+          {renderDateStrip()}
           {dayTotal > 0 && <span className="font-mono text-xs text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
           <button onClick={openNewAppointment} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-pink-500 text-white font-mono text-sm font-bold tracking-wider hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={16} />NEW</button>
           <button onClick={() => setExpanded((e) => !e)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-sm text-gray-600 font-bold tracking-wider transition-all flex-shrink-0">
             <Minimize2 size={16} />COMPACT
           </button>
+          </div>
         </div>
       )}
 
@@ -311,10 +414,11 @@ export default function AppointmentsScreen() {
                 )}
               </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="font-bebas text-3xl tracking-[3px] text-gray-900 truncate">{formatDateFull(selectedDate)}</h2>
+            <div className="min-w-0 flex-shrink-0">
+              <h2 className="font-bebas text-3xl tracking-[3px] text-gray-900 whitespace-nowrap">{formatDateFull(selectedDate)}</h2>
               {dayTotal > 0 && <p className="font-mono text-sm text-gray-400">{dayScheduled} scheduled &middot; {dayTotal} total</p>}
             </div>
+            {renderDateStrip()}
             <div className="flex items-center bg-gray-100 rounded-2xl p-1.5 gap-1">
               <button onClick={() => setBookMode('book')} title="Book view" className={`p-2.5 rounded-xl transition-all ${bookMode === 'book' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><LayoutGrid size={20} /></button>
               <button onClick={() => setBookMode('list')} title="List view" className={`p-2.5 rounded-xl transition-all ${bookMode === 'list' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><List size={20} /></button>
