@@ -155,10 +155,18 @@ export function relocateServiceRequests(
  * grown to match: the two arrays stay in lockstep, which is the invariant
  * reconcileServiceRequests relies on to tell a real slot from a stale one.
  */
+/**
+ * `blockedServices` names services this appointment must NOT gain from the
+ * queue — a human explicitly removed them while work was on the floor (see
+ * droppedBackedServicesRef in AppContext). It only applies to services the
+ * booking doesn't already list; an extra occurrence of a service still on the
+ * booking is a second tech doing it, not a resurrection.
+ */
 export function addMissingServiceRequests(
   currentReqs: ServiceRequest[],
   desired: Map<string, string[]>,
   apptServices: ReadonlyArray<ServiceType>,
+  blockedServices?: ReadonlySet<string>,
 ): { next: ServiceRequest[]; nextServices: ServiceType[]; changed: boolean; servicesChanged: boolean } {
   const coveredCount = countByService(currentReqs);
   const wantedCount = countByService(apptServices.map((s) => ({ service: s })));
@@ -167,7 +175,21 @@ export function addMissingServiceRequests(
   let changed = false;
   let servicesChanged = false;
   for (const [svc, mids] of desired) {
-    if ((wantedCount.get(svc) ?? 0) === 0) continue;
+    // A service the booking doesn't list at all. This used to be skipped
+    // outright, so a service the customer added at the chair could never
+    // reach the booking and never got a block — 27 tickets since 07/01, the
+    // larger half of the missing-block problem (Ruthie Samson 08/29: TOMMY's
+    // Gel Pedicure billed, credited 1.5 turns, and invisible on the board).
+    //
+    // The skip existed because a queue entry could still be carrying a name
+    // that checkout had renamed away, and adding it back resurrected a
+    // phantom (Debbie Ma x Brian, 2026-08-05). The rename now updates the
+    // queue entry too, so a live entry naming a service the booking lacks
+    // means a genuine add — with one exception, a service a human explicitly
+    // removed while work was on the floor, which is what blockedServices
+    // carries. Everything in `desired` is already backed by a live queue
+    // entry with an assigned manicurist; that IS the evidence.
+    if ((wantedCount.get(svc) ?? 0) === 0 && blockedServices?.has(svc)) continue;
     // One entry per DISTINCT manicurist. Two queue rows for the same tech on
     // the same service are one slot, and minting a second entry for it is how
     // a duplicate block gets born.

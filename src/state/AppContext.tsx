@@ -342,6 +342,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // marker that fires seconds after it was armed is ordinary cleanup; one that
   // fires after a re-create, or long after arming, is this bug.
   const apptDeleteArmLogRef = useRef<Map<string, { at: number; why: string; blockExisted: boolean }>>(new Map());
+
+  // ── Deliberately-removed services ─────────────────────────────────────────
+  // Keys are `${apptId}::${service}`.
+  //
+  // The queue->appointment sync below now ADDS a service the booking doesn't
+  // list when a tech is genuinely assigned and working on it — that is what
+  // puts a block on the board for a service the customer added at the chair.
+  // The cost of that trust is that it would also undo a removal: take a
+  // service off a booking while the tech is still on the floor with it, and
+  // the sync sees the queue still has it and writes it straight back. You
+  // delete it, it reappears.
+  //
+  // So a removal that a human explicitly confirmed (the only thing that sets
+  // allowDroppingBackedServices) is recorded here, and the sync leaves that
+  // service alone. Same shape as the delete-intent ledger above: the machinery
+  // cannot tell intent from accident by itself, so intent is captured upstream
+  // where the two are still distinguishable.
+  //
+  // Cleared as soon as any write puts the service back on the booking, so a
+  // customer changing their mind again isn't permanently blocked.
+  const droppedBackedServicesRef = useRef<Set<string>>(new Set());
+  const recordDeliberateServiceDrops = useCallback((id: string, nextServices: string[], deliberate: boolean) => {
+    try {
+      // Any write naming the service means it's wanted again — clear first, so
+      // a re-add in the same write can't be undone by a stale tombstone.
+      for (const s of nextServices) droppedBackedServicesRef.current.delete(`${id}::${s}`);
+      if (!deliberate) return;
+      const prev = prevStateRef.current.appointments.find((a) => a.id === id);
+      if (!prev) return;
+      // Count-aware diff, then a name-level check. Dropping ONE of two
+      // "Pedicure" occurrences leaves the service still wanted, so the name
+      // must not be tombstoned — otherwise a later genuine Pedicure for this
+      // client could be blocked once the count happened to reach zero. Only a
+      // service gone from the booking ENTIRELY is recorded, which is also the
+      // only condition under which blockedServices is consulted.
+      const remaining = [...nextServices];
+      for (const s of prev.services ?? []) {
+        const i = remaining.indexOf(s);
+        if (i >= 0) { remaining.splice(i, 1); continue; }
+        if (!nextServices.includes(s)) droppedBackedServicesRef.current.add(`${id}::${s}`);
+      }
+    } catch { /* bookkeeping only — never break a dispatch */ }
+  }, []);
   // Per-page-load id so the table can tell tablets apart — a device still on an
   // old bundle, or one device doing all the damage, is only visible if the rows
   // can be grouped by who wrote them.
@@ -455,6 +498,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const id of walkInBlockIdsForAction(action)) {
         armApptDelete(id, `${action.type}(${action.type === 'REMOVE_CLIENT' ? action.id : action.manicuristId})`);
       }
+    } else if (action.type === 'UPDATE_APPOINTMENT' && action.updates.services !== undefined) {
+      recordDeliberateServiceDrops(
+        action.id,
+        action.updates.services as string[],
+        action.allowDroppingBackedServices === true,
+      );
     } else if (action.type === 'DELETE_MANICURIST') {
       tombstoneManicurist(action.id);
     } else if (action.type === 'DELETE_COMPLETED') {
@@ -467,9 +516,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       bulkCompletedClearRef.current = true;
     }
     rawDispatch(action);
-    // walkInBlockIdsForAction and armApptDelete are both no-dep useCallbacks,
-    // so naming them here keeps dispatch referentially stable exactly as before.
-  }, [walkInBlockIdsForAction, armApptDelete]);
+    // walkInBlockIdsForAction, armApptDelete and recordDeliberateServiceDrops
+    // are all no-dep useCallbacks, so naming them here keeps dispatch
+    // referentially stable exactly as before.
+  }, [walkInBlockIdsForAction, armApptDelete, recordDeliberateServiceDrops]);
   const [syncError, setSyncError] = useState<string | null>(null);
   const clearSyncError = useCallback(() => {
     setSyncError(null);
@@ -1728,10 +1778,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Keeping the two in lockstep is also what stops this from fighting the
       // reducer's reconcile: matched counts make that pass a no-op, so there's
       // no add/prune loop.
+      // Services this appointment must not regain from the queue because a
+      // human explicitly took them off while the work was on the floor.
+      const blockedForAppt = new Set<string>();
+      for (const key of droppedBackedServicesRef.current) {
+        if (key.startsWith(`${apptId}::`)) blockedForAppt.add(key.slice(apptId.length + 2));
+      }
       const { next, nextServices, changed, servicesChanged } = addMissingServiceRequests(
         currentReqs,
         desired,
         appt.services ?? [],
+        blockedForAppt,
       );
       if (!changed && !servicesChanged) continue;
       dispatch({
