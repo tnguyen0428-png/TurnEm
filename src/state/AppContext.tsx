@@ -325,6 +325,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // set. Walk-in synth blocks (high-churn, low-stakes) are still allowed through
   // the diff unconditionally. dispatch stays referentially stable (no deps).
   const pendingApptDeletesRef = useRef<Set<string>>(new Set());
+  // ── Ledger diagnostics (read-only; nothing below changes behaviour) ────────
+  // Why this exists: an add-child block id is DETERMINISTIC
+  // (`walkin:${visitId}-add-${staffId}`, TicketModal ~:558), and REMOVE_CLIENT
+  // arms this ledger for `walkin:${action.id}` unconditionally — even when no
+  // such block exists yet. An entry is only cleared once the id shows up as
+  // actually-deleted or as present in state (see the diff below), so swapping a
+  // ticket line's staff away from a tech and back can leave the ledger holding
+  // "a human asked to delete X" for an id that is about to be re-created under
+  // the SAME name. The next transient state gap for X then reads as deliberate.
+  //
+  // Suspected cause of Virgina Rosalez's pedicure block dying 21s after it was
+  // minted, 2026-08-28 11:09:07 PDT, while its queue entry was live and the
+  // service ran another 45 min. Unproven — these logs are here to name the
+  // culprit the next time it happens. `armedAt` is what makes it legible: a
+  // marker that fires seconds after it was armed is ordinary cleanup; one that
+  // fires after a re-create, or long after arming, is this bug.
+  const apptDeleteArmLogRef = useRef<Map<string, { at: number; why: string; blockExisted: boolean }>>(new Map());
+  //
+  // ORDER MATTERS: the ledger add happens FIRST and outside the try. It is the
+  // real behaviour — an un-armed delete is a delete that silently doesn't
+  // happen — so nothing diagnostic may run before it or be able to skip it.
+  // Everything after is observation only, and a throw in it is swallowed:
+  // instrumentation must never be able to break the machinery it watches.
+  const armApptDelete = useCallback((id: string, why: string) => {
+    pendingApptDeletesRef.current.add(id);
+    try {
+      const blockExisted = prevStateRef.current.appointments.some((a) => a.id === id);
+      apptDeleteArmLogRef.current.set(id, { at: Date.now(), why, blockExisted });
+      console.log(
+        `[apptDeleteLedger] ARMED ${id} via ${why}` +
+        (blockExisted ? '' : '  ⚠ NO SUCH BLOCK IN STATE — this marker can outlive its cause and hit a later block with the same id') +
+        `  (ledger now ${pendingApptDeletesRef.current.size})`,
+      );
+    } catch { /* diagnostics only */ }
+  }, []);
   // Same protection for completed_services as for appointments above: a completed
   // row must only be DELETED from the DB when the user explicitly removed it, never
   // because it transiently fell out of in-memory `state.completed` during a sync /
@@ -385,10 +420,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const dispatch = useCallback<React.Dispatch<AppAction>>((action) => {
     if (action.type === 'DELETE_APPOINTMENT') {
-      pendingApptDeletesRef.current.add(action.id);
+      armApptDelete(action.id, 'DELETE_APPOINTMENT');
     } else if (action.type === 'REMOVE_CLIENT' || action.type === 'CANCEL_SERVICE') {
       for (const id of walkInBlockIdsForAction(action)) {
-        pendingApptDeletesRef.current.add(id);
+        armApptDelete(id, `${action.type}(${action.type === 'REMOVE_CLIENT' ? action.id : action.manicuristId})`);
       }
     } else if (action.type === 'DELETE_MANICURIST') {
       tombstoneManicurist(action.id);
@@ -402,9 +437,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       bulkCompletedClearRef.current = true;
     }
     rawDispatch(action);
-    // walkInBlockIdsForAction is a no-dep useCallback, so naming it here keeps
-    // dispatch referentially stable exactly as before.
-  }, [walkInBlockIdsForAction]);
+    // walkInBlockIdsForAction and armApptDelete are both no-dep useCallbacks,
+    // so naming them here keeps dispatch referentially stable exactly as before.
+  }, [walkInBlockIdsForAction, armApptDelete]);
   const [syncError, setSyncError] = useState<string | null>(null);
   const clearSyncError = useCallback(() => {
     setSyncError(null);
@@ -1412,9 +1447,53 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Consume handled intent markers, and drop any whose appt is still present
       // (an explicit delete superseded by a concurrent re-add) so the set can't
       // grow unbounded.
-      for (const a of deletedAppts) pendingApptDeletesRef.current.delete(a.id);
+      // Consume first, observe second — same rule as armApptDelete: the marker
+      // consumption is real behaviour (leaving one behind is what creates the
+      // stale marker in the first place), the logging is not.
+      for (const a of deletedAppts) {
+        const armed = apptDeleteArmLogRef.current.get(a.id);
+        pendingApptDeletesRef.current.delete(a.id);
+        apptDeleteArmLogRef.current.delete(a.id);
+        try {
+          // FIRING. `age` is the tell: a marker consumed a beat after it was
+          // armed is ordinary REMOVE_CLIENT/CANCEL_SERVICE cleanup. One that sat
+          // for seconds — especially armed when no block existed, i.e. armed
+          // BEFORE the block it is now deleting was created — is the bug.
+          const age = armed ? Date.now() - armed.at : null;
+          console.log(
+            `[apptDeleteLedger] FIRED ${a.id}` +
+            (armed
+              ? `  armed ${age}ms ago via ${armed.why}${armed.blockExisted ? '' : ' (block did not exist when armed)'}`
+              : '  ⚠ NO ARM RECORD — armed before this page load?'),
+          );
+          if (armed && !armed.blockExisted) {
+            console.warn(
+              `[apptDeleteLedger] STALE MARKER deleted ${a.id} — armed ${age}ms ago via ${armed.why} ` +
+              `when no such block existed. The block it just deleted was created AFTER the marker. ` +
+              `This is the Virgina Rosalez 2026-08-28 shape.`,
+            );
+          }
+        } catch { /* diagnostics only */ }
+      }
       for (const id of Array.from(pendingApptDeletesRef.current)) {
-        if (currentApptIds.has(id)) pendingApptDeletesRef.current.delete(id);
+        if (currentApptIds.has(id)) {
+          const armed = apptDeleteArmLogRef.current.get(id);
+          pendingApptDeletesRef.current.delete(id);
+          apptDeleteArmLogRef.current.delete(id);
+          try {
+            // Cleared because the block is present again. If this id was armed
+            // when no block existed, this is the near miss: the marker was live
+            // while a same-named block was being re-created, and only a render
+            // where the block happened to be VISIBLE saved it.
+            if (armed && !armed.blockExisted) {
+              console.warn(
+                `[apptDeleteLedger] NEAR MISS — stale marker for ${id} (armed ${Date.now() - armed.at}ms ago ` +
+                `via ${armed.why}, no block at the time) cleared because the block is present. ` +
+                `A render with it briefly absent would have deleted it.`,
+              );
+            }
+          } catch { /* diagnostics only */ }
+        }
       }
       if (deletedAppts.length > 0) {
         for (const a of deletedAppts) tombstone(a.id);
