@@ -411,7 +411,9 @@ export default function AppointmentsScreen() {
           <span className="font-bebas text-xl tracking-[2px] text-gray-700 flex-shrink-0 whitespace-nowrap">{formatDateFull(selectedDate)}</span>
           {renderDateStrip()}
           {dayTotal > 0 && <span className="font-mono text-xs text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
-          <button onClick={openNewAppointment} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-pink-500 text-white font-mono text-sm font-bold tracking-wider hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={16} />NEW</button>
+          {/* Sized to match TODAY at the other end of the bar (Tony
+              2026-08-30) — same text size and padding, icon scaled to suit. */}
+          <button onClick={openNewAppointment} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-pink-500 text-white font-mono text-lg font-bold tracking-wider hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={20} />NEW</button>
           <button onClick={() => setExpanded((e) => !e)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-sm text-gray-600 font-bold tracking-wider transition-all flex-shrink-0">
             <Minimize2 size={16} />COMPACT
           </button>
@@ -448,7 +450,7 @@ export default function AppointmentsScreen() {
               <button onClick={() => setBookMode('book')} title="Book view" className={`p-2.5 rounded-xl transition-all ${bookMode === 'book' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><LayoutGrid size={20} /></button>
               <button onClick={() => setBookMode('list')} title="List view" className={`p-2.5 rounded-xl transition-all ${bookMode === 'list' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><List size={20} /></button>
             </div>
-            <button onClick={openNewAppointment} className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-pink-500 text-white font-mono text-base font-bold tracking-wider hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm"><Plus size={18} />NEW</button>
+            <button onClick={openNewAppointment} className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-pink-500 text-white font-mono text-xl font-bold tracking-wider hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm"><Plus size={24} />NEW</button>
           </div>
         </div>
       )}

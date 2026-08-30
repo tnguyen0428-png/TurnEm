@@ -7,8 +7,8 @@ const TABS: { id: ViewType; label: string; icon: typeof ClipboardList }[] = [
   { id: 'queue',        label: 'QUEUE',     icon: ClipboardList },
   { id: 'appointments', label: 'APPTS',     icon: CalendarCheck },
   { id: 'register',     label: 'REGISTER',  icon: Receipt },
-  { id: 'blueprint',   label: 'BLUEPRINT', icon: Settings2 },
   { id: 'history',      label: 'HISTORY',   icon: Clock },
+  { id: 'blueprint',    label: 'BLUEPRINT', icon: Settings2 },
 ];
 
 export default function TabBar() {
@@ -40,7 +40,11 @@ export default function TabBar() {
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-bebas text-xs tracking-[1.2px] transition-all duration-200 whitespace-nowrap flex-shrink-0 ${
                     isActive
                       ? 'bg-pink-50 text-pink-600'
-                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                      // hover:bg-gray-50 was too faint to register as a
+                      // rollover (Tony 2026-08-30). Pink-tinted like the
+                      // active state so the tab under the pointer clearly
+                      // reads as "this is what you're about to open".
+                      : 'text-gray-400 hover:text-pink-600 hover:bg-pink-100 hover:ring-1 hover:ring-pink-300 hover:ring-inset'
                   }`}
                 >
                   <Icon size={14} />

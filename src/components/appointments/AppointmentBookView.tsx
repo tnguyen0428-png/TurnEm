@@ -1437,7 +1437,11 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     }
 
     return (
-      <div key={mId ?? 'any'} className="flex-shrink-0 relative border-r border-gray-200"
+      // Whole-column tint on hover, so the technician you are pointing at is
+      // obvious well before you drop (Tony 2026-08-30). Pure CSS — the slot
+      // cells and blocks on top are transparent, so the column's own
+      // background shows through the gaps and no re-render is needed.
+      <div key={mId ?? 'any'} className="flex-shrink-0 relative border-r border-gray-200 transition-colors hover:bg-pink-100/40"
         style={{ width: colWidth, height: TOTAL_H }}
         onDragLeave={() => setDropTarget(null)}>
 
@@ -1469,8 +1473,13 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                       background and ring keep it legible against whatever it
                       lands on, and z-20 keeps it above them. Only the hovered
                       slot is ever visible, so the overlap costs nothing. */}
-                  <span className="pointer-events-none absolute top-0 left-0.5 z-20 opacity-0 group-hover:opacity-100 rounded px-1 py-0.5 bg-white/95 ring-1 ring-pink-300 shadow-sm font-mono text-sm font-bold leading-none text-pink-600 whitespace-nowrap">
-                    {slotTimeLabel(i)}
+                  {/* The technician's name rides along with the time, in her
+                      own column colour, so the pill answers both halves of
+                      "what am I about to book" — when and with WHOM — without
+                      looking back up at the header (Tony 2026-08-30). */}
+                  <span className="pointer-events-none absolute top-0 left-0.5 z-20 opacity-0 group-hover:opacity-100 rounded px-1 py-0.5 bg-white/95 ring-1 ring-pink-300 shadow-sm font-mono text-sm font-bold leading-none whitespace-nowrap">
+                    <span className="text-pink-600">{slotTimeLabel(i)}</span>
+                    <span className="ml-1" style={{ color: m ? m.color : '#9ca3af' }}>{m ? m.name : 'ANY'}</span>
                   </span>
                   <div className="absolute top-0.5 right-1 opacity-0 group-hover:opacity-100"><Plus size={9} className="text-pink-300" /></div>
                 </>
