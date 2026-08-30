@@ -158,23 +158,26 @@ export default function ManicuristPanel() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+          {/* Segmented toggle scaled to sit alongside the 44px-tall ADD
+              buttons (Tony 2026-08-30) — same 18px text and px-4 py-2 as
+              those, so the whole header row reads at one size. */}
+          <div className="flex items-center bg-gray-100 rounded-xl p-0.5">
             <button
               onClick={() => setView('queue')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-mono text-[11px] font-semibold transition-all ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-lg font-bold tracking-wider transition-all ${
                 view === 'queue' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              <LayoutGrid size={12} />
+              <LayoutGrid size={20} />
               QUEUE
             </button>
             <button
               onClick={() => setView('list')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-mono text-[11px] font-semibold transition-all ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-lg font-bold tracking-wider transition-all ${
                 view === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              <ListOrdered size={12} />
+              <ListOrdered size={20} />
               CLOCK-IN LIST
             </button>
           </div>
@@ -182,13 +185,15 @@ export default function ManicuristPanel() {
           <button
             ref={buttonRef}
             onClick={() => setShowMenu(!showMenu)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-xs font-semibold active:scale-[0.98] transition-all ${
+            // Sized to match the appointment book's TODAY / NEW buttons
+            // (Tony 2026-08-30) — px-4 py-2, 18px text, 44px tall.
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-lg font-bold tracking-wider active:scale-[0.98] transition-all ${
               showMenu
                 ? 'bg-pink-600 text-white'
                 : 'bg-pink-500 text-white hover:bg-pink-600'
             }`}
           >
-            <Plus size={13} className={`transition-transform duration-200 ${showMenu ? 'rotate-45' : ''}`} />
+            <Plus size={20} className={`transition-transform duration-200 ${showMenu ? 'rotate-45' : ''}`} />
             ADD MANICURISTS
           </button>
 

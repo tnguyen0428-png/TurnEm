@@ -115,9 +115,11 @@ export default function WaitingPanel() {
         </div>
         <button
           onClick={() => dispatch({ type: 'SET_MODAL', modal: 'addClient' })}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pink-500 text-white font-mono text-xs font-semibold hover:bg-pink-600 active:scale-[0.98] transition-all duration-150"
+          // Sized to match the appointment book's TODAY / NEW buttons
+          // (Tony 2026-08-30) — px-4 py-2, 18px text, 44px tall.
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-pink-500 text-white font-mono text-lg font-bold tracking-wider hover:bg-pink-600 active:scale-[0.98] transition-all duration-150"
         >
-          <Plus size={13} />
+          <Plus size={20} />
           ADD CLIENT
         </button>
       </div>
