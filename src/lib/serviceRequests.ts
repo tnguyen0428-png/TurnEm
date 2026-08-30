@@ -195,7 +195,21 @@ export function addMissingServiceRequests(
     // a duplicate block gets born.
     const distinct = Array.from(new Set(mids));
     const already = coveredCount.get(svc) ?? 0;
-    const toAdd = distinct.slice(already); // only the uncovered assignments
+    // Which techs does this service ALREADY have an entry for? `slice(already)`
+    // picked by COUNT, so with one existing entry naming SAM and a desired
+    // list of [KIMBERLY, SAM] it skipped KIMBERLY (position 0, already
+    // "covered") and added a SECOND SAM — two identical slots stacked on one
+    // tech while the tech who was actually uncovered got nothing (Karen x SAM,
+    // 2026-08-30: two Gel Fill slots on mani-4). Pick by identity instead, and
+    // keep the old count as a CAP so this never mints more entries than it
+    // used to: an entry naming a tech the queue doesn't list is a manual drag
+    // this effect deliberately leaves alone (see the TEMP note at the call
+    // site), not a slot to duplicate.
+    const anchored = new Set(
+      next.filter((r) => r.service === svc).flatMap((r) => r.manicuristIds ?? []),
+    );
+    const room = Math.max(0, distinct.length - already);
+    const toAdd = distinct.filter((m) => !anchored.has(m)).slice(0, room);
     if (toAdd.length === 0) continue;
     for (const mid of toAdd) {
       next.push({ service: svc as ServiceType, manicuristIds: [mid], clientRequest: false });

@@ -469,12 +469,23 @@ function sanitizeQueueEntryId(id: string): string {
 // Order is preserved by walking the previous list, so a retained service
 // keeps its original position (and therefore its stacking start time in
 // AppointmentBookView) instead of being appended at the end.
+//
+// `deliberatelyDropped` names services whose backing must be IGNORED: the
+// caller has declared, for those names only, that it means to drop them (a
+// checkout rename is the one real case). Their backing is precisely the
+// stale evidence the rename is in the middle of clearing — the queue entry
+// and completed_services row that still carry the OLD name — so counting it
+// here keeps the old name alive beside the new one. Scoping the opt-out to
+// those names, instead of switching the whole guard off, is what keeps a
+// SIBLING service (another tech's work on the same booking) protected while
+// the rename lands.
 function retainBackedServices(
   nextServices: ServiceType[],
   prevServices: ServiceType[],
   apptId: string,
   queue: QueueEntry[],
   completed: CompletedEntry[],
+  deliberatelyDropped?: ReadonlySet<string>,
 ): ServiceType[] {
   // No length short-circuit at all. `>=` missed the equal-length swap, and a
   // LONGER list can drop a backed service just as easily ([A,B] -> [A,C,D]
@@ -484,14 +495,20 @@ function retainBackedServices(
   const backed = new Map<string, number>();
   for (const q of queue) {
     if (q.originalAppointment?.id !== apptId) continue;
-    for (const s of q.services ?? []) backed.set(s, (backed.get(s) ?? 0) + 1);
+    for (const s of q.services ?? []) {
+      if (deliberatelyDropped?.has(s)) continue;
+      backed.set(s, (backed.get(s) ?? 0) + 1);
+    }
   }
   for (const c of completed) {
     // A voided row is work that was explicitly undone — it must NOT pin a
     // service in place, or a void followed by a correction could never remove
     // the mistaken service.
     if (c.originalAppointmentId !== apptId || c.voided) continue;
-    for (const s of c.services ?? []) backed.set(s, (backed.get(s) ?? 0) + 1);
+    for (const s of c.services ?? []) {
+      if (deliberatelyDropped?.has(s)) continue;
+      backed.set(s, (backed.get(s) ?? 0) + 1);
+    }
   }
   if (backed.size === 0) return nextServices;
 
@@ -558,14 +575,21 @@ function retainBackedServices(
 // Shared by pinBackedServiceAnchors (which needs the `requested` flag) and by
 // the serviceRequests reconcile at the UPDATE_APPOINTMENT choke point (which
 // needs just the ids, to know which entries represent real work).
+//
+// `deliberatelyDropped` has the same meaning as in retainBackedServices: for
+// those names only, the stale queue/completed evidence is ignored. A rename
+// otherwise re-pins its own old name here — see the note at the
+// UPDATE_APPOINTMENT call site.
 function backedWorkersByService(
   apptId: string,
   queue: QueueEntry[],
   completed: CompletedEntry[],
+  deliberatelyDropped?: ReadonlySet<string>,
 ): Map<string, { manicuristId: string; requested: boolean }[]> {
   const workers = new Map<string, { manicuristId: string; requested: boolean }[]>();
   const addWorker = (svc: string, manicuristId: string | null, requested: boolean) => {
     if (!manicuristId) return;
+    if (deliberatelyDropped?.has(svc)) return;
     const list = workers.get(svc) ?? [];
     const seen = list.find((w) => w.manicuristId === manicuristId);
     if (seen) { seen.requested = seen.requested || requested; return; }
@@ -623,6 +647,24 @@ function pinBackedServiceAnchors(
     }
   }
   return changed ? next : requests;
+}
+
+// Which service names does a write REMOVE, counting occurrences? Used to scope
+// `allowDroppingBackedServices` to the names the caller actually dropped
+// instead of letting the flag switch the whole backed-work guard off. A rename
+// [Dip Only] -> [Hard Gel Fill] returns {Dip Only}; a pure add returns nothing.
+function droppedServiceNames(
+  prev: ReadonlyArray<string>,
+  next: ReadonlyArray<string>,
+): Set<string> {
+  const remaining = [...next];
+  const dropped = new Set<string>();
+  for (const s of prev) {
+    const i = remaining.indexOf(s);
+    if (i >= 0) { remaining.splice(i, 1); continue; }
+    dropped.add(s);
+  }
+  return dropped;
 }
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -860,15 +902,33 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
             // removing a service from THIS entry still works — only a
             // SIBLING entry's live work, or a non-voided completed row,
             // pins a service the caller didn't mean to touch.
-            nextServices = action.allowDroppingBackedServices
-              ? action.updates.services
-              : retainBackedServices(
-                  action.updates.services,
-                  prevServices,
-                  linkedAppt.id,
-                  updatedQueue,
-                  state.completed,
-                );
+            //
+            // `allowDroppingBackedServices` used to hand `updates.services`
+            // straight through here, which is wrong in a way the flag was
+            // never meant to cover: this array is ONE QUEUE ENTRY'S SLICE of
+            // the booking, so passing it through wrote the slice over the
+            // whole services[] and took every SIBLING service off the block
+            // (the Jennifer Logan failure above, with the one guard that
+            // catches it switched off). TicketModal's rename sets the flag to
+            // drop the OLD NAME, not the siblings.
+            //
+            // So the guard now always runs, and the flag only excuses the
+            // names this entry itself dropped — for a rename that is exactly
+            // the old name, whose "backing" is the stale queue/completed row
+            // the same rename is in the middle of updating. Siblings stay
+            // protected, and the old name stops surviving beside the new one
+            // as a second slot on the book.
+            const droppedFromEntry = action.allowDroppingBackedServices
+              ? droppedServiceNames(existing?.services ?? [], action.updates.services)
+              : undefined;
+            nextServices = retainBackedServices(
+              action.updates.services,
+              prevServices,
+              linkedAppt.id,
+              updatedQueue,
+              state.completed,
+              droppedFromEntry,
+            );
             apptPatch.services = nextServices;
             apptPatch.service = nextServices[0] ?? linkedAppt.service;
           }
@@ -891,7 +951,14 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
             nextRequests = pinBackedServiceAnchors(
               nextServices,
               nextRequests,
-              backedWorkersByService(linkedAppt.id, updatedQueue, state.completed),
+              backedWorkersByService(
+                linkedAppt.id,
+                updatedQueue,
+                state.completed,
+                action.allowDroppingBackedServices && action.updates.services !== undefined
+                  ? droppedServiceNames(existing?.services ?? [], action.updates.services)
+                  : undefined,
+              ),
             );
             if (nextRequests !== prevRequests) {
               apptPatch.serviceRequests = nextRequests;
@@ -2005,8 +2072,33 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
             updates.services !== undefined ||
             updates.serviceRequests !== undefined ||
             updates.manicuristId !== undefined;
+          //
+          // The backed-work floor must not outlive the write that retires a
+          // name. `allowDroppingBackedServices` says this write deliberately
+          // takes a service off services[] — a checkout rename, or a removal
+          // a human confirmed — but until now the flag only reached
+          // services[]. serviceRequests[] still got a floor built from the
+          // queue entry and completed_services row that STILL CARRY THE OLD
+          // NAME (the queue rename is a separate dispatch, and the completed
+          // row is renamed over the network), so reconcileServiceRequests
+          // read the old name as live work and refused to prune its request.
+          // services[] said "Hard Gel Fill", serviceRequests[] kept "Dip
+          // Only", and getApptSvcs() renders any request services[] doesn't
+          // cover — so the retired service came straight back as a second
+          // slot on the same tech, and the next write baked it back into
+          // services[] for good. (Maddie x JOE and Karen x SAM, 2026-08-30:
+          // the service was changed on an open ticket, the queue and the turn
+          // were right, and the old slot reappeared next to the new one.)
+          //
+          // Scoped to the dropped names only: every service the write KEEPS
+          // still gets its full floor, so a tech mid-service can't lose a
+          // block (Sara Feaver / Desiree Reyna / Dee Dee all still hold).
+          const deliberatelyDropped =
+            action.allowDroppingBackedServices && nextServices !== undefined
+              ? droppedServiceNames(a.services ?? [], nextServices)
+              : undefined;
           const workers = touchesPlacement
-            ? backedWorkersByService(a.id, state.queue, state.completed)
+            ? backedWorkersByService(a.id, state.queue, state.completed, deliberatelyDropped)
             : new Map<string, { manicuristId: string; requested: boolean }[]>();
           const backedWorkers = new Map(
             Array.from(workers, ([svc, ws]) => [svc, new Set(ws.map((w) => w.manicuristId))]),
