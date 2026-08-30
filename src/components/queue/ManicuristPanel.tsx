@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Plus, LogIn, UserPlus, LayoutGrid, ListOrdered } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import ManicuristCard from './ManicuristCard';
+import HistoryTable from '../history/HistoryTable';
+import { buildTodayEntries } from '../../lib/todayEntries';
 import { SharedAutoFitProvider } from '../shared/SharedAutoFitText';
 import { getSubscribedManicuristIds } from '../../utils/pushNotifications';
 import { formatTime } from '../../utils/time';
@@ -18,6 +20,15 @@ export default function ManicuristPanel() {
   useEffect(() => {
     getSubscribedManicuristIds().then(setPushSubIds);
   }, []);
+
+  // Today's client/service rows, same shape History shows (Tony 2026-08-30 —
+  // "for easy access", so the receptionist doesn't leave the queue to check
+  // what a client had). Read-only here: no onEdit is passed, so the pencil
+  // never renders and editing stays on the History screen behind its PIN.
+  const todayEntries = useMemo(
+    () => buildTodayEntries(state.queue, state.manicurists, state.completed),
+    [state.queue, state.manicurists, state.completed],
+  );
 
   // Exclude DESK-ONLY receptionists from the manicurist queue. A desk-only
   // receptionist clocks in for their own time tracking but doesn't take
@@ -265,11 +276,15 @@ export default function ManicuristPanel() {
           </div>
         ) : view === 'list' ? (
           <div className="p-2 space-y-1.5">
+            {/* Type scaled up across this whole list (Tony 2026-08-30) — at
+                9-11px it was unreadable at arm's length on the salon
+                tablet. Column widths grow with it so nothing truncates
+                that didn't before. */}
             <div className="flex items-center justify-between px-3 pb-1">
-              <span className="font-mono text-[10px] text-gray-400 font-semibold tracking-wider">
+              <span className="font-mono text-sm text-gray-400 font-semibold tracking-wider">
                 CLOCK-IN ORDER · TODAY
               </span>
-              <span className="font-mono text-[10px] text-gray-400">turns</span>
+              <span className="font-mono text-sm text-gray-400">turns</span>
             </div>
             {clockInOrder.map((m, idx) => {
               const widthPct =
@@ -277,41 +292,60 @@ export default function ManicuristPanel() {
               return (
                 <div
                   key={m.id}
-                  className="flex items-center gap-3 px-3 py-2 bg-white rounded-xl border border-gray-100"
+                  className="flex items-center gap-3 px-3 py-2.5 bg-white rounded-xl border border-gray-100"
                 >
-                  <span className="w-4 text-center font-mono text-[11px] font-bold text-gray-300 flex-shrink-0">
+                  <span className="w-6 text-center font-mono text-base font-bold text-gray-300 flex-shrink-0">
                     {idx + 1}
                   </span>
                   <span
-                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                    className="w-3.5 h-3.5 rounded-full flex-shrink-0"
                     style={{ backgroundColor: m.color }}
                   />
-                  <div className="w-24 flex-shrink-0 min-w-0">
-                    <p className="font-mono text-xs font-bold text-gray-900 truncate leading-tight">
+                  <div className="w-36 flex-shrink-0 min-w-0">
+                    <p className="font-mono text-base font-bold text-gray-900 truncate leading-tight">
                       {m.name}
                     </p>
                     {m.clockInTime != null && (
-                      <p className="font-mono text-[9px] text-gray-400 truncate leading-tight">
+                      <p className="font-mono text-xs text-gray-400 truncate leading-tight">
                         {formatTime(m.clockInTime)}
                       </p>
                     )}
                   </div>
-                  <div className="flex-1 h-5 rounded-md overflow-hidden bg-gray-50 min-w-0 flex items-center">
+                  <div className="flex-1 h-7 rounded-md overflow-hidden bg-gray-50 min-w-0 flex items-center">
                     <div
-                      className="h-full rounded-md transition-all duration-200 flex items-center justify-end pr-1.5"
-                      style={{ width: `${widthPct}%`, minWidth: '1.9rem', backgroundColor: m.color }}
+                      className="h-full rounded-md transition-all duration-200 flex items-center justify-end pr-2"
+                      style={{ width: `${widthPct}%`, minWidth: '2.6rem', backgroundColor: m.color }}
                     >
-                      <span className="font-mono text-[10px] font-bold text-white leading-none">
+                      <span className="font-mono text-sm font-bold text-white leading-none">
                         {m.totalTurns.toFixed(1)}
                       </span>
                     </div>
                   </div>
-                  <span className="font-mono text-xs font-semibold text-gray-700 w-10 text-right flex-shrink-0">
+                  <span className="font-mono text-base font-semibold text-gray-700 w-14 text-right flex-shrink-0">
                     {m.totalTurns.toFixed(1)}
                   </span>
                 </div>
               );
             })}
+
+            {/* Today's client/service rows, straight below the turn order. */}
+            <div className="pt-4">
+              <div className="flex items-center justify-between px-3 pb-1">
+                <span className="font-mono text-sm text-gray-400 font-semibold tracking-wider">
+                  TODAY&apos;S SERVICES
+                </span>
+                <span className="font-mono text-sm text-gray-400">
+                  {todayEntries.length}
+                </span>
+              </div>
+              {todayEntries.length === 0 ? (
+                <p className="px-3 py-4 font-mono text-sm text-gray-400">
+                  No services yet today.
+                </p>
+              ) : (
+                <HistoryTable entries={todayEntries} />
+              )}
+            </div>
           </div>
         ) : (
           <SharedAutoFitProvider
