@@ -48,7 +48,13 @@ function formatTabLabel(dateStr: string): string {
 }
 
 // How many days the quick-jump strip shows, and how far each arrow moves it.
-const TAB_DAYS = 14;
+// Three weeks (Tony 2026-08-30) — booking a month out was two pages away.
+const TAB_DAYS = 21;
+
+// Day-of-week of a YYYY-MM-DD string, 0 = Sunday.
+function weekdayOf(dateStr: string): number {
+  return new Date(dateStr + 'T00:00:00').getDay();
+}
 
 export default function AppointmentsScreen() {
   const { state, dispatch } = useApp();
@@ -59,9 +65,9 @@ export default function AppointmentsScreen() {
   // The strip starts TOMORROW, never today: the TODAY button right beside it
   // already covers today, so a tab for it was a wasted slot (Tony 2026-08-29).
   const tomorrow = shiftDate(today, 1);
-  // Left edge of the 10-day quick-jump strip. Moves in TAB_DAYS steps via its
-  // own arrows, independently of selectedDate — paging the strip to look ahead
-  // must NOT change which day the book is showing.
+  // Left edge of the quick-jump strip. Moves in TAB_DAYS steps via its own
+  // arrows, independently of selectedDate — paging the strip to look ahead (or
+  // BACK, Tony 2026-08-30) must NOT change which day the book is showing.
   const [tabStart, setTabStart] = useState(tomorrow);
   // Custom popover replaces the browser's tiny native date picker. We keep a
   // hidden <input type="date"> mounted purely as a screen-reader / form fallback,
@@ -260,6 +266,7 @@ export default function AppointmentsScreen() {
   }, [addApptModalOpen]);
 
   const isToday = selectedDate === today;
+  const todayWeekday = weekdayOf(today);
   const dayTotal = state.appointments.filter((a) => a.date === selectedDate).length;
   const dayScheduled = state.appointments.filter((a) => a.date === selectedDate && a.status === 'scheduled').length;
 
@@ -273,18 +280,31 @@ export default function AppointmentsScreen() {
   useEffect(() => {
     if (lastSelDateRef.current === selectedDate) return;
     lastSelDateRef.current = selectedDate;
-    // Today or earlier: leave the strip showing the next ten days. Pressing
-    // TODAY shouldn't drag a today-tab back into a strip that starts tomorrow.
+    // Today or earlier: leave the strip where it is. Pressing TODAY shouldn't
+    // drag a today-tab back into a strip that starts tomorrow. (Stranding the
+    // strip in the past is goToToday's job, not this effect's — this one only
+    // runs when the DATE changed, and TODAY-while-already-on-today doesn't.)
     if (selectedDate <= today) return;
     if (selectedDate < tabStart || selectedDate > shiftDate(tabStart, TAB_DAYS - 1)) {
       setTabStart(selectedDate);
     }
   }, [selectedDate, tabStart, today]);
 
-  // 10-day quick-jump strip. Booking a week or two out meant stepping through
-  // the < > arrows a day at a time or going via the date picker; this puts the
-  // next ten days one tap away, and its own arrows page the window WITHOUT
-  // disturbing the day the book is showing.
+  // TODAY jumps the book to today AND, now that the strip's < arrow can page
+  // into the past, drops the strip back to its default forward window when
+  // today has scrolled off the right-hand end — otherwise TODAY leaves a strip
+  // sitting weeks back with nothing highlighted and no obvious way home.
+  // Deliberately NOT triggered when today merely sits one day before a strip
+  // that starts tomorrow: that's the resting state, not a stranded one.
+  function goToToday() {
+    setSelectedDate(today);
+    if (today > shiftDate(tabStart, TAB_DAYS - 1)) setTabStart(tomorrow);
+  }
+
+  // Quick-jump strip. Booking a week or two out meant stepping through the
+  // < > arrows a day at a time or going via the date picker; this puts the
+  // next TAB_DAYS days one tap away, and its own arrows page the window
+  // (forwards or backwards) WITHOUT disturbing the day the book is showing.
   //
   // Rendered into BOTH top bars. `expanded` defaults to true, so the compact
   // bar is what the receptionist actually sees on opening the book — putting
@@ -300,15 +320,9 @@ export default function AppointmentsScreen() {
       // adding a row and costing the book height.
       <div className="flex-1 min-w-0 flex items-center gap-1">
         <button
-          onClick={() => {
-            // Never page back past tomorrow — the strip's whole premise is the
-            // days AHEAD, and today is the TODAY button's job.
-            const prev = shiftDate(tabStart, -TAB_DAYS);
-            setTabStart(prev < tomorrow ? tomorrow : prev);
-          }}
-          disabled={tabStart === tomorrow}
+          onClick={() => setTabStart(shiftDate(tabStart, -TAB_DAYS))}
           title={`Previous ${TAB_DAYS} days`}
-          className="flex-shrink-0 p-2 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-25 disabled:hover:bg-transparent transition-all"
+          className="flex-shrink-0 p-2 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
         >
           <ChevronLeft size={18} />
         </button>
@@ -318,11 +332,15 @@ export default function AppointmentsScreen() {
         <div className="flex-1 min-w-0 flex gap-1 overflow-x-auto">
           {tabDates.map((d) => {
             const isSelected = d === selectedDate;
+            // Same weekday as today. Marking those gives the receptionist a
+            // week ruler along the strip — "two Sundays out" is now something
+            // you can count rather than read off each label (Tony 2026-08-30).
+            const isSameWeekday = weekdayOf(d) === todayWeekday;
             return (
               <button
                 key={d}
                 onClick={() => setSelectedDate(d)}
-                className={`flex-shrink-0 whitespace-nowrap rounded-xl px-3.5 py-2.5 font-mono text-base font-bold tracking-wide transition-all ${
+                className={`flex-shrink-0 whitespace-nowrap rounded-xl px-3.5 pt-2.5 pb-1.5 font-mono text-base font-bold tracking-wide transition-all ${
                   isSelected
                     ? 'bg-pink-500 text-white shadow-sm'
                     // Pink on hover, matching the selected state, so the day
@@ -331,6 +349,13 @@ export default function AppointmentsScreen() {
                 }`}
               >
                 {formatTabLabel(d)}
+                {/* Always rendered, transparent when it isn't a marker day, so
+                    every tab keeps the same height and the strip doesn't jog. */}
+                <span
+                  className={`mt-1 block h-[3px] rounded-full ${
+                    !isSameWeekday ? 'bg-transparent' : isSelected ? 'bg-white/80' : 'bg-pink-400'
+                  }`}
+                />
               </button>
             );
           })}
@@ -369,10 +394,10 @@ export default function AppointmentsScreen() {
           <div className="flex items-center gap-4">
           <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1">
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={18} /></button>
-            <button onClick={() => setSelectedDate(today)} className={`px-3 py-1.5 rounded-lg font-mono text-sm font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
+            <button onClick={goToToday} className={`px-4 py-2 rounded-lg font-mono text-lg font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronRight size={18} /></button>
             <div className="relative">
-              <button onClick={openDatePicker} title="Pick a date" className="p-2 rounded-lg hover:bg-white text-pink-500 transition-all"><Calendar size={18} /></button>
+              <button onClick={openDatePicker} title="Pick a date" className="p-2 rounded-lg hover:bg-white text-pink-500 transition-all"><Calendar size={26} /></button>
               {datePickerOpen && (
                 <DatePickerPopover
                   value={selectedDate}
@@ -400,10 +425,10 @@ export default function AppointmentsScreen() {
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1 bg-gray-50 rounded-2xl p-1.5">
               <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronLeft size={22} /></button>
-              <button onClick={() => setSelectedDate(today)} className={`px-4 py-2 rounded-xl font-mono text-base font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:shadow-sm'}`}>TODAY</button>
+              <button onClick={goToToday} className={`px-5 py-2.5 rounded-xl font-mono text-xl font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:shadow-sm'}`}>TODAY</button>
               <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronRight size={22} /></button>
               <div className="relative">
-                <button onClick={openDatePicker} title="Pick a date" className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-pink-500 transition-all"><Calendar size={22} /></button>
+                <button onClick={openDatePicker} title="Pick a date" className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-pink-500 transition-all"><Calendar size={30} /></button>
                 {datePickerOpen && (
                   <DatePickerPopover
                     value={selectedDate}
