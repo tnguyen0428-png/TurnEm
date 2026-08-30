@@ -42,6 +42,16 @@ function writeMap(key: string, s: Stamps) {
   }
 }
 
+/** One other entry on the same booking, shown so the flagged row can be judged
+ *  in context rather than in isolation. */
+interface Sibling {
+  id: string;
+  techName: string;
+  services: string[];
+  turnValue: number;
+  requested: boolean;
+}
+
 interface Offender {
   id: string;
   clientName: string;
@@ -50,6 +60,13 @@ interface Offender {
   techs: string[];
   turnValue: number;
   correctedTurns: number;
+  /** Every request the BOOKING carries, as "Service → TECH". A party with four
+   *  same-named services and one request is the case that made this alert
+   *  unjudgeable: the card said "should be 0.5" with no way to see that the
+   *  single request was already accounted for elsewhere. */
+  bookingRequests: string[];
+  /** The other entries on this booking, so the whole party is visible. */
+  siblings: Sibling[];
 }
 
 export default function LostRequestAlert() {
@@ -140,6 +157,11 @@ export default function LostRequestAlert() {
           return sum + (isReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
         }, 0);
 
+        const techNameOf = (s: typeof q) => {
+          const id = s.assignedManicuristId ?? s.requestedManicuristId ?? null;
+          return id ? (nameById.get(id) ?? id) : 'unassigned';
+        };
+
         out.push({
           id: q.id,
           clientName: q.clientName,
@@ -148,6 +170,21 @@ export default function LostRequestAlert() {
           techs: techIds.map((id) => nameById.get(id) ?? id),
           turnValue: Number(q.turnValue) || 0,
           correctedTurns,
+          bookingRequests: reqs.map(
+            (r) =>
+              `${r.service} → ${(r.manicuristIds ?? [])
+                .map((id) => nameById.get(id) ?? id)
+                .join(' / ')}`,
+          ),
+          siblings: entries
+            .filter((s) => s.id !== q.id)
+            .map((s) => ({
+              id: s.id,
+              techName: techNameOf(s),
+              services: s.services ?? [],
+              turnValue: Number(s.turnValue) || 0,
+              requested: s.isRequested === true,
+            })),
         });
       }
     }
@@ -249,18 +286,75 @@ export default function LostRequestAlert() {
                 <p style={{ margin: '2px 0 0', fontSize: 12, color: '#b91c1c', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
                   counted as {o.turnValue.toFixed(1)} → should be {o.correctedTurns.toFixed(1)}
                 </p>
+
+                {/* ── Context, so this can be JUDGED and not just accepted ──
+                    A flagged row on its own is unjudgeable: Dina 2026-08-29
+                    was a party of four Gel Pedicures with ONE request, and
+                    the card said "should be 0.5" with no way to see that the
+                    request was already accounted for on another tech. Show
+                    what the booking actually asked for and where every other
+                    slot on it stands, so "Leave it as is" is a decision
+                    rather than a guess. */}
+                <div style={{
+                  marginTop: 8, paddingTop: 8, borderTop: '1px dashed #fca5a5',
+                  fontSize: 12, color: '#7f1d1d',
+                }}>
+                  <p style={{ margin: 0 }}>
+                    <span style={{ color: '#9ca3af' }}>Booking asks for:</span>{' '}
+                    {o.bookingRequests.length > 0 ? o.bookingRequests.join(' · ') : 'nothing'}
+                  </p>
+
+                  {o.siblings.length > 0 ? (
+                    <>
+                      <p style={{ margin: '6px 0 3px', color: '#9ca3af' }}>
+                        Rest of this booking ({o.siblings.length}):
+                      </p>
+                      <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'disc' }}>
+                        {o.siblings.map((s) => (
+                          <li key={s.id} style={{ margin: '1px 0', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
+                            {s.techName} — {s.services.join(', ') || 'no service'} — {s.turnValue.toFixed(1)}
+                            {s.requested ? ' (request)' : ''}
+                          </li>
+                        ))}
+                      </ul>
+                      <p style={{ margin: '6px 0 0', color: '#9ca3af', fontStyle: 'italic' }}>
+                        If a slot above already carries the request, this one
+                        earns its full turn — choose “Leave it as is”.
+                      </p>
+                    </>
+                  ) : (
+                    <p style={{ margin: '6px 0 0', color: '#9ca3af' }}>
+                      Only slot on this booking.
+                    </p>
+                  )}
+                </div>
               </div>
             ))}
           </div>
 
+          {/* ── The two real answers carry EQUAL visual weight ───────────────
+              Not a style preference — it is the whole point of the dialog.
+              A single dark primary button gets clicked on sight: the eye goes
+              to the highlight and the receptionist never reads the card. That
+              is how Dina 2026-08-29 was "corrected" on a false alarm. Two
+              matched pastels (green = change it, yellow = leave it) give the
+              eye nothing to default to, so the only way through is to read the
+              context above and choose. Keep them the same size, weight and
+              saturation; do not promote either one to a solid fill.
+
+              "Correct Turn" leads because, now that the party false-positive
+              is fixed (7be0ccb / 58464a8), a firing should mean a real error.
+              But it is worded "Please correct the turn": read fast, "Correct
+              Turn" parses as "the turn is correct" — the exact opposite of
+              what the button does. */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button type="button" onClick={correctTurn}
-              style={{ ...btn, background: '#059669', color: 'white' }}>
-              Correct Turn
+              style={{ ...btn, background: '#d1fae5', color: '#065f46', border: '1px solid #6ee7b7' }}>
+              Please correct the turn
             </button>
             <button type="button" onClick={leaveAsIs}
-              style={{ ...btn, background: 'white', color: '#374151', border: '1px solid #d1d5db' }}>
-              Leave it as is
+              style={{ ...btn, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>
+              Leave it as is — the count is right
             </button>
             <button type="button" onClick={dismissForNow}
               style={{ ...btn, background: 'white', color: '#6b7280', border: '1px solid #e5e7eb', fontWeight: 600 }}>
