@@ -649,20 +649,35 @@ function pinBackedServiceAnchors(
   return changed ? next : requests;
 }
 
-// Which service names does a write REMOVE, counting occurrences? Used to scope
+// Which service names does a write retire ENTIRELY? Used to scope
 // `allowDroppingBackedServices` to the names the caller actually dropped
 // instead of letting the flag switch the whole backed-work guard off. A rename
 // [Dip Only] -> [Hard Gel Fill] returns {Dip Only}; a pure add returns nothing.
+//
+// Deliberately name-level, NOT count-aware, and that distinction is the whole
+// point: one manicurist doing the SAME service twice for one client on one
+// ticket is normal here (two Gel Fills for Karen, a redo, a second set of
+// hands), and it shows up as services[] = [Gel Fill, Gel Fill]. Retiring one
+// occurrence of a repeated name — renaming one of the two lines, or removing
+// one — must NOT strip the backed-work floor from the occurrence that is still
+// being worked, or the surviving slot loses its protection and can be pruned
+// off the book. A count-aware diff did exactly that: [Gel Fill, Gel Fill] ->
+// [Gel Fill, Gel Full Set] reported "Gel Fill" as dropped while a Gel Fill was
+// still on the booking and still under the tech's hands.
+//
+// So only a name gone from the booking completely counts as retired — the same
+// rule, for the same reason, as recordDeliberateServiceDrops in AppContext.
+// Dropping one of two occurrences still shrinks services[], and the ordinary
+// count-aware reconcile prunes the extra slot; it just no longer does so with
+// the floor switched off.
 function droppedServiceNames(
   prev: ReadonlyArray<string>,
   next: ReadonlyArray<string>,
 ): Set<string> {
-  const remaining = [...next];
+  const kept = new Set(next);
   const dropped = new Set<string>();
   for (const s of prev) {
-    const i = remaining.indexOf(s);
-    if (i >= 0) { remaining.splice(i, 1); continue; }
-    dropped.add(s);
+    if (!kept.has(s)) dropped.add(s);
   }
   return dropped;
 }
