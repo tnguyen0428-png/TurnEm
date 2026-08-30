@@ -50,7 +50,7 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
 
   return (
     <div
-      className={`group rounded-xl border p-2.5 hover:shadow-md transition-all duration-200 ${
+      className={`rounded-xl border p-2.5 hover:shadow-md transition-all duration-200 ${
         isDeferred
           ? 'bg-amber-50 border-amber-400 hover:border-amber-500 shadow-sm'
           : isAppt
@@ -165,8 +165,20 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
             gap scaled to match, so the row grows as a unit instead of the
             icons rattling around inside the old box. Revert-to-appointment
             rides along at the same size: it sits in this same cluster, and
-            leaving it small next to the others reads as broken. */}
-        <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+            leaving it small next to the others reads as broken.
+
+            Always visible, not hover-revealed. These ran behind
+            `opacity-0 group-hover:opacity-100`, which on a salon tablet means
+            invisible — there is no hover on touch, so the buttons only
+            appeared once a tap had already landed somewhere on the card.
+            Wanted visible until every service is assigned (Tony 2026-08-30),
+            and that condition needs no code: WaitingPanel only ever renders a
+            card for a `status === 'waiting'` entry (getPriorityQueue), and a
+            partial split leaves a `-waiting` bucket holding ONLY the services
+            still unassigned. A card on this list therefore always has work
+            left to place; when it doesn't, the entry has left the list and
+            there is no card to hide the buttons on. */}
+        <div className="flex items-center gap-1 flex-shrink-0">
           {isAppt && onRevertToAppt && (
             <button
               onClick={onRevertToAppt}
