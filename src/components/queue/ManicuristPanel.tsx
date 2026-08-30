@@ -202,14 +202,15 @@ export default function ManicuristPanel() {
             ref={buttonRef}
             onClick={() => setShowMenu(!showMenu)}
             // Sized to match the appointment book's TODAY / NEW buttons
-            // (Tony 2026-08-30) — px-4 py-2, 18px text, 44px tall.
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-lg font-bold tracking-wider active:scale-[0.98] transition-all ${
+            // (Tony 2026-08-30) — px-3.5 py-2, 16px text, 40px tall, trimmed a
+            // step from the original 18px/44px alongside the other three.
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-mono text-base font-bold tracking-wider active:scale-[0.98] transition-all ${
               showMenu
                 ? 'bg-pink-600 text-white'
                 : 'bg-pink-500 text-white hover:bg-pink-600'
             }`}
           >
-            <Plus size={20} className={`transition-transform duration-200 ${showMenu ? 'rotate-45' : ''}`} />
+            <Plus size={18} className={`transition-transform duration-200 ${showMenu ? 'rotate-45' : ''}`} />
             ADD MANICURISTS
           </button>
 

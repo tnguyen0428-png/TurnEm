@@ -394,7 +394,7 @@ export default function AppointmentsScreen() {
           <div className="flex items-center gap-4">
           <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1">
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronLeft size={18} /></button>
-            <button onClick={goToToday} className={`px-4 py-2 rounded-lg font-mono text-lg font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
+            <button onClick={goToToday} className={`px-3.5 py-2 rounded-lg font-mono text-base font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white' : 'text-gray-500 hover:bg-white'}`}>TODAY</button>
             <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-2 rounded-lg hover:bg-white text-gray-500 transition-all"><ChevronRight size={18} /></button>
             <div className="relative">
               <button onClick={openDatePicker} title="Pick a date" className="p-2 rounded-lg hover:bg-white text-pink-500 transition-all"><Calendar size={26} /></button>
@@ -412,8 +412,11 @@ export default function AppointmentsScreen() {
           {renderDateStrip()}
           {dayTotal > 0 && <span className="font-mono text-xs text-gray-400 flex-shrink-0">{dayScheduled} scheduled &middot; {dayTotal} total</span>}
           {/* Sized to match TODAY at the other end of the bar (Tony
-              2026-08-30) — same text size and padding, icon scaled to suit. */}
-          <button onClick={openNewAppointment} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-pink-500 text-white font-mono text-lg font-bold tracking-wider hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={20} />NEW</button>
+              2026-08-30) — same text size and padding, icon scaled to suit.
+              Trimmed a step on 2026-08-30: 44px -> 40px tall here, 48px -> 44px
+              on the full toolbar below, so the two bars keep their one-step
+              difference. */}
+          <button onClick={openNewAppointment} className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-pink-500 text-white font-mono text-base font-bold tracking-wider hover:bg-pink-600 transition-all flex-shrink-0"><Plus size={18} />NEW</button>
           <button onClick={() => setExpanded((e) => !e)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-sm text-gray-600 font-bold tracking-wider transition-all flex-shrink-0">
             <Minimize2 size={16} />COMPACT
           </button>
@@ -427,7 +430,7 @@ export default function AppointmentsScreen() {
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1 bg-gray-50 rounded-2xl p-1.5">
               <button onClick={() => setSelectedDate(shiftDate(selectedDate, -1))} className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronLeft size={22} /></button>
-              <button onClick={goToToday} className={`px-5 py-2.5 rounded-xl font-mono text-xl font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:shadow-sm'}`}>TODAY</button>
+              <button onClick={goToToday} className={`px-4 py-2 rounded-xl font-mono text-lg font-bold tracking-wider transition-all ${isToday ? 'bg-pink-500 text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:shadow-sm'}`}>TODAY</button>
               <button onClick={() => setSelectedDate(shiftDate(selectedDate, 1))} className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-gray-500 transition-all"><ChevronRight size={22} /></button>
               <div className="relative">
                 <button onClick={openDatePicker} title="Pick a date" className="p-2.5 rounded-xl hover:bg-white hover:shadow-sm text-pink-500 transition-all"><Calendar size={30} /></button>
@@ -450,7 +453,7 @@ export default function AppointmentsScreen() {
               <button onClick={() => setBookMode('book')} title="Book view" className={`p-2.5 rounded-xl transition-all ${bookMode === 'book' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><LayoutGrid size={20} /></button>
               <button onClick={() => setBookMode('list')} title="List view" className={`p-2.5 rounded-xl transition-all ${bookMode === 'list' ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}><List size={20} /></button>
             </div>
-            <button onClick={openNewAppointment} className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-pink-500 text-white font-mono text-xl font-bold tracking-wider hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm"><Plus size={24} />NEW</button>
+            <button onClick={openNewAppointment} className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-pink-500 text-white font-mono text-lg font-bold tracking-wider hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm"><Plus size={20} />NEW</button>
           </div>
         </div>
       )}
