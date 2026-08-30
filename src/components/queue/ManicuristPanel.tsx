@@ -343,7 +343,7 @@ export default function ManicuristPanel() {
                   No services yet today.
                 </p>
               ) : (
-                <HistoryTable entries={todayEntries} />
+                <HistoryTable entries={todayEntries} size="large" />
               )}
             </div>
           </div>
