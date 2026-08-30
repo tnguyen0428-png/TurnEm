@@ -1835,15 +1835,23 @@ export default function TicketModal({
       })();
     }
 
-    // Credit turns for service lines added during checkout for a staff who
-    // isn't already part of the visit's completed_services buckets. The
-    // bucket recompute above handles additions for staff who ARE part of
-    // the visit (their bucket gets the new service + recomputed turn
-    // value with delta applied). For a brand-new staff on this visit
-    // (Kayla added by the cashier even though she wasn't in the queue
-    // for this client), no bucket exists, so we credit the catalog turn
-    // value directly and persist a fresh completed_services row so
-    // History reflects the work.
+    // Persist a completed_services row (and, where earned, a turn credit) for
+    // service lines added during checkout for a staff who isn't already part
+    // of the visit's completed_services buckets. The bucket recompute above
+    // handles additions for staff who ARE part of the visit (their bucket
+    // gets the new service + recomputed turn value with delta applied). For a
+    // brand-new staff on this visit (Kayla added by the cashier even though
+    // she wasn't in the queue for this client), no bucket exists, so we
+    // persist a fresh completed_services row here so History / the staff
+    // portal / the blueprint all agree.
+    //
+    // This MUST run even for a zero-turn service (Nail Art, Eyebrows, a
+    // Polish Change, any A-La-Carte / Wax / Kids item). It used to `continue`
+    // on `baseTurns <= 0`, which meant a $8 Nail Art rung up for a second
+    // tech at checkout was charged on the ticket but never reached the board
+    // — no History row, nothing on the portal, portal < blueprint (Lily ×
+    // CHRISTINA, 2026-08-29 #91). The turn credit is still gated on
+    // `turnValue > 0`; only the row write is unconditional.
     const bucketStaffIds = new Set<string>();
     for (const [, bucket] of bucketByEntry) {
       if (bucket.entry.manicuristId) bucketStaffIds.add(bucket.entry.manicuristId);
@@ -1859,14 +1867,16 @@ export default function TicketModal({
       if (bucketStaffIds.has(l.staff1Id)) continue;
       const svc = state.salonServices.find((s) => s.name === l.name.trim());
       const baseTurns = Number(svc?.turnValue ?? 0);
-      if (baseTurns <= 0) continue;
       // Mirror the request-half-credit rule used in MultiServiceAssign and
       // the bucket recompute: a requested service for a specific staff
       // earns Combo=1 / non-Combo=0.5; otherwise it earns the full
-      // catalog turnValue.
-      const turnValue = l.isRequested
-        ? (svc?.category === 'Combo' ? 1 : 0.5)
-        : baseTurns;
+      // catalog turnValue. A zero-turn service earns nothing regardless of
+      // the request flag.
+      const turnValue = baseTurns <= 0
+        ? 0
+        : l.isRequested
+          ? (svc?.category === 'Combo' ? 1 : 0.5)
+          : baseTurns;
       // Use the SAME deterministic id as the synthetic add-child queue
       // entry created by ensureManicuristBusyForAddedLine
       // (`${visit}-add-${staff}`). When the manicurist later hits DONE,
@@ -1886,6 +1896,7 @@ export default function TicketModal({
       if (state.completed.some((c) => c.id === newEntryId)) continue;
       const nowIso = new Date().toISOString();
 
+      const lStaffId = l.staff1Id;
       // Dispatch the turn credit LOCALLY first so state.manicurists reflects
       // the new total before the async DB writes happen. Without this, the
       // direct supabase update below races with syncManicurists (which
@@ -1893,48 +1904,67 @@ export default function TicketModal({
       // unrelated reason). The local-then-DB ordering keeps both sides
       // converged on the correct total even if the realtime echo arrives
       // late, and the card shows the credited turn immediately instead of
-      // waiting for a round-trip.
-      const lStaffId = l.staff1Id;
+      // waiting for a round-trip. A zero-turn service skips this entirely —
+      // there is no credit to make and no manicurists row to touch.
       const localCurrentTurns = Number(
         state.manicurists.find((mm) => mm.id === lStaffId)?.totalTurns ?? 0,
       );
-      dispatch({
-        type: 'UPDATE_MANICURIST',
-        id: lStaffId,
-        updates: { totalTurns: localCurrentTurns + turnValue },
-      });
+      if (turnValue > 0) {
+        dispatch({
+          type: 'UPDATE_MANICURIST',
+          id: lStaffId,
+          updates: { totalTurns: localCurrentTurns + turnValue },
+        });
+      }
+
+      // Upsert (ignoring duplicates) a completed_services row so reports
+      // and History reflect this manually-added work. We use upsert with
+      // ignoreDuplicates rather than insert so a duplicate PK from a
+      // rapid double-Save (before the realtime echo has updated
+      // state.completed) is a harmless no-op instead of an error log.
+      // Subsequent saves take the existingId / state.completed early-exit
+      // branches and don't reach this code.
+      //
+      // AWAITED, not fire-and-forget: runProcess calls closeTicket()
+      // immediately after doSave() returns, and the tickets→closed trigger
+      // sync_completed_service_prices reprices this row from the ticket
+      // line via add_child_price_cents. If the row isn't in the DB yet when
+      // close fires, price_cents stays null and the portal falls back to a
+      // render-time remainder. Awaiting the insert closes that window.
+      //
+      // original_appointment_id points at the synthetic add-child book
+      // block (`walkin:${visit}-add-${staff}`) that
+      // ensureManicuristBusyForAddedLine created. The checkout add-child
+      // sweep promotes that block to a completed placement instead of
+      // deleting it (see runProcess), so the History row and book slot
+      // line up 1:1.
+      const { error: csErr } = await supabase.from('completed_services').upsert({
+        id: newEntryId,
+        client_name: clientName || ticket.clientName || 'Walk-in',
+        manicurist_id: l.staff1Id,
+        manicurist_name: l.staff1Name,
+        manicurist_color: l.staff1Color,
+        service: l.name,
+        services: [l.name],
+        requested_services: l.isRequested ? [l.name] : [],
+        turn_value: turnValue,
+        is_appointment: false,
+        is_requested: !!l.isRequested,
+        edited: true,
+        voided: false,
+        original_appointment_id: `walkin:${newEntryId}`,
+        started_at: nowIso,
+        completed_at: nowIso,
+      }, { onConflict: 'id', ignoreDuplicates: true });
+      if (csErr) {
+        console.error('[ticket modal] completed_services upsert for added line failed:', csErr.message);
+        // The completed_services row is best-effort for reports — fall
+        // through and still attempt the turn credit so the cashier
+        // doesn't lose the count on a schema mismatch / RLS edge case.
+      }
+      if (turnValue <= 0) continue;
 
       void (async () => {
-        // Upsert (ignoring duplicates) a completed_services row so reports
-        // and History reflect this manually-added work. We use upsert with
-        // ignoreDuplicates rather than insert so a duplicate PK from a
-        // rapid double-Save (before the realtime echo has updated
-        // state.completed) is a harmless no-op instead of an error log.
-        // Subsequent saves take the existingId / state.completed early-exit
-        // branches and don't reach this code.
-        const { error: csErr } = await supabase.from('completed_services').upsert({
-          id: newEntryId,
-          client_name: clientName || ticket.clientName || 'Walk-in',
-          manicurist_id: l.staff1Id,
-          manicurist_name: l.staff1Name,
-          manicurist_color: l.staff1Color,
-          service: l.name,
-          services: [l.name],
-          requested_services: l.isRequested ? [l.name] : [],
-          turn_value: turnValue,
-          is_appointment: false,
-          is_requested: !!l.isRequested,
-          edited: true,
-          voided: false,
-          started_at: nowIso,
-          completed_at: nowIso,
-        }, { onConflict: 'id', ignoreDuplicates: true });
-        if (csErr) {
-          console.error('[ticket modal] completed_services upsert for added line failed:', csErr.message);
-          // The completed_services row is best-effort for reports — fall
-          // through and still attempt the turn credit so the cashier
-          // doesn't lose the count on a schema mismatch / RLS edge case.
-        }
         // Write the EXACT post-dispatch value, not (current + turnValue).
         // syncManicurists may have already uploaded localCurrentTurns +
         // turnValue by the time this runs, so re-fetching and adding
@@ -2162,12 +2192,13 @@ export default function TicketModal({
     //     directly instead of via currentClient. Idempotent at the PK
     //     layer, so if the manicurist already pressed DONE manually (entry
     //     no longer in state.queue) this is just a no-op.
-    //   - `${visitId}-add-…` (cashier-added synthetic add-child): the
-    //     ticket_items are owned by the cashier's TicketModal save and the
-    //     synthetic queue entry carries turnValue=0, so a COMPLETE_SERVICE
-    //     would just emit a turn=0 noise row. Free whichever manicurist
-    //     card is still pointing at it instead — REMOVE_CLIENT below drops
-    //     the queue row.
+    //   - `${visitId}-add-…` (cashier-added synthetic add-child): its
+    //     completed_services row was already written by doSave (keyed
+    //     `${visit}-add-${staff}`, priced from the bare-visit ticket line by
+    //     add_child_price_cents), so a COMPLETE_SERVICE here would only add a
+    //     duplicate. Free whichever manicurist card is still pointing at it,
+    //     promote its book block to a completed placement (the sweep below),
+    //     then REMOVE_CLIENT drops the queue row.
     if (ticket.queueEntryId) {
       const visitId = ticket.queueEntryId;
       const addChildPrefix = `${visitId}-add-`;
@@ -2209,9 +2240,32 @@ export default function TicketModal({
       // process" symptom. Do NOT re-add a blanket heal here — fix attribution
       // at assign/complete (and via reallocateTurnsForStaffChanges) instead.
       for (const q of state.queue) {
-        if (q.id.startsWith(addChildPrefix)) {
-          dispatch({ type: 'REMOVE_CLIENT', id: q.id });
+        if (!q.id.startsWith(addChildPrefix)) continue;
+        // Does this add-child correspond to a real service line on the
+        // ticket? (staff + service name match — the line itself carries the
+        // bare visit id, never the `-add-` id, so we can't join by id.) If
+        // so, the work genuinely happened: promote its synthetic book block
+        // (`walkin:${q.id}`) to a completed placement so it stays on the
+        // appointment book, matching the completed_services row doSave just
+        // wrote. Clearing isWalkIn also stops REMOVE_CLIENT's reducer from
+        // deleting the block on the next line. An add-child with no matching
+        // line was added-then-removed by the cashier — leave the old
+        // behavior (REMOVE_CLIENT drops the block too).
+        const hasTicketLine = lines.some(
+          (l) =>
+            l.kind === 'service' &&
+            !!l.staff1Id &&
+            l.staff1Id === q.assignedManicuristId &&
+            q.services.includes(l.name.trim() as ServiceType),
+        );
+        if (hasTicketLine) {
+          dispatch({
+            type: 'UPDATE_APPOINTMENT',
+            id: `walkin:${q.id}`,
+            updates: { isWalkIn: false, status: 'completed' },
+          });
         }
+        dispatch({ type: 'REMOVE_CLIENT', id: q.id });
       }
     } else {
       // No queueEntryId — this is a manual "+ NEW TICKET" ticket the cashier
