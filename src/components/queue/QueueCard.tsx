@@ -159,12 +159,13 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
             </div>
           )}
         </div>
-        {/* Edit / assign / remove at 1.5x — these are the three the front desk
+        {/* Edit / assign / remove scaled up — these are the three the front desk
             actually presses on a queue card, and at 12px on a tablet they were
-            a hard target to hit. Went to 2x first and that was too big for the
-            card (Tony 2026-08-30), so: icon 12 -> 18, padding 4px -> 6px, with
-            the gap scaled to match, so the row grows as a unit instead of the
-            icons rattling around inside the old box. Revert-to-appointment
+            a hard target to hit. Settled at icon 16 / 5px padding after 2x then
+            1.5x both came back too big for the card (Tony 2026-08-30): a 26px
+            button against the 20px it started at, with the gap scaled to
+            match, so the row grows as a unit instead of the icons rattling
+            around inside the old box. Revert-to-appointment
             rides along at the same size: it sits in this same cluster, and
             leaving it small next to the others reads as broken.
 
@@ -183,32 +184,32 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
           {isAppt && onRevertToAppt && (
             <button
               onClick={onRevertToAppt}
-              className="p-1.5 rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors"
+              className="p-[5px] rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors"
               title="Revert back to appointment"
             >
-              <Undo2 size={18} />
+              <Undo2 size={16} />
             </button>
           )}
           <button
             onClick={onEdit}
-            className="p-1.5 rounded-md bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"
+            className="p-[5px] rounded-md bg-blue-50 text-blue-500 hover:bg-blue-100 transition-colors"
             title="Edit"
           >
-            <Pencil size={18} />
+            <Pencil size={16} />
           </button>
           <button
             onClick={onAssign}
-            className="p-1.5 rounded-md bg-pink-50 text-pink-500 hover:bg-pink-100 transition-colors"
+            className="p-[5px] rounded-md bg-pink-50 text-pink-500 hover:bg-pink-100 transition-colors"
             title="Assign"
           >
-            <UserPlus size={18} />
+            <UserPlus size={16} />
           </button>
           <button
             onClick={onRemove}
-            className="p-1.5 rounded-md bg-red-50 text-red-400 hover:bg-red-100 transition-colors"
+            className="p-[5px] rounded-md bg-red-50 text-red-400 hover:bg-red-100 transition-colors"
             title="Remove"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </div>
       </div>
