@@ -246,7 +246,13 @@ export default function HistoryTable({ entries, onEdit, size: sizeName = 'defaul
           <tbody>
             {sortedEntries.map((entry) => (
               <ServiceRow
-                key={entry.id}
+                // An in-service row borrows the QUEUE entry's id, which can
+                // briefly equal the id of the completed_services row for the
+                // same visit mid-checkout — React then warns about duplicate
+                // keys and may OMIT one of the two rows. Pre-existing, but a
+                // silently missing service row is the exact failure this app
+                // keeps chasing, so discriminate live from done.
+                key={`${entry.id}-${entry.completedAt === null ? 'live' : 'done'}`}
                 entry={entry}
                 onEdit={onEdit}
                 size={size}

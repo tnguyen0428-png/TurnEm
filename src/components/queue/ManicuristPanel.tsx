@@ -3,11 +3,13 @@ import { Plus, LogIn, UserPlus, LayoutGrid, ListOrdered } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import ManicuristCard from './ManicuristCard';
 import HistoryTable from '../history/HistoryTable';
+import EditCompletedModal from '../modals/EditCompletedModal';
 import { buildTodayEntries } from '../../lib/todayEntries';
 import { SharedAutoFitProvider } from '../shared/SharedAutoFitText';
 import { getSubscribedManicuristIds } from '../../utils/pushNotifications';
 import { formatTime } from '../../utils/time';
 import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../../lib/manicuristStatus';
+import type { CompletedEntry } from '../../types';
 
 export default function ManicuristPanel() {
   const { state, dispatch } = useApp();
@@ -23,8 +25,11 @@ export default function ManicuristPanel() {
 
   // Today's client/service rows, same shape History shows (Tony 2026-08-30 —
   // "for easy access", so the receptionist doesn't leave the queue to check
-  // what a client had). Read-only here: no onEdit is passed, so the pencil
-  // never renders and editing stays on the History screen behind its PIN.
+  // what a client had). Editable here too, exactly as in History: same modal,
+  // same rules, and the void inside it keeps its own receptionist PIN gate.
+  // ServiceRow still hides the pencil on in-service rows — an in-flight visit
+  // is edited at the queue card / ticket modal, not here.
+  const [editingEntry, setEditingEntry] = useState<CompletedEntry | null>(null);
   const todayEntries = useMemo(
     () => buildTodayEntries(state.queue, state.manicurists, state.completed),
     [state.queue, state.manicurists, state.completed],
@@ -343,7 +348,7 @@ export default function ManicuristPanel() {
                   No services yet today.
                 </p>
               ) : (
-                <HistoryTable entries={todayEntries} size="large" />
+                <HistoryTable entries={todayEntries} size="large" onEdit={setEditingEntry} />
               )}
             </div>
           </div>
@@ -375,6 +380,10 @@ export default function ManicuristPanel() {
           </SharedAutoFitProvider>
         )}
       </div>
+
+      {editingEntry && (
+        <EditCompletedModal entry={editingEntry} onClose={() => setEditingEntry(null)} />
+      )}
     </div>
   );
 }

@@ -71,8 +71,13 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 mb-0.5">
+            {/* Client name and the service badges below both scaled up
+                (Tony 2026-08-30) — 12px/10px was hard to read at a glance
+                on the salon tablet. The badges stop at 12px rather than
+                matching the name: this panel is a narrow left column and
+                a long name like PINK & WHITE FILL wraps badly above that. */}
             <h3
-              className={`font-mono text-xs font-semibold truncate ${isAppt ? '' : 'text-gray-900'}`}
+              className={`font-mono text-base font-semibold truncate ${isAppt ? '' : 'text-gray-900'}`}
               style={isAppt ? { color: '#0c447c' } : undefined}
             >
               {client.clientName}
@@ -119,11 +124,13 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
                 key={s}
                 label={count > 1 ? `${s} x${count}` : s}
                 variant={getTurnBadgeVariant(client.turnValue)}
+                size="md"
               />
             ))}
             <Badge
               label={`${client.turnValue} turns`}
               variant={getTurnBadgeVariant(client.turnValue)}
+              size="md"
             />
             <span
               className={`flex items-center gap-1 text-[10px] font-mono ${isAppt ? '' : 'text-gray-400'}`}
@@ -144,7 +151,7 @@ export default function QueueCard({ client, rank, isNext = false, isDeferred = f
               {requestedServices.map((r, i) => (
                 <span
                   key={`${r.service}-${i}`}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-[10px] text-pink-600"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-pink-50 border border-pink-100 font-mono text-xs text-pink-600"
                 >
                   {r.service} &rarr; {r.manicuristIds.map((id) => getManicuristName(id)).join(', ')}
                 </span>
