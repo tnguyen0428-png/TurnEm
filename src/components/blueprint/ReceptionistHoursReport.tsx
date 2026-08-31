@@ -647,6 +647,7 @@ export default function ReceptionistHoursReport() {
       {/* Manager PIN gate for add / edit / delete — same master PIN as the rest
           of the app (system_state.admin_passcode). */}
       <PinVerifyModal
+        gate="blueprint:receptionist-hours"
         isOpen={pendingAction !== null}
         title="Manager PIN"
         onCancel={() => setPendingAction(null)}

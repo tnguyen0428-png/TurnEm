@@ -474,6 +474,8 @@ export default function RegisterScreen() {
       )}
       <PinVerifyModal
         isOpen={pendingViewShift !== null}
+        gate="register:closed-shift"
+        detail={pendingViewShift ? `drawer #${pendingViewShift.drawerNumber}` : undefined}
         title="Enter Admin PIN to open a closed shift"
         onSuccess={() => { setViewShift(pendingViewShift); setPendingViewShift(null); }}
         onCancel={() => setPendingViewShift(null)}

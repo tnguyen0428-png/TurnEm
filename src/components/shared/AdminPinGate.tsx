@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Lock, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../state/AuthContext';
+import { pushToOwners } from '../../utils/pushNotifications';
 
 async function fetchAdminPin(): Promise<string | null> {
   const { data, error } = await supabase
@@ -26,13 +27,51 @@ interface PinVerifyModalProps {
   onSuccess: () => void;
   onCancel: () => void;
   title?: string;
+  /** Which surface is being unlocked, e.g. 'history:previous-day'. Required so
+   *  no gate can be added without saying what it protects — the audit row and
+   *  the owner's push are both useless without it. */
+  gate: string;
+  /** What specifically, if there is one: the date being opened, the shift id. */
+  detail?: string;
 }
+
+/** Record the attempt and tell the owner. Fire-and-forget on both counts: a
+ *  logging or network problem must never stop someone unlocking a screen they
+ *  hold the PIN for, and must never make them wait. Denied attempts are
+ *  recorded too — a run of them is the interesting case. */
+function recordPinAttempt(gate: string, detail: string | undefined, outcome: 'granted' | 'denied') {
+  void supabase
+    .from('admin_pin_attempt_log')
+    .insert({ gate, detail: detail ?? null, outcome })
+    .then(({ error }) => {
+      if (error) console.warn('[pin] attempt log failed:', error.message);
+    });
+  const when = new Date().toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+  const where = GATE_LABELS[gate] ?? gate;
+  void pushToOwners(
+    outcome === 'granted' ? 'Admin PIN used' : 'Admin PIN failed',
+    `${where}${detail ? ` (${detail})` : ''} — ${when}`,
+  );
+}
+
+/** Human-readable names for the push. Falls back to the raw key, so a new gate
+ *  still alerts correctly if someone forgets to add a label here. */
+const GATE_LABELS: Record<string, string> = {
+  'history:previous-day': 'History — opened a previous day',
+  'history:clear': 'History — Clear History',
+  'register:closed-shift': 'Register — opened a closed shift',
+  'blueprint:receptionist-hours': 'Blueprint — edited receptionist hours',
+};
 
 export function PinVerifyModal({
   isOpen,
   onSuccess,
   onCancel,
   title = 'Enter Admin PIN',
+  gate,
+  detail,
 }: PinVerifyModalProps) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -62,8 +101,10 @@ export function PinVerifyModal({
       return;
     }
     if (pin === current) {
+      recordPinAttempt(gate, detail, 'granted');
       onSuccess();
     } else {
+      recordPinAttempt(gate, detail, 'denied');
       setError('Incorrect PIN');
       setPin('');
       setTimeout(() => inputRef.current?.focus(), 0);

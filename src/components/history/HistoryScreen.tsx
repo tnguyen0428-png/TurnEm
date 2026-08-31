@@ -626,6 +626,8 @@ export default function HistoryScreen() {
 
       <PinVerifyModal
         isOpen={pendingPastDate !== null}
+        gate="history:previous-day"
+        detail={pendingPastDate ?? undefined}
         title="Enter Admin PIN to view previous days"
         onSuccess={() => {
           setPastUnlocked(true);
@@ -638,6 +640,7 @@ export default function HistoryScreen() {
 
       <PinVerifyModal
         isOpen={showClearPin}
+        gate="history:clear"
         title="Enter Admin PIN to Clear"
         onSuccess={() => {
           dispatch({ type: 'CLEAR_HISTORY' });
