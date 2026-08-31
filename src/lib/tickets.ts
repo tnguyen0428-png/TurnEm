@@ -1840,11 +1840,33 @@ export async function syncEntryToTicket(
     discount_cents: number;
     sort_order: number;
   };
-  // Match THIS entry's lines only: the canonical id (bare) OR the `#svcN`
-  // / `#N` collision-suffixed siblings. A bare LIKE `${entry.id}%` looks
-  // tempting but over-matches because manicurist ids like `mani-1` are a
-  // string prefix of `mani-10`, `mani-15`, etc. — so processing Tommy's
-  // entry would grab Christina's row, mark it "unmatched", and DELETE it.
+  // Match THIS entry's lines only: the canonical id (bare) OR its own `#svcN`
+  // slots. A bare LIKE `${entry.id}%` looks tempting but over-matches because
+  // manicurist ids like `mani-1` are a string prefix of `mani-10`, `mani-15`,
+  // etc. — so processing Tommy's entry would grab Christina's row, mark it
+  // "unmatched", and DELETE it.
+  //
+  // `#svc%`, NOT `#%`. The two suffix namespaces are distinct and this
+  // function only ever creates the first:
+  //   `${entry.id}#svcN`  — THIS function's extra service slots (see `desired`)
+  //   `${entry.id}#N`     — updateOpenTicket disambiguating a CASHIER-added
+  //                         line whose qid collided with one already on the
+  //                         ticket (buildItemsForSave falls back to
+  //                         ticket.queueEntryId)
+  // Claiming `#%` took both. On a plain walk-in the queue entry id IS the bare
+  // visit id, so every "+ Add line" on that visit landed as `${visit}#1`, was
+  // pulled in here as if it were this entry's own slot, failed to match
+  // `desired` (built from entry.services alone), and was DELETED ~300ms after
+  // the cashier saved it — POST 201 then DELETE 204, no error, customer never
+  // charged (2026-08-31, tickets #14/#17/#24). A SPLIT visit hid it entirely,
+  // because those entry ids carry `-mani-N` and never match `${visit}#%`.
+  //
+  // Narrowing the selector is the structural fix: this function can no longer
+  // see a cashier line at all, so it cannot delete one or (via the greedy
+  // "any unused row" match below) re-label one. The `otherWorkersOnVisit`
+  // filter stays as a second line of defence for the bare-id case. A stray
+  // `#N` row that really is a duplicate is still collapsed by
+  // cleanupDuplicateLinesForEntry, which keeps the wider net on purpose.
   // Symptom: ticket #88 (Maria Aguilar) repeatedly lost Christina's
   // Gel Fill line whenever syncEntryToTicket ran for Tommy's entry on
   // the same visit. The `#` delimiter is reserved by updateOpenTicket /
@@ -1853,7 +1875,7 @@ export async function syncEntryToTicket(
     .from('ticket_items')
     .select('id, queue_entry_id, name, service_id, staff1_id, staff2_id, unit_price_cents, ext_price_cents, quantity, discount_cents, sort_order')
     .eq('ticket_id', ticket.id)
-    .or(`queue_entry_id.eq.${entry.id},queue_entry_id.like.${entry.id}#%`);
+    .or(`queue_entry_id.eq.${entry.id},queue_entry_id.like.${entry.id}#svc%`);
   if (iErr) {
     console.warn('[tickets] syncEntryToTicket items fetch:', iErr.message);
     return false;
