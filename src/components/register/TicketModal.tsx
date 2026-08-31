@@ -1306,16 +1306,27 @@ export default function TicketModal({
       // added line for the same tech appends to the existing add-child entry
       // and gets no second block, so it still belongs on the booking rather
       // than nowhere.
-      const hasOwnAddChildSlot = (staffId: string | null, serviceName: string): boolean => {
+      //
+      // Names are matched against EITHER end of an edit. Checking only the
+      // line's current name would let a RENAME slip through — the block still
+      // says "Nail Art" while the line now says "Eyebrows", so it would miss,
+      // fall through to the booking, and mint a fresh twin under the new name.
+      const ownAddChildBlockId = (
+        staffId: string | null,
+        ...serviceNames: Array<string | undefined>
+      ): string | null => {
         const visitId = ticket.queueEntryId;
-        if (!visitId || !staffId || !serviceName) return false;
-        const block = state.appointments.find((a) => a.id === `walkin:${visitId}-add-${staffId}`);
-        return !!block && (block.services ?? []).some((s) => norm(s) === norm(serviceName));
+        if (!visitId || !staffId) return null;
+        const id = `walkin:${visitId}-add-${staffId}`;
+        const block = state.appointments.find((a) => a.id === id);
+        if (!block) return null;
+        const has = (n?: string) =>
+          !!n && (block.services ?? []).some((s) => norm(s) === norm(n));
+        return serviceNames.some(has) ? id : null;
       };
 
       for (const l of lines) {
         if (l.kind !== 'service' || !l.existingId) continue;
-        if (hasOwnAddChildSlot(l.staff1Id, (l.name ?? '').trim())) continue;
         const orig = originalStaffByItemId.get(l.existingId);
         if (!orig) continue;
         const oldName = orig.name?.trim();
@@ -1324,12 +1335,31 @@ export default function TicketModal({
         const staffChanged = orig.staff1Id !== l.staff1Id;
         if (!nameChanged && !staffChanged) continue;
 
+        // Does this line's work live on an add-child block of its own? Checked
+        // against the new staff first (a staff swap has already re-minted the
+        // block under the new tech by the time Save runs) and the old staff
+        // second (they keep their block when other lines still hold them).
+        const ownBlockId =
+          ownAddChildBlockId(l.staff1Id, newName, oldName) ??
+          ownAddChildBlockId(orig.staff1Id, oldName, newName);
+
         // Rename the LIVE queue entry this line came from, if it's still on the
         // floor. Matched by the line's own queueEntryId — the exact entry the
         // cashier edited — never by service name alone, which on a split visit
         // would rename a sibling tech's identical service instead.
-        if (nameChanged && oldName && newName && orig.queueEntryId) {
-          const qe = state.queue.find((q) => q.id === orig.queueEntryId);
+        //
+        // An added line is the exception, and has to be: its ticket item carries
+        // the BARE visit id (the `-add-` id is barred from ticket_items by three
+        // separate guards), so the id lookup can never find the add-child that
+        // is actually doing the work, and the tech's card would keep advertising
+        // the old service forever. Resolved by (visit, staff) instead — the same
+        // key that minted it.
+        if (nameChanged && oldName && newName) {
+          const qe =
+            (orig.queueEntryId ? state.queue.find((q) => q.id === orig.queueEntryId) : null) ??
+            (ownBlockId
+              ? state.queue.find((q) => `walkin:${q.id}` === ownBlockId)
+              : null);
           if (qe) {
             const cur = queueRenames.get(qe.id) ?? [...(qe.services ?? [])];
             const qi = cur.findIndex((s) => s === oldName);
@@ -1343,7 +1373,13 @@ export default function TicketModal({
           }
         }
 
-        const apptId = resolveApptId(orig);
+        // An added line edits its OWN block, never the booking. Retargeting
+        // rather than skipping: the block is synthesized once at add time and
+        // nothing else ever updates it, so a skip would leave it advertising
+        // the old service name after a rename. This is also what keeps the
+        // duplicate closed — the booking is simply never the target for a line
+        // that has a slot of its own.
+        const apptId = ownBlockId ?? resolveApptId(orig);
         if (!apptId) continue;
         const w = getWork(apptId);
         if (!w) continue;
@@ -1461,9 +1497,9 @@ export default function TicketModal({
           const name = (l.name ?? '').trim();
           if (!name || !l.staff1Id) continue;
           // Already drawn once, in this tech's own add-child block — see
-          // hasOwnAddChildSlot. Adding it to the booking too is the duplicate
+          // ownAddChildBlockId. Adding it to the booking too is the duplicate
           // slot.
-          if (hasOwnAddChildSlot(l.staff1Id, name)) continue;
+          if (ownAddChildBlockId(l.staff1Id, name)) continue;
           const w = getWork(addedLineApptId);
           if (!w) continue;
           // Count-aware: only add what the booking does not already cover for
