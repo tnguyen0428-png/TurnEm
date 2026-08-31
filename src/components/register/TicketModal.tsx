@@ -1285,37 +1285,8 @@ export default function TicketModal({
         return w;
       };
 
-      // ── One added line, one slot ─────────────────────────────────────────
-      // A "+ Add line" for a tech who isn't otherwise on the visit already
-      // has a book slot of its own: ensureManicuristBusyForAddedLine mints an
-      // add-child queue entry and ADD_CLIENT synthesizes it the block
-      // `walkin:${visit}-add-${staff}` (the amber W slot). Putting that same
-      // service on the BOOKING as well draws the work twice — the W slot plus
-      // a gray twin in the same column (Jenifer × Z-TEMPS, 2026-08-31: one
-      // Nail Art line, two slots, one of which the receptionist has to hunt
-      // down and delete).
-      //
-      // The add block is the half that stays: every downstream link an added
-      // line has is keyed to it — its completed_services row, the
-      // add_child_price_cents bridge, History, the staff portal, and the
-      // checkout promotion to a completed placement. So a line that has one
-      // is simply not the booking's business, on the add itself or on any
-      // later edit of it.
-      //
-      // Matched on the block's OWN services, not just its existence: a second
-      // added line for the same tech appends to the existing add-child entry
-      // and gets no second block, so it still belongs on the booking rather
-      // than nowhere.
-      const hasOwnAddChildSlot = (staffId: string | null, serviceName: string): boolean => {
-        const visitId = ticket.queueEntryId;
-        if (!visitId || !staffId || !serviceName) return false;
-        const block = state.appointments.find((a) => a.id === `walkin:${visitId}-add-${staffId}`);
-        return !!block && (block.services ?? []).some((s) => norm(s) === norm(serviceName));
-      };
-
       for (const l of lines) {
         if (l.kind !== 'service' || !l.existingId) continue;
-        if (hasOwnAddChildSlot(l.staff1Id, (l.name ?? '').trim())) continue;
         const orig = originalStaffByItemId.get(l.existingId);
         if (!orig) continue;
         const oldName = orig.name?.trim();
@@ -1460,10 +1431,6 @@ export default function TicketModal({
           if (l.kind !== 'service' || l.existingId) continue;
           const name = (l.name ?? '').trim();
           if (!name || !l.staff1Id) continue;
-          // Already drawn once, in this tech's own add-child block — see
-          // hasOwnAddChildSlot. Adding it to the booking too is the duplicate
-          // slot.
-          if (hasOwnAddChildSlot(l.staff1Id, name)) continue;
           const w = getWork(addedLineApptId);
           if (!w) continue;
           // Count-aware: only add what the booking does not already cover for
