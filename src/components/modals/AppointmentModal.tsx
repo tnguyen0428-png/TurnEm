@@ -1519,8 +1519,14 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           </div>
         ) : null}
 
-        {/* Client info */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* Client info — hidden once a profile is matched. The banner above
+            already shows who this booking is for, and repeating first name,
+            last name and phone underneath it says the same thing twice. The
+            fields also aren't where you change a customer's details any more:
+            editing them only relabels THIS booking, while the pencil on the
+            banner edits the customer record itself. Clear the match and the
+            fields come back, which is the path for booking someone else. */}
+        <div className={`grid grid-cols-1 sm:grid-cols-3 gap-4 ${matchedCustomer ? 'hidden' : ''}`}>
           <div>
             <label className="block font-mono text-sm text-gray-500 font-semibold tracking-wider mb-1.5">FIRST NAME</label>
             <input
@@ -1569,7 +1575,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         {/* Services */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="block font-mono text-sm text-gray-500 font-semibold tracking-wider">SERVICES</label>
+            <label className="block font-mono text-sm text-gray-500 font-semibold tracking-wider">ADD SERVICES</label>
           </div>
 
           <div className="flex gap-2 mb-3">
@@ -2310,13 +2316,13 @@ ${rows
     <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="font-mono text-[10px] tracking-wider font-bold text-emerald-700 uppercase">
+          <p className="font-mono text-xs tracking-wider font-bold text-emerald-700 uppercase">
             Matched profile
           </p>
-          <p className="font-mono text-sm font-semibold text-gray-900 truncate">
+          <p className="font-mono text-lg font-semibold text-gray-900 truncate">
             {displayCustomerName(customer)}
           </p>
-          <p className="font-mono text-xs text-gray-500">
+          <p className="font-mono text-sm text-gray-600">
             {customer.phone || 'no phone'} · {openAppointments.length} open appointment{openAppointments.length === 1 ? '' : 's'}
           </p>
         </div>
