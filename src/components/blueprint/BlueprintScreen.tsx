@@ -331,17 +331,22 @@ function BlueprintPinGate({
         onSuccess('admin');
         return;
       }
-      const match = receptionists.find((r) => r.pinCode && r.pinCode === pin);
-      if (match) {
-        // Unlike every other gate, this one accepts a receptionist's OWN pin,
-        // so the record can name who walked in — worth having. But this is
-        // routine daily traffic, so it is logged WITHOUT an owner push;
-        // alerting on it would bury the entries that actually matter.
-        recordPinAttempt('blueprint:entry', `receptionist: ${match.name}`, 'granted', false);
-        onSuccess('receptionist');
-        return;
-      }
-      recordPinAttempt('blueprint:entry', undefined, 'denied');
+      // Blueprint is OWNER-ONLY (Tony 2026-08-31). This gate used to also
+      // accept any receptionist's own pin code, which let them in at the
+      // 'receptionist' tier — Customer Profiles and Owner Alerts, nothing
+      // else. That path is gone: the master PIN is now the only way in.
+      //
+      // A receptionist pin is therefore just a wrong PIN here, and is recorded
+      // and alerted as one. It is named in the log rather than left anonymous,
+      // because "Christina tried to open Blueprint" and "somebody is trying
+      // codes" are very different events and the record should tell them
+      // apart.
+      const receptionistPin = receptionists.find((r) => r.pinCode && r.pinCode === pin);
+      recordPinAttempt(
+        'blueprint:entry',
+        receptionistPin ? `refused — receptionist pin: ${receptionistPin.name}` : undefined,
+        'denied',
+      );
       setError('Incorrect PIN');
       setPin('');
       setTimeout(() => pinRef.current?.focus(), 0);
