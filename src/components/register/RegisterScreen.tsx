@@ -24,6 +24,7 @@ import CloseShiftScreen from './CloseShiftScreen';
 import ReceptionistClockModal from './ReceptionistClockModal';
 import { printReceipt } from './printReceipt';
 import DatePickerPopover from '../shared/DatePickerPopover';
+import { PinVerifyModal } from '../shared/AdminPinGate';
 
 // Sort dimensions applied across all three ticket lists.
 type SortKey = 'time' | 'total' | 'number' | 'client' | 'staff';
@@ -218,6 +219,12 @@ export default function RegisterScreen() {
   const [shiftPromptDismissed, setShiftPromptDismissed] = useState(false);
   const [showCloseShift, setShowCloseShift] = useState(false);
   const [viewShift, setViewShift] = useState<Shift | null>(null);
+  // Opening a CLOSED shift is gated behind the master PIN (Tony 2026-08-31).
+  // A closed shift is the day's finished cash count; it is a record, not a
+  // working screen. Gated per open rather than unlocked for the session —
+  // there are only one or two a day, so a prompt each time costs nothing and
+  // keeps the gate meaningful.
+  const [pendingViewShift, setPendingViewShift] = useState<Shift | null>(null);
   const [showClockModal, setShowClockModal] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey>('time');
@@ -312,8 +319,8 @@ export default function RegisterScreen() {
             {closedShifts.map((cs) => (
               <button
                 key={cs.id}
-                onClick={() => setViewShift(cs)}
-                title={cs.closedAt ? `Closed ${new Date(cs.closedAt).toLocaleString()} — click to view` : 'Click to view'}
+                onClick={() => setPendingViewShift(cs)}
+                title={cs.closedAt ? `Closed ${new Date(cs.closedAt).toLocaleString()} — admin PIN required to view` : 'Admin PIN required to view'}
                 className="h-12 px-4 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 font-mono text-sm font-bold tracking-wider border border-gray-200 transition-colors flex items-center"
               >
                 SHIFT CLOSED
@@ -465,6 +472,12 @@ export default function RegisterScreen() {
           onClosed={() => { setShowCloseShift(false); void refreshShift(); }}
         />
       )}
+      <PinVerifyModal
+        isOpen={pendingViewShift !== null}
+        title="Enter Admin PIN to open a closed shift"
+        onSuccess={() => { setViewShift(pendingViewShift); setPendingViewShift(null); }}
+        onCancel={() => setPendingViewShift(null)}
+      />
       {viewShift && (
         <CloseShiftScreen
           shift={viewShift}

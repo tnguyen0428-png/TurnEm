@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Clock,
   Trash2,
@@ -144,6 +144,26 @@ export default function HistoryScreen() {
   const [saveError, setSaveError] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  // Browsing a PAST day is gated behind the master PIN (Tony 2026-08-31).
+  // Today's history stays open to everyone — that is the working view the
+  // front desk needs all shift. Only looking BACK is restricted.
+  //
+  // The unlock lasts for as long as this screen stays mounted: whoever is
+  // reviewing past days is usually stepping through several of them, and a
+  // PIN prompt per day would train people to keep the master PIN on a sticky
+  // note by the till, which is worse for security than one prompt. Leaving
+  // History re-locks it.
+  const [pastUnlocked, setPastUnlocked] = useState(false);
+  const [pendingPastDate, setPendingPastDate] = useState<string | null>(null);
+  // Re-lock the moment the view returns to today, by any route — the back
+  // button, the calendar's today cell, or deselecting the current day. The
+  // unlock is meant to carry someone THROUGH a review of past days, not to
+  // leave the past standing open on an unattended tablet afterwards. Combined
+  // with the unmount reset, the window in which it stays unlocked is exactly
+  // "a past day is on screen".
+  useEffect(() => {
+    if (selectedDate === null && pastUnlocked) setPastUnlocked(false);
+  }, [selectedDate, pastUnlocked]);
   const [editingEntry, setEditingEntry] = useState<CompletedEntry | null>(null);
   const today = getTodayDateStr();
   const todayAlreadySaved = state.dailyHistory.some((h) => h.date === today);
@@ -377,7 +397,18 @@ export default function HistoryScreen() {
   }
 
   function selectDate(dateStr: string) {
-    setSelectedDate(dateStr === selectedDate ? null : dateStr);
+    // Deselecting back to today is never gated — that is closing the past,
+    // not opening it.
+    if (dateStr === selectedDate) {
+      setSelectedDate(null);
+      setShowCalendar(false);
+      return;
+    }
+    if (dateStr < today && !pastUnlocked) {
+      setPendingPastDate(dateStr);
+      return;
+    }
+    setSelectedDate(dateStr);
     setShowCalendar(false);
   }
 
@@ -592,6 +623,18 @@ export default function HistoryScreen() {
           onCancel={() => setShowClearConfirm(false)}
         />
       )}
+
+      <PinVerifyModal
+        isOpen={pendingPastDate !== null}
+        title="Enter Admin PIN to view previous days"
+        onSuccess={() => {
+          setPastUnlocked(true);
+          setSelectedDate(pendingPastDate);
+          setPendingPastDate(null);
+          setShowCalendar(false);
+        }}
+        onCancel={() => setPendingPastDate(null)}
+      />
 
       <PinVerifyModal
         isOpen={showClearPin}
