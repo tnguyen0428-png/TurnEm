@@ -25,6 +25,7 @@ import ServicesScreen from '../services/ServicesScreen';
 import CriteriaScreen from '../criteria/CriteriaScreen';
 import CalendarScreen from '../calendar/CalendarScreen';
 import { useApp } from '../../state/AppContext';
+import { recordPinAttempt } from '../../lib/pinAudit';
 import type { Manicurist } from '../../types';
 
 type BlueprintSection =
@@ -325,14 +326,22 @@ function BlueprintPinGate({
     try {
       const adminPin = await fetchAdminPasscode();
       if (adminPin && pin === adminPin) {
+        // Entry on the MASTER pin is the one worth waking the owner for.
+        recordPinAttempt('blueprint:entry', 'master PIN', 'granted');
         onSuccess('admin');
         return;
       }
       const match = receptionists.find((r) => r.pinCode && r.pinCode === pin);
       if (match) {
+        // Unlike every other gate, this one accepts a receptionist's OWN pin,
+        // so the record can name who walked in — worth having. But this is
+        // routine daily traffic, so it is logged WITHOUT an owner push;
+        // alerting on it would bury the entries that actually matter.
+        recordPinAttempt('blueprint:entry', `receptionist: ${match.name}`, 'granted', false);
         onSuccess('receptionist');
         return;
       }
+      recordPinAttempt('blueprint:entry', undefined, 'denied');
       setError('Incorrect PIN');
       setPin('');
       setTimeout(() => pinRef.current?.focus(), 0);
