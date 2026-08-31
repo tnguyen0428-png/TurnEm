@@ -3295,6 +3295,11 @@ export async function cleanupDuplicateLinesForEntry(
     parentQueueId?: string | null;
   },
   manicurists: Array<{ id: string; name: string; color: string }>,
+  /** Other manicurists with live or completed work of their own on this visit.
+   *  A line naming one of them is that tech's real work — never a stale twin of
+   *  this entry's — so it is never deleted here. Omit and the function behaves
+   *  as it did before the exemption existed. */
+  otherWorkersOnVisit?: ReadonlySet<string>,
 ): Promise<number> {
   if (!entry.assignedManicuristId) return 0;
   if (!entry.services || entry.services.length !== 1) return 0; // multi-svc has legit `#svcN` siblings — skip
@@ -3329,7 +3334,38 @@ export async function cleanupDuplicateLinesForEntry(
     quantity: number;
     discount_cents: number;
   };
-  const items = (rows ?? []) as Row[];
+  const allRows = (rows ?? []) as Row[];
+
+  // Only rows for the service THIS ENTRY is doing are candidates. The `#N`
+  // suffix does not mean "duplicate" — it is also how updateOpenTicket
+  // disambiguates a NEW cashier line whose qid collides with one already on
+  // the ticket, and on a plain walk-in the entry id IS the bare visit id, so
+  // every "+ Add line" on that visit lands as `${visit}#1`, `#2`, `#3` and got
+  // swept up here as a duplicate of the original service. Seconds after each
+  // save, silently: the block and the queue card survived, the ticket line did
+  // not, and the customer was never charged (Test x PANDA/DANNY, 2026-08-31 —
+  // three added lines, all deleted). A split visit hid it, because its entry
+  // ids carry `-mani-N` and never matched the pattern.
+  //
+  // Name-matched, not qid-shaped: the duplicate this function exists to
+  // collapse is two rows for the SAME work (a cancel-then-reassign leaving the
+  // old staff's line beside the new one), which always share the service name
+  // — including the case where they differ by staff, which is the whole point
+  // of the keeper preference below.
+  //
+  // ...and never a line belonging to another tech who is genuinely working
+  // this visit. The name filter alone cannot tell DANNY's added Pedicure on a
+  // Pedicure walk-in from a stale twin — both are "same service, different
+  // staff, `#N` qid". Whether that tech has work of their own on the visit is
+  // what separates them, and it is the same backed-work test the appointment
+  // guards use.
+  const svcKey = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
+  const entryService = svcKey(entry.services[0]);
+  const items = allRows.filter(
+    (it) =>
+      svcKey(it.name) === entryService &&
+      !(it.staff1_id && otherWorkersOnVisit?.has(it.staff1_id)),
+  );
   if (items.length <= 1) return 0;
 
   const assignedM = manicurists.find((m) => m.id === entry.assignedManicuristId);

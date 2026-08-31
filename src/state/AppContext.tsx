@@ -2827,10 +2827,36 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // suffix from in-batch collision in appendItemsToTicket). This pass
   // collapses those duplicates to a single canonical line that matches the
   // entry's current assigned manicurist.
+  //
+  // Scoped by the staff actually working each visit: a line naming a tech who
+  // has their OWN entry on this visit is that tech's real work, never a stale
+  // twin of someone else's. Without it, a cashier "+ Add line" for a second
+  // tech that happens to name the SAME service as the walk-in's own — a second
+  // Pedicure by DANNY on a Pedicure walk-in — reads as a duplicate and is
+  // deleted (2026-08-31, ticket #9). Built once per visit root so add-children
+  // and split siblings all count.
+  const workersByVisit = new Map<string, Set<string>>();
+  for (const c of queue) {
+    if (!c.assignedManicuristId) continue;
+    const root = getVisitId(c.parentQueueId ?? c.id);
+    const set = workersByVisit.get(root) ?? new Set<string>();
+    set.add(c.assignedManicuristId);
+    workersByVisit.set(root, set);
+  }
+  for (const c of completed) {
+    if (!c.manicuristId || c.voided) continue;
+    const root = getVisitId(c.id);
+    const set = workersByVisit.get(root) ?? new Set<string>();
+    set.add(c.manicuristId);
+    workersByVisit.set(root, set);
+  }
   for (const entry of queue) {
     if (!entry.assignedManicuristId) continue;
     try {
-      const n = await cleanupDuplicateLinesForEntry(entry, manicurists);
+      const visitRoot = getVisitId(entry.parentQueueId ?? entry.id);
+      const others = new Set(workersByVisit.get(visitRoot) ?? []);
+      others.delete(entry.assignedManicuristId); // this entry's own staff still dedupes normally
+      const n = await cleanupDuplicateLinesForEntry(entry, manicurists, others);
       if (n > 0) {
         console.info(`[syncQueue] dedupe removed ${n} duplicate line(s) for entry ${entry.id}`);
       }
