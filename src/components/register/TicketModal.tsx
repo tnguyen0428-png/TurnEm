@@ -1194,11 +1194,46 @@ export default function TicketModal({
         const completedRow = qid ? state.completed.find((cs) => cs.id === qid) : null;
         const direct = queueEntry?.originalAppointment?.id ?? completedRow?.originalAppointmentId ?? null;
         if (direct) return direct;
+        // The ticket's own appointment_id is a real link, not a guess, and it
+        // survives the queue entry being completed away. Prefer it over any
+        // name matching.
+        if (ticket.appointmentId && state.appointments.some((a) => a.id === ticket.appointmentId)) {
+          return ticket.appointmentId;
+        }
+        // Last resort: match by client name. This USED to search every loaded
+        // appointment with no date bound and take the FIRST hit — which skews
+        // old, because the list is not ordered by relevance. So a rename at
+        // the register landed on a visit from MONTHS ago: Erica Anderson's
+        // 08-01 rename rewrote her 05-30 booking, Trish Blaauw's 07-24 rename
+        // rewrote her 06-29 one, and so on for 8 confirmed cases since June.
+        // Two kinds of damage from one write: today's book stayed stale AND a
+        // historical record was silently falsified, with no audit trail to
+        // recover the original from.
+        //
+        // Now bounded to THIS ticket's own business date, and — the important
+        // half — it refuses to guess when the day holds more than one
+        // candidate. A wrong write here is worse than no write: no write
+        // leaves today's book stale and visible, a wrong one corrupts a past
+        // day nobody will ever look at again.
         const tname = norm(ticket.clientName);
-        const hit = state.appointments.find(
-          (a) => norm(a.clientName) === tname && (a.services ?? []).some((s) => norm(s) === norm(orig.name)),
+        const sameDay = state.appointments.filter(
+          (a) =>
+            a.date === ticket.businessDate &&
+            norm(a.clientName) === tname &&
+            (a.services ?? []).some((s) => norm(s) === norm(orig.name)),
         );
-        return hit?.id ?? null;
+        if (sameDay.length !== 1) {
+          if (sameDay.length > 1) {
+            console.warn(
+              `[ticket] ${sameDay.length} appointments on ${ticket.businessDate} match ` +
+              `"${ticket.clientName}" / "${orig.name}" — refusing to guess which one this ` +
+              `edit belongs to. The booking is left alone; link the ticket to its appointment ` +
+              `to make this unambiguous.`,
+            );
+          }
+          return null;
+        }
+        return sameDay[0].id;
       };
 
       // Queue-side rename, accumulated per entry so several line edits on one
@@ -1229,6 +1264,9 @@ export default function TicketModal({
       // allowDroppingBackedServices opt-out on the dispatch below: a rename
       // legitimately drops the old name, a staff-only edit has no business
       // switching the guard off.
+      // `renamed` is really "this write retires a service name on purpose" —
+      // set by a rename OR by a removed line, both of which legitimately drop
+      // a name that the queue/completed rows may still be carrying.
       type Working = { services: Svc[]; serviceRequests: SvcReq[]; manicuristId: string | null; touched: boolean; renamed: boolean };
       const work = new Map<string, Working>();
       const getWork = (apptId: string): Working | null => {
@@ -1325,6 +1363,94 @@ export default function TicketModal({
         // Keep the appt's primary column in sync if it was the reassigned staff.
         if (staffChanged && l.staff1Id && w.manicuristId === orig.staff1Id) {
           w.manicuristId = l.staff1Id;
+        }
+      }
+
+      // ── Lines REMOVED from the ticket ────────────────────────────────────
+      //
+      // The loop above only ever sees a line that SURVIVED the edit: it diffs
+      // each remaining line against what that same line said when the modal
+      // opened. Change a service by deleting the row and adding a new one —
+      // which looks identical to the person doing it — and there is no
+      // surviving line to diff. The removal half was invisible here, and the
+      // added half is invisible below, so the booking was never told anything
+      // and kept showing the service that was originally booked.
+      //
+      // Measured over 90 days: ~49 bookings left advertising a service that
+      // was never billed while the ticket billed something the booking never
+      // learned about. That is the quiet, common half of this bug — quieter
+      // than the duplicate slot because nothing looks broken, there is just
+      // one block and it is wrong.
+      //
+      // The other cleanup for a removed line (its completed_services row) runs
+      // earlier in doSave and writes straight to the DB; this is the booking
+      // half, which nothing did.
+      for (const rem of removedServiceLines) {
+        const service = (rem.service ?? '').trim();
+        if (!service) continue;
+        const apptId = resolveApptId({ queueEntryId: rem.queueEntryId, name: service });
+        if (!apptId) continue;
+        const w = getWork(apptId);
+        if (!w) continue;
+        const si = w.services.findIndex((sv) => sv === service);
+        if (si >= 0) {
+          w.services.splice(si, 1);
+          w.touched = true;
+          // A removal retires the name on purpose, exactly like a rename: the
+          // queue entry or completed row may still carry it, and the
+          // backed-work guard would otherwise put it straight back.
+          w.renamed = true;
+        }
+        // Drop the slot that represented it. Matched on staff first so a
+        // multi-tech booking loses the right one; the fallback skips a
+        // customer-requested slot, which must never be the one silently
+        // removed on a name match alone.
+        let ri = w.serviceRequests.findIndex(
+          (r) => r.service === service && (rem.staffId ? (r.manicuristIds ?? []).includes(rem.staffId) : true),
+        );
+        if (ri < 0) ri = w.serviceRequests.findIndex((r) => r.service === service && r.clientRequest !== true);
+        if (ri >= 0) {
+          w.serviceRequests.splice(ri, 1);
+          w.touched = true;
+        }
+      }
+
+      // ── Lines ADDED to the ticket ────────────────────────────────────────
+      //
+      // The other half of delete-and-add, and also a plain add-on rung up at
+      // the chair. A brand-new line has no `existingId`, so the diff loop
+      // skips it entirely. Resolved through the ticket's own appointment_id —
+      // a real link rather than a name guess — so this can only ever touch the
+      // booking this ticket is actually for.
+      const addedLineApptId =
+        ticket.appointmentId && state.appointments.some((a) => a.id === ticket.appointmentId)
+          ? ticket.appointmentId
+          : null;
+      if (addedLineApptId) {
+        for (const l of lines) {
+          if (l.kind !== 'service' || l.existingId) continue;
+          const name = (l.name ?? '').trim();
+          if (!name || !l.staff1Id) continue;
+          const w = getWork(addedLineApptId);
+          if (!w) continue;
+          // Count-aware: only add what the booking does not already cover for
+          // this tech. A second identical service for the SAME tech is a real
+          // second slot here (the salon does that), so identity of the slot,
+          // not just the name, decides.
+          const coveredForStaff = w.serviceRequests.filter(
+            (r) => r.service === name && (r.manicuristIds ?? []).includes(l.staff1Id as string),
+          ).length;
+          const wantedForStaff = lines.filter(
+            (x) => x.kind === 'service' && (x.name ?? '').trim() === name && x.staff1Id === l.staff1Id,
+          ).length;
+          if (coveredForStaff >= wantedForStaff) continue;
+          w.services.push(name as Svc);
+          w.serviceRequests.push({
+            service: name as Svc,
+            manicuristIds: [l.staff1Id],
+            clientRequest: false,
+          } as SvcReq);
+          w.touched = true;
         }
       }
 
