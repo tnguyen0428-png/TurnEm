@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar, History, Receipt, GripHorizontal } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Trash2, Printer, Calendar, History, Receipt, GripHorizontal, Pencil } from 'lucide-react';
 import Modal from '../shared/Modal';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import CustomerNoteAlert from '../shared/CustomerNoteAlert';
@@ -11,7 +11,7 @@ import { formatMoneyCents } from '../../lib/tickets';
 import {
   upsertCustomerFromIntake, toTitleCase, formatPhoneDashed,
   searchCustomers, displayCustomerName, normalizePhone, matchAppointments,
-  appointmentStaffLabel,
+  appointmentStaffLabel, updateCustomer,
 } from '../../lib/customers';
 import type { Customer } from '../../types';
 import { SERVICE_CATEGORIES } from '../../constants/services';
@@ -1486,6 +1486,15 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
             }
             onClear={() => { setMatchedCustomer(null); }}
             onDelete={(apptId) => { setPendingDeleteApptId(apptId); }}
+            onSaved={(next) => {
+              // Reflect the correction straight back into the booking form so
+              // the appointment about to be written carries the fixed details
+              // rather than the stale ones the receptionist just corrected.
+              setMatchedCustomer(next);
+              setClientFirstName(next.firstName ?? '');
+              setClientLastName(next.lastName ?? '');
+              setClientPhone(next.phone ?? '');
+            }}
           />
         ) : matches.length > 0 && mode !== 'edit' ? (
           <div className="rounded-xl border border-pink-200 bg-pink-50/40 p-3">
@@ -2051,14 +2060,69 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 // ── Matched-customer banner ──────────────────────────────────────────────────
 
 function MatchedCustomerBanner({
-  customer, openAppointments, manicuristNameById, onClear, onDelete,
+  customer, openAppointments, manicuristNameById, onClear, onDelete, onSaved,
 }: {
   customer: Customer;
   openAppointments: import('../../types').Appointment[];
   manicuristNameById: Map<string, string>;
   onClear: () => void;
   onDelete: (apptId: string) => void;
+  onSaved: (next: Customer) => void;
 }) {
+  // ── Customer profile editing ─────────────────────────────────────────────
+  //
+  // Blueprint is owner-only as of 2026-08-31, and Customer Profiles lived
+  // there — so the front desk lost the ability to fix a customer's details.
+  // They keep needing to: a mistyped number, a new email, a note about the
+  // client. This puts that back exactly where they already are when they
+  // notice, which is the booking card with the profile in front of them,
+  // rather than behind a screen they can no longer open.
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState('');
+  const [draft, setDraft] = useState({
+    firstName: '', lastName: '', phone: '', email: '', notes: '', popupNote: '',
+  });
+
+  function startEdit() {
+    setDraft({
+      firstName: customer.firstName ?? '',
+      lastName: customer.lastName ?? '',
+      phone: customer.phone ?? '',
+      email: customer.email ?? '',
+      notes: customer.notes ?? '',
+      popupNote: customer.popupNote ?? '',
+    });
+    setSaveErr('');
+    setEditing(true);
+  }
+
+  async function saveEdit() {
+    if (!draft.firstName.trim() || !draft.lastName.trim()) {
+      setSaveErr('First and last name are required.');
+      return;
+    }
+    setSaving(true);
+    setSaveErr('');
+    const next = await updateCustomer(customer.id, {
+      firstName: draft.firstName,
+      lastName: draft.lastName,
+      phone: draft.phone,
+      email: draft.email,
+      notes: draft.notes,
+      popupNote: draft.popupNote,
+    });
+    setSaving(false);
+    if (!next) {
+      // Never silently swallow it: the receptionist would carry on believing
+      // the correction saved. Same lesson as the permanent-note write above.
+      setSaveErr('Could not save — check connection and try again.');
+      return;
+    }
+    onSaved(next);
+    setEditing(false);
+  }
+
   // ── Previous-services history ────────────────────────────────────────────
   // Lazy-loaded the first time the receptionist opens it. Tickets carry no
   // phone (always blank) and the salon disambiguates same-name clients with a
@@ -2270,9 +2334,9 @@ ${rows
               onClick={toggleHistory}
               title="View this client's previous services"
               aria-label="View previous services"
-              className={`flex items-center justify-center w-7 h-7 rounded-md transition-colors ${showHistory ? 'text-emerald-900 bg-emerald-100' : 'text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100'}`}
+              className={`flex items-center justify-center w-9 h-9 rounded-md transition-colors ${showHistory ? 'text-emerald-900 bg-emerald-100' : 'text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100'}`}
             >
-              <History size={14} />
+              <History size={18} />
             </button>
             <button
               type="button"
@@ -2280,13 +2344,92 @@ ${rows
               disabled={openAppointments.length === 0}
               title={openAppointments.length === 0 ? 'No upcoming appointments to print' : 'Print upcoming appointments'}
               aria-label="Print upcoming appointments"
-              className="flex items-center justify-center w-7 h-7 rounded-md text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 disabled:text-gray-300 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+              className="flex items-center justify-center w-9 h-9 rounded-md text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 disabled:text-gray-300 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
             >
-              <Printer size={14} />
+              <Printer size={18} />
+            </button>
+            {/* Edit the customer's own record — sized to match its neighbours. */}
+            <button
+              type="button"
+              onClick={() => (editing ? setEditing(false) : startEdit())}
+              title="Edit this customer's info"
+              aria-label="Edit customer info"
+              className={`flex items-center justify-center w-9 h-9 rounded-md transition-colors ${editing ? 'text-emerald-900 bg-emerald-100' : 'text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100'}`}
+            >
+              <Pencil size={18} />
             </button>
           </div>
         </div>
       </div>
+      {editing && (
+        <div className="rounded-lg bg-white border border-emerald-200 p-3 flex flex-col gap-2">
+          <p className="font-mono text-[10px] tracking-wider font-bold text-emerald-700 uppercase">
+            Edit customer info
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              value={draft.firstName}
+              onChange={(e) => setDraft((d) => ({ ...d, firstName: e.target.value }))}
+              placeholder="First name"
+              className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm"
+            />
+            <input
+              value={draft.lastName}
+              onChange={(e) => setDraft((d) => ({ ...d, lastName: e.target.value }))}
+              placeholder="Last name"
+              className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm"
+            />
+            <input
+              value={draft.phone}
+              onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
+              placeholder="Phone"
+              inputMode="tel"
+              className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm"
+            />
+            <input
+              value={draft.email}
+              onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))}
+              placeholder="Email"
+              inputMode="email"
+              className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm"
+            />
+          </div>
+          <textarea
+            value={draft.notes}
+            onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+            placeholder="Permanent note — shown every time this client is matched"
+            rows={2}
+            className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm resize-none"
+          />
+          <textarea
+            value={draft.popupNote}
+            onChange={(e) => setDraft((d) => ({ ...d, popupNote: e.target.value }))}
+            placeholder="Popup note"
+            rows={2}
+            className="px-2 py-1.5 rounded-md border border-gray-200 font-mono text-sm resize-none"
+          />
+          {saveErr && (
+            <p className="font-mono text-xs text-red-600">{saveErr}</p>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="px-3 py-1.5 rounded-md font-mono text-xs font-bold tracking-wider text-gray-500 hover:text-gray-800 uppercase"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => { void saveEdit(); }}
+              disabled={saving}
+              className="px-4 py-1.5 rounded-md bg-emerald-600 text-white font-mono text-xs font-bold tracking-wider uppercase hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
       {openAppointments.length > 0 && (
         <div className="rounded-lg bg-white border border-emerald-100 overflow-hidden">
           <div className="grid grid-cols-[100px_70px_1fr_1fr_28px] gap-2 px-3 py-1.5 bg-emerald-50/60 border-b border-emerald-100 font-mono text-[10px] tracking-wider font-semibold text-emerald-700 uppercase">
