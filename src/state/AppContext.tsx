@@ -2398,11 +2398,54 @@ function queueEntryToRow(c: QueueEntry) {
  * null/undefined to a real id, push that staff into the matching open
  * ticket. Conservative: only fills empty ticket fields.
  */
+/**
+ * Manicurists with real work of their own on each visit root — a live assigned
+ * queue entry (add-children and split siblings included) or a non-voided
+ * completed row.
+ *
+ * Both ticket-line sweeps take this so they never rewrite or delete a line
+ * belonging to a DIFFERENT tech on the same visit. They select lines with
+ * `queue_entry_id.eq.<entry> OR like <entry>#%`, and on a plain walk-in the
+ * entry id is the bare visit id — which is exactly the qid updateOpenTicket
+ * suffixes `#1`, `#2` onto for cashier-added lines. Without this scope the
+ * sweeps eat every "+ Add line" on a walk-in seconds after it is saved.
+ */
+function workersByVisitRoot(
+  queue: AppState['queue'],
+  completed: AppState['completed'],
+): Map<string, Set<string>> {
+  const byVisit = new Map<string, Set<string>>();
+  const add = (root: string, staffId: string) => {
+    const set = byVisit.get(root) ?? new Set<string>();
+    set.add(staffId);
+    byVisit.set(root, set);
+  };
+  for (const c of queue) {
+    if (c.assignedManicuristId) add(getVisitId(c.parentQueueId ?? c.id), c.assignedManicuristId);
+  }
+  for (const c of completed) {
+    if (c.manicuristId && !c.voided) add(getVisitId(c.id), c.manicuristId);
+  }
+  return byVisit;
+}
+
+/** The set for one entry, excluding the entry's own staff — that one still
+ *  dedupes/re-points normally. */
+function otherWorkersFor(
+  entry: { id: string; parentQueueId?: string | null; assignedManicuristId: string | null },
+  byVisit: Map<string, Set<string>>,
+): Set<string> {
+  const others = new Set(byVisit.get(getVisitId(entry.parentQueueId ?? entry.id)) ?? []);
+  if (entry.assignedManicuristId) others.delete(entry.assignedManicuristId);
+  return others;
+}
+
 async function maybeBackfillTicketsForAssignedEntries(
   queue: QueueEntry[],
   prevById: Map<string, QueueEntry>,
   manicurists: AppState['manicurists'],
   salonServices: AppState['salonServices'],
+  workersByVisit: Map<string, Set<string>>,
 ) {
   for (const c of queue) {
     const previous = prevById.get(c.id);
@@ -2438,7 +2481,7 @@ async function maybeBackfillTicketsForAssignedEntries(
     if (!c.parentQueueId) continue;
     if ((siblingCountByVisit.get(c.parentQueueId) ?? 0) < 2) continue;
     try {
-      await syncEntryToTicket(c, manicurists, salonServices);
+      await syncEntryToTicket(c, manicurists, salonServices, otherWorkersFor(c, workersByVisit));
     } catch (err) {
       console.warn('[syncQueue] sibling reconcile failed for', c.id, err);
     }
@@ -2504,7 +2547,11 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // For existing entries whose assignedManicuristId just transitioned from
   // null to a real id, patch the corresponding ticket's staff so checkout
   // shows the right manicurist even before the service is completed.
-  await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists, salonServices);
+  // Who is really working each visit — see workersByVisitRoot. Built once and
+  // shared by every ticket-line sweep in this pass so they all agree.
+  const workersByVisit = workersByVisitRoot(queue, completed);
+
+  await maybeBackfillTicketsForAssignedEntries(queue, prevById, manicurists, salonServices, workersByVisit);
 
   // Auto-create a Register ticket the moment a manicurist gets assigned.
   // Triggered by:
@@ -2676,7 +2723,9 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
     const previous = prevById.get(entry.id);
     if (!previous) continue;                              // new entry → justAssigned handled it
     try {
-      const did = await syncEntryToTicket(entry, manicurists, salonServices);
+      const did = await syncEntryToTicket(
+        entry, manicurists, salonServices, otherWorkersFor(entry, workersByVisit),
+      );
       if (did) {
         console.info('[syncQueue] reconciled ticket for', entry.id, {
           services: entry.services,
@@ -2828,35 +2877,16 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
   // collapses those duplicates to a single canonical line that matches the
   // entry's current assigned manicurist.
   //
-  // Scoped by the staff actually working each visit: a line naming a tech who
-  // has their OWN entry on this visit is that tech's real work, never a stale
-  // twin of someone else's. Without it, a cashier "+ Add line" for a second
-  // tech that happens to name the SAME service as the walk-in's own — a second
-  // Pedicure by DANNY on a Pedicure walk-in — reads as a duplicate and is
-  // deleted (2026-08-31, ticket #9). Built once per visit root so add-children
-  // and split siblings all count.
-  const workersByVisit = new Map<string, Set<string>>();
-  for (const c of queue) {
-    if (!c.assignedManicuristId) continue;
-    const root = getVisitId(c.parentQueueId ?? c.id);
-    const set = workersByVisit.get(root) ?? new Set<string>();
-    set.add(c.assignedManicuristId);
-    workersByVisit.set(root, set);
-  }
-  for (const c of completed) {
-    if (!c.manicuristId || c.voided) continue;
-    const root = getVisitId(c.id);
-    const set = workersByVisit.get(root) ?? new Set<string>();
-    set.add(c.manicuristId);
-    workersByVisit.set(root, set);
-  }
+  // Scoped by the staff actually working each visit — see workersByVisitRoot.
+  // Without it, a cashier "+ Add line" for a second tech that happens to name
+  // the SAME service as the walk-in's own — a second Pedicure by DANNY on a
+  // Pedicure walk-in — reads as a duplicate and is deleted (2026-08-31, #9).
   for (const entry of queue) {
     if (!entry.assignedManicuristId) continue;
     try {
-      const visitRoot = getVisitId(entry.parentQueueId ?? entry.id);
-      const others = new Set(workersByVisit.get(visitRoot) ?? []);
-      others.delete(entry.assignedManicuristId); // this entry's own staff still dedupes normally
-      const n = await cleanupDuplicateLinesForEntry(entry, manicurists, others);
+      const n = await cleanupDuplicateLinesForEntry(
+        entry, manicurists, otherWorkersFor(entry, workersByVisit),
+      );
       if (n > 0) {
         console.info(`[syncQueue] dedupe removed ${n} duplicate line(s) for entry ${entry.id}`);
       }

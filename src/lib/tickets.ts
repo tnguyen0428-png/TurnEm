@@ -1786,6 +1786,10 @@ export async function syncEntryToTicket(
   },
   manicurists: Array<{ id: string; name: string; color: string }>,
   salonServices: Array<{ id: string; name: string; price: number }>,
+  /** Other manicurists with live or completed work of their own on this visit.
+   *  Their ticket lines are not this entry's to rewrite or delete — see the
+   *  filter on `existing` below. Omit and the behaviour is unchanged. */
+  otherWorkersOnVisit?: ReadonlySet<string>,
 ): Promise<boolean> {
   // Skip cashier-created add-children. TicketModal owns their lifecycle —
   // without this guard, the broad syncEntryToTicket pass in
@@ -1854,7 +1858,31 @@ export async function syncEntryToTicket(
     console.warn('[tickets] syncEntryToTicket items fetch:', iErr.message);
     return false;
   }
-  const existing = (itemRows ?? []) as ItemRow[];
+  //
+  // ...and never another tech's line. The `#N` suffix is OVERLOADED: this
+  // function mints `#svcN` for its own extra service slots, but
+  // updateOpenTicket ALSO mints `#N` to disambiguate a new cashier line whose
+  // qid collides with one already on the ticket. On a plain walk-in the entry
+  // id IS the bare visit id, so every "+ Add line" on that visit lands as
+  // `${visit}#1`, `#2` and is pulled in here as if it were this entry's own
+  // slot — then fails to match `desired` (built from entry.services alone) and
+  // is DELETED, ~300ms after the cashier saved it. Ticket #14, 2026-08-31:
+  // POST 201 at 17:31:38.375, DELETE 204 at 17:31:38.700, no error shown, the
+  // customer simply never charged. The greedy "any unused row" match below is
+  // the same hazard in the other direction — it would re-label another tech's
+  // line as this entry's service.
+  //
+  // A split visit hides both, because its entry ids carry `-mani-N` and never
+  // match `${visit}#%`.
+  //
+  // Scoped by real work, matching cleanupDuplicateLinesForEntry: a line naming
+  // a tech who has their OWN live entry or non-voided completed row on this
+  // visit is that tech's, not this entry's. A tech this entry was reassigned
+  // AWAY from is not in that set, so a genuine cancel-then-reassign still
+  // re-points and cleans up exactly as before.
+  const existing = ((itemRows ?? []) as ItemRow[]).filter(
+    (r) => !(r.staff1_id && otherWorkersOnVisit?.has(r.staff1_id)),
+  );
 
   // Resolve the entry's assigned manicurist (used as the per-line staff
   // when no per-service request override exists).
