@@ -1704,6 +1704,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // a safety net, it is idempotent, and it re-runs on this device's next
     // local change. Losing a spurious write is worth more than winning a race.
     if (lastCommitWasRemoteRef.current) return;
+    // The staff portal is read-only: its flush returns early, so anything this
+    // pass dispatches can never reach the database. Running it there only
+    // drifts the phone's local copy away from the real book -- and with the
+    // portal no longer loading appointments at all, the "appointment is
+    // missing" branch below would try to re-synthesise blocks from queue
+    // entries for a table it deliberately does not hold.
+    if (isStaffMode) return;
     // Group in-progress queue entries by their originalAppointment.id.
     const byApptId = new Map<string, typeof state.queue>();
     for (const q of state.queue) {

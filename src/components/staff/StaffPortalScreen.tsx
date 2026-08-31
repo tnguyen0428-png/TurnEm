@@ -330,7 +330,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           { data: queueRows, error: queueErr },
           { data: completedRows },
           { data: serviceRows },
-          { data: appointmentRows },
         ] = await Promise.all([
           // Paginate so PostgREST's 1000-row default Range cap can't silently
           // truncate any table — same fix that prevented appointments from
@@ -339,7 +338,12 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
           fetchAllRows(() => supabase.from('queue_entries').select('*')),
           fetchAllRows(() => supabase.from('completed_services').select('*')),
           fetchAllRows(() => supabase.from('salon_services').select('*').order('sort_order')),
-          fetchAllRows(() => supabase.from('appointments').select('*')),
+          // NOT appointments. The portal pulled all of them -- 9,003 rows in
+          // nine paged requests -- into state that no staff component ever
+          // reads: the only appointment UI here, DailySchedulePanel, queries
+          // the privacy-safe manicurist_daily_schedule view for one tech and
+          // one day instead. The schedule panel keeps its own subscription;
+          // this bulk copy was pure waste.
         ]);
         if (cancelled) return;
         if (staffErr || queueErr) {
@@ -413,28 +417,6 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 sortOrder: Number(r.sort_order) || 0,
                 isFourthPositionSpecial: !!r.is_fourth_position_special,
               })),
-              // Appointments — feeds today's schedule (DailySchedulePanel) and
-              // any other appointment-aware UI. Replaces stale data if the
-              // realtime channel happened to drop a message.
-              appointments: (appointmentRows || []).map((r: any) => ({
-                id: r.id,
-                clientName: r.client_name || '',
-                clientPhone: r.client_phone || '',
-                service: r.service || '',
-                services: r.services || (r.service ? [r.service] : []),
-                serviceRequests: r.service_requests || [],
-                manicuristId: r.manicurist_id || null,
-                date: r.date,
-                time: r.time,
-                notes: r.notes || '',
-                status: r.status || 'scheduled',
-                createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-                sameTime: !!r.same_time,
-                partyId: r.party_id || null,
-                bookedByReceptionistId: r.booked_by_receptionist_id || null,
-                lastEditedByReceptionistId: r.last_edited_by_receptionist_id || null,
-                lastEditedAt: r.last_edited_at ? new Date(r.last_edited_at).getTime() : null,
-              })),
             },
           });
         }
@@ -457,7 +439,14 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
       .on('postgres_changes', { event: '*', schema: 'public', table: 'queue_entries' },      () => { void refresh(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'completed_services' }, () => { void refresh(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'salon_services' },     () => { void refresh(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' },       () => { void refresh(); })
+      // Deliberately NOT subscribed to `appointments`. This line was the
+      // amplifier behind the phones' load: refresh() re-reads five whole
+      // tables, so every appointment change anywhere in the salon made every
+      // staff phone re-download everything. Measured 2026-08-30: iPhones
+      // issued 8,994 GETs of /rest/v1/appointments in 24 hours -- roughly a
+      // thousand full downloads of the entire booking history -- for data no
+      // screen here displays. DailySchedulePanel still watches this table
+      // itself and refetches only its own one-tech, one-day view.
       .subscribe((status) => {
         channelHealthy = status === 'SUBSCRIBED';
         if (channelHealthy) void refresh();
