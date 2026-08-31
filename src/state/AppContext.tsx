@@ -580,6 +580,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // → flag=true → sync effect skips so A doesn't re-upsert its own change. Same logic
   // prevents Device B from writing back a row it just received from the subscription.
   const isApplyingRemoteRef = useRef(false);
+  // Did the commit we are currently reacting to come from a realtime echo
+  // rather than something this device's user did? The DB-flush effect below
+  // snapshots-and-clears isApplyingRemoteRef, and it runs BEFORE the
+  // queue->book repair effect (effects fire in declaration order), so the
+  // repair effect cannot read that flag directly — it would always see false.
+  // This ref carries the answer across.
+  const lastCommitWasRemoteRef = useRef(false);
 
   // Tombstone map: when we delete an appt locally, we remember its id for ~10 seconds.
   // The race we're protecting against: a stale UPDATE event for that appt may already be
@@ -1459,6 +1466,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Snapshot-and-clear the remote flag up front so every early-return path clears it too.
     const wasRemote = isApplyingRemoteRef.current;
     isApplyingRemoteRef.current = false;
+    // Hand it to the queue->book repair effect further down; see the ref's note.
+    lastCommitWasRemoteRef.current = wasRemote;
     const prev = prevStateRef.current;
 
     // CRITICAL: detect local appointment deletions BEFORE any early-return on wasRemote.
@@ -1668,6 +1677,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // (audit 2026-05-31 Bug A v3)
   useEffect(() => {
     if (!state.loaded) return;
+    // ── Only the device whose own user caused the change repairs the book ──
+    //
+    // This effect rewrites appointments. It used to run on EVERY device on
+    // EVERY state change, including the realtime echoes of other devices'
+    // writes — so a single service change had four tablets independently
+    // deciding the booking needed repairing and racing to write their own
+    // version of it.
+    //
+    // Measured, not theorised (Karen x SAM, 2026-08-30 18:45:08-18:45:10):
+    // four clients across two networks issued 28 writes to `appointments` in
+    // two minutes, interleaved on that one row — read slots, write slots,
+    // read, write. Each held a slightly different view of the queue at that
+    // instant; last write won; the one still holding the pre-rename queue
+    // entry put the retired service back on the book. The duplicate slot was
+    // the visible result.
+    //
+    // A device reacting to an echo has nothing to contribute: the device that
+    // made the change is already writing the correct value, and this one is
+    // guaranteed to be working from a staler picture. So it stays out of it.
+    // That turns four writers into one and removes the race at its source
+    // rather than trying to make four racing writers agree.
+    //
+    // The cost is that a repair genuinely needed on a remote-caused commit is
+    // deferred rather than done immediately. That is acceptable: this pass is
+    // a safety net, it is idempotent, and it re-runs on this device's next
+    // local change. Losing a spurious write is worth more than winning a race.
+    if (lastCommitWasRemoteRef.current) return;
     // Group in-progress queue entries by their originalAppointment.id.
     const byApptId = new Map<string, typeof state.queue>();
     for (const q of state.queue) {
