@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { subscribeToClock, getClockNow } from './sharedClock';
+import { getAlmostDoneWindowMs } from '../utils/time';
 
 interface CountdownResult {
   remainingMs: number | null;
@@ -18,7 +19,9 @@ export function useCountdown(startedAt: number | null, totalDurationMs: number):
 
   const remainingMs = startedAt + totalDurationMs - now;
   const isFinishingUp = remainingMs <= 0;
-  const isAlmostDone = !isFinishingUp && remainingMs <= 10 * 60 * 1000;
+  // Measured against the shared clock rather than Date.now(), so the window
+  // widens the moment that clock ticks past the cutoff — no stale render.
+  const isAlmostDone = !isFinishingUp && remainingMs <= getAlmostDoneWindowMs(now);
 
   let display: string;
   if (isFinishingUp) {

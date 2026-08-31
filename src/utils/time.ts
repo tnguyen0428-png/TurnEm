@@ -3,16 +3,43 @@
 // e.g. clicking "Check In" on an unprocessed 8 AM appointment at 1 PM,
 // which silently attaches a same-named client's later, unrelated visit
 // onto that stale record instead of a fresh one (Lisa Kiel, 2026-08-06).
-export function getNowMinutesLA(): number {
+export function getNowMinutesLA(at: number = Date.now()): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Los_Angeles',
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(new Date(at));
   const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
   const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
-  return h * 60 + m;
+  // Intl can render midnight as "24" in some locales/runtimes; fold it to 0 so
+  // the small hours don't read as the end of the day.
+  return (h % 24) * 60 + m;
+}
+
+// ── "Almost done" window ───────────────────────────────────────────────────
+//
+// How close to finishing a busy tech must be to count as almost-done. It is
+// wider late in the day (Tony 2026-08-31): at the end of a shift you want the
+// next client lined up rather than left waiting for someone to actually free
+// up.
+//
+// CHANGE THE CUTOFF OR THE WINDOWS HERE — these three constants are the whole
+// rule, and both places that care read them.
+//
+// This is not only cosmetic. The same window decides who appears in the assign
+// list: a busy tech inside it is offered alongside genuinely available ones. So
+// after the cutoff, late walk-ins start being routed to techs who are still
+// working five minutes sooner than they were before.
+export const ALMOST_DONE_CUTOFF_HOUR_LA = 16;                 // 4 PM LA
+export const ALMOST_DONE_WINDOW_MS = 10 * 60 * 1000;          // before the cutoff
+export const ALMOST_DONE_WINDOW_LATE_MS = 15 * 60 * 1000;     // at or after it
+
+/** The almost-done window in force at `at` (defaults to now), LA time. */
+export function getAlmostDoneWindowMs(at: number = Date.now()): number {
+  return getNowMinutesLA(at) >= ALMOST_DONE_CUTOFF_HOUR_LA * 60
+    ? ALMOST_DONE_WINDOW_LATE_MS
+    : ALMOST_DONE_WINDOW_MS;
 }
 
 export function getTodayLA(): string {

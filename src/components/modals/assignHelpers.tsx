@@ -1,7 +1,7 @@
 import { CheckCircle } from 'lucide-react';
 import { isWaxService, waxRotationCompare, WAX } from '../../utils/salonRules';
 import type { QueueEntry, SalonService, ServiceType, Manicurist, Appointment, CompletedEntry } from '../../types';
-import { getTodayLA } from '../../utils/time';
+import { getTodayLA, getAlmostDoneWindowMs } from '../../utils/time';
 import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../../lib/manicuristStatus';
 
 export function ServiceHistory({ m }: { m: Manicurist }) {
@@ -137,7 +137,7 @@ export function getAlmostDoneMs(manicurist: Manicurist, queue: QueueEntry[], sal
   const durationMs = getClientDurationMs(manicurist, queue, salonServices);
   const elapsed = Date.now() - client.startedAt;
   const remaining = durationMs - elapsed;
-  if (remaining <= 10 * 60 * 1000) return Math.max(0, remaining);
+  if (remaining <= getAlmostDoneWindowMs()) return Math.max(0, remaining);
   return null;
 }
 
