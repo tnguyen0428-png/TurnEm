@@ -29,6 +29,12 @@ interface AppContextType {
   // legacy reads in assignHelpers.getDistinctServices keep working. Both args optional —
   // pass only the dimension you changed (categoryPriority OR servicePriority).
   setPriority: (next: { categoryPriority?: string[]; servicePriority?: Record<string, string[]> }) => Promise<void>;
+  /** Pull appointments older than the startup window into state, back to
+   *  `fromDate` (YYYY-MM-DD). Screens that need history — customer visit
+   *  history, the cancellation report, the book navigated to an older day —
+   *  call this before reading state.appointments. Idempotent and cheap once
+   *  the range is already loaded; see APPT_WINDOW_DAYS_BACK. */
+  ensureAppointmentsFrom: (fromDate: string) => Promise<void>;
 }
 
 // localStorage keys mirrored from utils/priorityStorage. Duplicated here so the
@@ -53,6 +59,31 @@ function readLocalSvcPriority(): Record<string, string[]> | null {
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
   } catch { return null; }
+}
+
+// ── Appointment load window ────────────────────────────────────────────────
+//
+// The tablets used to load EVERY appointment on boot: 9,039 rows as of
+// 2026-08-31, of which 92% were more than a week old, growing ~2,250 a month.
+// Nothing on the floor reads them — the book shows a day at a time, the queue
+// and register work off today — so the startup load now covers a week back
+// and everything forward (bookings run 4+ months out, so a forward bound
+// would hide real appointments), and anything older is fetched on demand.
+//
+// A WINDOW MUST NEVER SHRINK WHAT IS ALREADY IN STATE. The sync layer decides
+// what to DELETE from the database by noticing which appointments vanished
+// from memory, and a wholesale replace of that array is what "silently
+// destroyed live appointments while their staff were still mid-service" on
+// 2026-05-27 and 05-28 (see the deletion-detection comment below). So every
+// path here only ever ADDS: the startup LOAD_STATE, then REMOTE_APPOINTMENT_
+// UPSERT for anything backfilled. Nothing removes a row because it fell out
+// of a window, and the earliest-loaded marker only ever moves backwards.
+const APPT_WINDOW_DAYS_BACK = 7;
+
+function apptWindowStart(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - APPT_WINDOW_DAYS_BACK);
+  return getLocalDateStr(d);
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -682,7 +713,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // 1000 rows once the table grows past that, leaving the tab stale.
       // (Upsert reducer means no rows get dropped from state, but new edits to
       // truncated-off appointments would never land.)
-      const { data, error } = await withRetry(() => fetchAllRows(() => supabase.from('appointments').select('*')));
+      // Windowed like the startup load. This path dispatches per-row UPSERTs
+      // and never replaces the array, so narrowing it cannot drop anything
+      // already in state — backfilled history simply isn't re-refreshed, which
+      // is fine: it is history.
+      const { data, error } = await withRetry(() => fetchAllRows(() => supabase.from('appointments').select('*').gte('date', apptWindowStart())));
       if (error) {
         setSyncErrorTracked('Sync failed — could not refresh appointments after focus. Check connection.');
         return;
@@ -739,7 +774,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       fetchAllRows(() => supabase.from('manicurists').select('*').order('sort_order', { ascending: true })),
       fetchAllRows(() => supabase.from('queue_entries').select('*')),
       fetchAllRows(() => supabase.from('completed_services').select('*')),
-      fetchAllRows(() => supabase.from('appointments').select('*')),
+      // Windowed — see APPT_WINDOW_DAYS_BACK. Older days arrive via
+      // ensureAppointmentsFrom when a screen actually needs them.
+      fetchAllRows(() => supabase.from('appointments').select('*').gte('date', apptWindowStart())),
       fetchAllRows(() => supabase.from('salon_services').select('*').order('sort_order')),
       fetchAllRows(() => supabase.from('turn_criteria').select('*')),
       fetchAllRows(() => supabase.from('calendar_days').select('*')),
@@ -2093,9 +2130,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // change anything (e.g. parent re-render with same props) don't cascade
   // into all 30+ useApp() consumers. When state/syncError/saveStatus do change,
   // useMemo returns a fresh object and consumers correctly re-render.
+  // How far back state.appointments currently reaches. Only ever moves
+  // backwards — see the APPT_WINDOW_DAYS_BACK note. Seeded to the startup
+  // window; a backfill that reaches further sets it earlier.
+  const earliestLoadedApptDateRef = useRef<string>(apptWindowStart());
+  const apptBackfillInFlightRef = useRef<Promise<void> | null>(null);
+
+  const ensureAppointmentsFrom = useCallback(async (fromDate: string) => {
+    if (!fromDate || fromDate >= earliestLoadedApptDateRef.current) return;
+    // Serialise: two screens mounting at once must not both fetch the same
+    // range. Whoever is second waits on the first, then re-checks.
+    if (apptBackfillInFlightRef.current) {
+      await apptBackfillInFlightRef.current;
+      if (fromDate >= earliestLoadedApptDateRef.current) return;
+    }
+    const target = earliestLoadedApptDateRef.current;
+    const run = (async () => {
+      const { data, error } = await withRetry(() =>
+        fetchAllRows(() =>
+          supabase.from('appointments').select('*').gte('date', fromDate).lt('date', target),
+        ),
+      );
+      if (error) {
+        setSyncErrorTracked('Could not load older appointments. Check connection.');
+        return;
+      }
+      // UPSERT per row, never LOAD_STATE: this must only ever ADD. Replacing
+      // the array is the trapdoor that deleted live appointments in May.
+      for (const row of data ?? []) {
+        dispatch({ type: 'REMOTE_APPOINTMENT_UPSERT', appointment: mapDbAppointment(row) });
+      }
+      earliestLoadedApptDateRef.current = fromDate;
+    })();
+    apptBackfillInFlightRef.current = run;
+    try { await run; } finally { apptBackfillInFlightRef.current = null; }
+  }, [dispatch, setSyncErrorTracked]);
+
   const ctxValue = useMemo(
-    () => ({ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority }),
-    [state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority],
+    () => ({ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom }),
+    [state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom],
   );
 
   return (

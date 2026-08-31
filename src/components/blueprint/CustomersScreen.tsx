@@ -234,7 +234,13 @@ function CustomerDetailView({
   onEdit: () => void;
   onDeleted: () => void;
 }) {
-  const { state } = useApp();
+  const { state, ensureAppointmentsFrom } = useApp();
+  // Customer history is the one screen that genuinely wants every appointment
+  // ever. The floor tablets no longer carry those (see APPT_WINDOW_DAYS_BACK),
+  // so pull the archive in when this screen opens — once per session, on the
+  // device of whoever is actually looking at history, instead of on every
+  // tablet at boot.
+  useEffect(() => { void ensureAppointmentsFrom('2000-01-01'); }, [ensureAppointmentsFrom]);
   const [tickets, setTickets] = useState<Awaited<ReturnType<typeof fetchCustomerTickets>>>([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
 

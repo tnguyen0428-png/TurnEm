@@ -57,11 +57,16 @@ function weekdayOf(dateStr: string): number {
 }
 
 export default function AppointmentsScreen() {
-  const { state, dispatch } = useApp();
+  const { state, dispatch, ensureAppointmentsFrom } = useApp();
   const today = getTodayLA();
 
   const [bookMode, setBookMode] = useState<'book' | 'list'>('book');
   const [selectedDate, setSelectedDate] = useState(today);
+  // Boot only loads a week back (APPT_WINDOW_DAYS_BACK); page the book to an
+  // older day and its blocks would simply not be there. Fetch on demand. The
+  // backfill only ever ADDS to state, so paging around cannot make a booking
+  // disappear — which the sync layer would read as a deletion.
+  useEffect(() => { void ensureAppointmentsFrom(selectedDate); }, [selectedDate, ensureAppointmentsFrom]);
   // The strip starts TOMORROW, never today: the TODAY button right beside it
   // already covers today, so a tab for it was a wasted slot (Tony 2026-08-29).
   const tomorrow = shiftDate(today, 1);

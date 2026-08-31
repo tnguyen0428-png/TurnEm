@@ -41,7 +41,12 @@ export default function SalesReport() {
   const [loading, setLoading] = useState(true);
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null);
   const [selectedShift, setSelectedShift] = useState<Shift | null>(null);
-  const { state } = useApp();
+  const { state, ensureAppointmentsFrom } = useApp();
+  // The tablets only hold a week of appointments at boot (see
+  // APPT_WINDOW_DAYS_BACK). This report scans them for cancellations and
+  // no-shows across a range the user picks, so pull that range in first or it
+  // silently under-reports the further back you look.
+  useEffect(() => { void ensureAppointmentsFrom(range.from); }, [range.from, ensureAppointmentsFrom]);
 
   useEffect(() => {
     let cancelled = false;
