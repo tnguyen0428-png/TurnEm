@@ -19,6 +19,7 @@ import {
   getSuggestedForService,
   ServiceHistory,
   getMinsToNextAppt,
+  APPT_PILL_WINDOW_MINS,
 } from './assignHelpers';
 
 export function MultiServiceAssign({ client }: { client: QueueEntry }) {
@@ -508,7 +509,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                   // drop out of the list entirely, hiding the warning
                                   // at the moment the receptionist most needs it.
                                   const apptIn = getMinsToNextAppt(m.id, state.appointments, true, state.queue, state.completed);
-                                  if (apptIn === null || apptIn >= 30) return null;
+                                  if (apptIn === null || apptIn >= APPT_PILL_WINDOW_MINS) return null;
                                   const apptLate = apptIn < 0;
                                   return (
                                     <span className={`inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 animate-pulse ${apptLate ? 'bg-red-100 text-red-700 border border-red-500' : 'bg-yellow-100 text-yellow-700 border border-yellow-400'}`}>

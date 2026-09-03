@@ -194,12 +194,19 @@ export function getSuggestedForService(service: ServiceType, manicurists: Manicu
   return eligible[0];
 }
 
-// Minutes until this manicurist's NEXT still-active appointment today, or
-// null when they have nothing scheduled in the foreseeable window. Used to
-// surface a "⚠ appt in N min" warning pill at assignment time so the
-// receptionist doesn't book a 45-minute walk-in onto someone whose
-// appointment is about to walk through the door. "On the appointment"
-// means either the appt's primary manicurist or any per-service request.
+/** How far ahead the assign list and the floor board warn about a tech's next
+ *  booked service. Tony raised this from 30 to 45 on 2026-09-03 so a
+ *  45-minute walk-in can be weighed against an appointment that far out.
+ *  Shared by all three pill sites so they cannot drift apart. */
+export const APPT_PILL_WINDOW_MINS = 45;
+
+// Minutes until this manicurist's NEXT still-active service today, or null
+// when they have nothing scheduled in the foreseeable window. Used to surface
+// an "appt in N min" pill on the manicurist's row in the assign list so the
+// receptionist can weigh a walk-in against work already promised to her and
+// decide to skip or assign. "On the appointment" means any per-service
+// request naming her — and the minutes come from THAT request's own
+// startTime, never from the appointment header.
 export function getMinsToNextAppt(
   manicuristId: string,
   appointments: Appointment[],
@@ -248,15 +255,29 @@ export function getMinsToNextAppt(
     // a tech for layout — they're not a commitment to that person, so we
     // skip them. Otherwise every appointment in someone's column would set
     // off the warning even when the client doesn't care who does the work.
-    const isRequested = (a.serviceRequests || []).some(
+    const requestedEntries = (a.serviceRequests || []).filter(
       (r) => r.clientRequest === true && (r.manicuristIds || []).includes(manicuristId),
     );
-    if (!isRequested) continue;
-    const [h, m] = (a.time || '00:00').split(':').map(Number);
-    const apptMins = h * 60 + m;
-    const delta = apptMins - nowMins;
-    if (!includePast && delta < 0) continue; // skip overdue when not asked for
-    if (minDelta === null || Math.abs(delta) < Math.abs(minDelta)) minDelta = delta;
+    if (requestedEntries.length === 0) continue;
+    // Take the time off the ENTRY, not off `a.time`. The appointment header
+    // time belongs to the booking's primary tech; a second tech on the same
+    // booking has her own startTime and it is routinely different. Reading
+    // the header here told CHRISTINA's row 10:45 for a Gel Builder that
+    // started at 10:00 (Julie Falk, 2026-09-03) — 45 minutes clears the
+    // cutoff below, so the pill rendered NOTHING and the row still wore
+    // RECOMMENDED. Over the previous 30 days 78 entries were overstated this
+    // way, by 49 minutes on average.
+    //
+    // One appointment can also put two entries on one tech at different
+    // times, so every matching entry is measured, not just the first.
+    for (const r of requestedEntries) {
+      const t = (r.startTime || '').trim() || a.time || '00:00';
+      const [h, m] = t.split(':').map(Number);
+      if (Number.isNaN(h) || Number.isNaN(m)) continue;
+      const delta = h * 60 + m - nowMins;
+      if (!includePast && delta < 0) continue; // skip overdue when not asked for
+      if (minDelta === null || Math.abs(delta) < Math.abs(minDelta)) minDelta = delta;
+    }
   }
   return minDelta;
 }

@@ -33,6 +33,10 @@ import { getTodayLA, formatTimeOfDay } from '../../utils/time';
  */
 
 interface DailyScheduleEntry {
+  /** Unique per ROW. `id` is the appointment and is no longer unique here —
+   *  a tech with two services at different times on one booking gets one row
+   *  per time. Key lists and diffs on this, never on `id`. */
+  key: string;
   id: string;
   time: string; // "HH:MM" 24h
   displayName: string; // "Sarah K." — already stripped server-side
@@ -45,6 +49,7 @@ interface DailyScheduleEntry {
 // The view exposes only fields the manicurist may see: full client_name,
 // client_phone, and the contents of `notes` are NOT included.
 interface ScheduleViewRow {
+  entry_key: string;
   id: string;
   manicurist_id: string | null;
   date: string | null;
@@ -129,7 +134,7 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
     const { data, error } = await supabase
       .from('manicurist_daily_schedule')
       .select(
-        'id, manicurist_id, date, time, status, service, services, display_name, has_notes, is_requested'
+        'entry_key, id, manicurist_id, date, time, status, service, services, display_name, has_notes, is_requested'
       )
       .eq('manicurist_id', manicuristId)
       .eq('date', today)
@@ -150,6 +155,7 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
         const serviceLabel =
           r.services && r.services.length > 0 ? r.services.join(', ') : r.service || '';
         return {
+          key: r.entry_key,
           id: r.id,
           time: r.time || '',
           displayName: r.display_name || 'Client',
@@ -164,15 +170,26 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
     if (!isFirstFetchRef.current) {
       const prev = lastSeenRef.current;
       const events: string[] = [];
+      const currentKeys = new Set(requestRows.map((x) => x.entry_key));
 
       for (const r of requestRows) {
-        const before = prev.get(r.id);
+        const before = prev.get(r.entry_key);
         if (!before) {
-          // New request booked
           const svc =
             r.services && r.services.length > 0 ? r.services.join(', ') : r.service || '';
+          // Rows are keyed by (appointment, tech, start time), so moving a
+          // service to a new time retires one key and mints another. Without
+          // this check that reads as a brand-new booking and the tech gets a
+          // "New 10:15 request" toast for a client she already had. A prev row
+          // for the same appointment that has since vanished IS this row at
+          // its old time — anything still present is a different service.
+          const movedFrom = [...prev.values()].find(
+            (p) => p.id === r.id && !currentKeys.has(p.entry_key)
+          );
           events.push(
-            `New ${safeFormatTime(r.time)} request — ${r.display_name || 'Client'}, ${svc}`
+            movedFrom
+              ? `${r.display_name || 'Client'} moved to ${safeFormatTime(r.time)} — ${svc}`
+              : `New ${safeFormatTime(r.time)} request — ${r.display_name || 'Client'}, ${svc}`
           );
         } else if (before.status !== r.status) {
           if (r.status === 'cancelled') {
@@ -196,7 +213,7 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
 
     // Refresh the cache
     const nextMap = new Map<string, ScheduleViewRow>();
-    for (const r of requestRows) nextMap.set(r.id, r);
+    for (const r of requestRows) nextMap.set(r.entry_key, r);
     lastSeenRef.current = nextMap;
 
     setEntries(newEntries);
@@ -335,7 +352,7 @@ export default function DailySchedulePanel({ manicuristId }: DailySchedulePanelP
 
                     return (
                       <li
-                        key={e.id}
+                        key={e.key}
                         className="grid items-center gap-3 py-3.5"
                         style={{ gridTemplateColumns: '72px 1fr auto' }}
                       >

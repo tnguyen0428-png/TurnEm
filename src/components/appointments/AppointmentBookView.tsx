@@ -1588,7 +1588,7 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
         })}
 
         {blocks.map((blk, idx) => {
-          const { appt, serviceName, occurrence, top, height, isFirst, hasRequest, requestedManicuristId, colManicuristId } = blk;
+          const { appt, serviceName, occurrence, top, height, isFirst, blockTime, hasRequest, requestedManicuristId, colManicuristId } = blk;
           const layout = layoutByIdx[idx] ?? { laneIndex: 0, laneCount: 1 };
           const palette     = apptPalette(appt);
           const isDragging  = dragInfo?.apptId === appt.id && dragInfo?.serviceName === serviceName;
@@ -1887,10 +1887,15 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                     style={{ color: textColor }}>
                     {appt.clientName || 'Walk-in'}
                   </p>
-                  {isFirst && appt.time && (
+                  {/* blockTime, not appt.time — the label must agree with the
+                      row the block is drawn on. appt.time is the booking's
+                      header time, which belongs to its primary tech; a second
+                      tech's block sat on the 10:00 row wearing the header's
+                      10:45 (Julie Falk, 2026-09-03). */}
+                  {isFirst && blockTime && (
                     <span className="font-mono text-[10px] font-semibold flex-shrink-0 leading-tight"
                       style={{ color: subTextColor }}>
-                      {formatTimeOfDay(appt.time)}
+                      {formatTimeOfDay(blockTime)}
                     </span>
                   )}
                 </div>

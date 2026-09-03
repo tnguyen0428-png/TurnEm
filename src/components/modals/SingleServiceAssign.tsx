@@ -13,7 +13,7 @@ import { showSmsToast } from '../shared/SmsToast';
 import type { QueueEntry, ServiceType } from '../../types';
 import { isWaxService, waxRotationCompare } from '../../utils/salonRules';
 import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../../lib/manicuristStatus';
-import { getClientDurationMs, formatServiceList, ServiceHistory, getMinsToNextAppt } from './assignHelpers';
+import { getClientDurationMs, formatServiceList, ServiceHistory, getMinsToNextAppt, APPT_PILL_WINDOW_MINS } from './assignHelpers';
 
 // Compute the turn_value a queue entry should carry once it's been marked
 // as a customer request for a specific manicurist. Mirrors the convention
@@ -265,7 +265,7 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                           // The helper already suppresses appointments in motion or
                           // finished, so this only fires on one nobody has started.
                           const apptIn = getMinsToNextAppt(m.id, state.appointments, true, state.queue, state.completed);
-                          if (apptIn === null || apptIn >= 30) return null;
+                          if (apptIn === null || apptIn >= APPT_PILL_WINDOW_MINS) return null;
                           const apptLate = apptIn < 0;
                           return (
                             <span className={`inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 animate-pulse ${apptLate ? 'bg-red-100 text-red-700 border border-red-500' : 'bg-yellow-100 text-yellow-700 border border-yellow-400'}`}>

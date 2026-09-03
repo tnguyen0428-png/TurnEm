@@ -5,7 +5,7 @@ import CountdownBadge from '../shared/CountdownBadge';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { SharedAutoFitText } from '../shared/SharedAutoFitText';
 import { useAppDispatch, useApp } from '../../state/AppContext';
-import { getMinsToNextAppt } from '../modals/assignHelpers';
+import { getMinsToNextAppt, APPT_PILL_WINDOW_MINS } from '../modals/assignHelpers';
 import { sendPushNotification } from '../../utils/pushNotifications';
 import { showSmsToast } from '../shared/SmsToast';
 import BreakElapsedBadge from './BreakElapsedBadge';
@@ -53,7 +53,7 @@ function UpcomingApptWarning({ manicuristId }: { manicuristId: string }) {
   // is completed and the manicurist leaves status === 'busy').
   const mins = getMinsToNextAppt(manicuristId, state.appointments, true, state.queue, state.completed);
   if (mins === null) return null;
-  if (mins >= 30) return null;
+  if (mins >= APPT_PILL_WINDOW_MINS) return null;
   const label = mins >= 0 ? `Appt in ${mins}m` : `Appt ${Math.abs(mins)}m late`;
   return (
     <span
