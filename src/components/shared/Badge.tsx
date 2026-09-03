@@ -10,7 +10,9 @@ export function getTurnBadgeVariant(value: number): 'green' | 'blue' | 'amber' |
 interface BadgeProps {
   label: string;
   variant: 'green' | 'blue' | 'amber' | 'orange' | 'purple' | 'pink' | 'red' | 'gray' | 'indigo';
-  size?: 'sm' | 'md' | 'lg';
+  /** 'xl' is for a pill that has to carry a row on its own — the service name
+   *  in the assign modal, read at arm's length on the floor. */
+  size?: 'sm' | 'md' | 'lg' | 'xl';
 }
 
 const VARIANT_CLASSES: Record<BadgeProps['variant'], string> = {
@@ -29,7 +31,8 @@ export default function Badge({ label, variant, size = 'sm' }: BadgeProps) {
   const sizeClass =
     size === 'sm' ? 'text-[10px] px-2 py-0.5'
     : size === 'md' ? 'text-xs px-2.5 py-1'
-    : 'text-sm px-3 py-1';
+    : size === 'lg' ? 'text-sm px-3 py-1'
+    : 'text-base px-4 py-1.5';
   return (
     <span className={`inline-flex items-center rounded-full font-mono font-semibold tracking-wide uppercase ${sizeClass} ${VARIANT_CLASSES[variant]}`}>
       {label}

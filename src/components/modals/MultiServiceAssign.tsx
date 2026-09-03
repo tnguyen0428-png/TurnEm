@@ -25,8 +25,11 @@ import {
 
 /** Shared shape for the per-service row actions. Sized as a real tap target for
  *  a tablet on the salon floor rather than a text link. */
+/** Deliberately smaller than the service pill they sit beside: the service is
+ *  what the receptionist scans for, the actions are what they reach for once
+ *  they've found the row. */
 const rowActionBtn =
-  'px-3.5 py-2 rounded-lg border-2 font-mono text-sm font-bold uppercase tracking-wide active:scale-[0.97] transition-all';
+  'px-2.5 py-1 rounded-md border font-mono text-xs font-bold uppercase tracking-wide active:scale-[0.97] transition-all';
 
 export function MultiServiceAssign({ client }: { client: QueueEntry }) {
   const { state, dispatch } = useApp();
@@ -503,7 +506,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                     outlines — no dark primary — so none of them reads as "the"
                     answer; which one is right depends on the client. */}
                 <div className="flex items-center flex-wrap gap-2 mb-2">
-                  <Badge label={row.service} variant="blue" size="md" />
+                  <Badge label={row.service} variant="blue" size="xl" />
                   {selectedId && (
                     <button
                       onClick={() => handleClearAssignment(key)}
@@ -712,6 +715,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         <ConfirmDialog
           message={`Unassign ${pendingNotNow.manicuristName} for now?\n\n${pendingNotNow.service} stays in the queue with ${pendingNotNow.manicuristName} still requested. Assign ${pendingNotNow.manicuristName} when they're free.`}
           confirmLabel="Leave in queue"
+          large
           onConfirm={() => handleNotNow(pendingNotNow.key)}
           onCancel={() => setPendingNotNow(null)}
         />
