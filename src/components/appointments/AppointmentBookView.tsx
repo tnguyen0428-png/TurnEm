@@ -1028,6 +1028,11 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     const all = getApptSvcs(appt);
     const firstIdx = all.indexOf(svcName);
     const svcs = firstIdx >= 0 ? [...all.slice(0, firstIdx), ...all.slice(firstIdx + 1)] : all;
+    // Before either branch: the block is going away for this service, so any
+    // add-child credit riding on it must go too. Runs for the delete-the-whole-
+    // appointment case as well — that branch is how a one-service block leaves
+    // the book, and it orphaned credits just as silently.
+    voidOrphanedAddOnCredit(appt, svcName);
     if (svcs.length === 0) {
       dispatch({ type: 'DELETE_APPOINTMENT', id: appt.id });
     } else {
@@ -1048,7 +1053,47 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
         services: svcs, service: svcs[0] as ServiceType,
         serviceRequests: newReqs,
         manicuristId: newReqs[0]?.manicuristIds?.[0] ?? appt.manicuristId ?? null,
-      }});
+      },
+        // The credit this removal would have orphaned is voided immediately
+        // above, so the reducer's backed-work guard has nothing left to
+        // protect. Opting out keeps a deliberate removal working now that
+        // add-child credits DO pin their service (see retainBackedServices).
+        allowDroppingBackedServices: true,
+      });
+    }
+  }
+
+  // A cashier "+ Add line" writes the tech's credit to a synthetic add-child
+  // (`${visit}-add-${staffId}`), separate from the block the service is drawn
+  // on. Deleting the service from the book only ever touched the block, so the
+  // credit survived — the tech kept the money on her portal and no ticket ever
+  // carried the charge. CHRISTINA × Nail Art × Jenifer, 2026-08-31: $455 on the
+  // portal against $450 of receipts, found by the nightly reconciler two days
+  // later. Void the credit with the block so the two cannot drift apart.
+  //
+  // Only add-children, and only rows still carrying the removed service. A
+  // real queue entry or split sibling has its own block and its own lifecycle;
+  // this must not reach either.
+  function voidOrphanedAddOnCredit(appt: Appointment, svcName: string) {
+    const root = (id: string | null | undefined) => {
+      if (!id) return null;
+      const bare = id.startsWith('walkin:') ? id.slice('walkin:'.length) : id;
+      const m = bare.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      return m ? m[0].toLowerCase() : null;
+    };
+    const apptRoot = root(appt.id);
+    if (!apptRoot) return;
+    for (const c of state.completed) {
+      if (c.voided) continue;
+      if (!c.id.includes('-add-')) continue;
+      if (root(c.id) !== apptRoot) continue;
+      if (!(c.services ?? []).includes(svcName as ServiceType)) continue;
+      // No ticket-line check is possible here — AppState carries no tickets,
+      // the register loads them separately. Voiding is the right default
+      // anyway: the receptionist just said this work is not happening, and a
+      // void is reversible from History, whereas a silently orphaned credit is
+      // invisible until the nightly reconciler catches it days later.
+      dispatch({ type: 'TOGGLE_VOID_COMPLETED', id: c.id, reason: 'service removed from book' });
     }
   }
 

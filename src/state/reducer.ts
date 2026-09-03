@@ -431,6 +431,38 @@ function sanitizeQueueEntryId(id: string): string {
 // helpers (relocateServiceRequests, addMissingServiceRequests) so every write
 // site shares one implementation instead of re-deriving its own.
 
+// A cashier "+ Add line" credit lives on a SYNTHETIC add-child whose id is
+// `${visit}-add-${staffId}` and whose booking block is `walkin:${that}`. It is
+// a different appointment id from the visit's other blocks, so an exact
+// `originalAppointmentId === apptId` test never sees it — and deleting the
+// service from a SIBLING block on the same visit then dropped it with no
+// warning, leaving the tech credited for work no ticket ever carried.
+// CHRISTINA × Nail Art × Jenifer, 2026-08-31: removed from LEO's block at
+// 09:49, credit survived into the archive, portal $455 vs blueprint $450.
+//
+// Matched on the visit root, and ONLY for add-children. A plain split sibling
+// (`${visit}-mani-N`) is deliberately still excluded: MACY's completed
+// Pedicure must not pin "Pedicure" on LEO's block just because they share a
+// visit. Add-children are the only rows with no block of their own that a
+// receptionist would think to edit.
+// Regex duplicated from lib/tickets.getVisitId rather than imported: that
+// module pulls in the Supabase client, and the reducer must stay pure.
+const VISIT_ROOT_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+function visitRootOf(id: string | null | undefined): string | null {
+  if (!id) return null;
+  const bare = id.startsWith('walkin:') ? id.slice('walkin:'.length) : id;
+  const m = bare.match(VISIT_ROOT_RE);
+  return m ? m[0].toLowerCase() : null;
+}
+
+function backsSameVisitAsAddChild(c: CompletedEntry, apptId: string): boolean {
+  if (!c.id.includes('-add-')) return false;
+  const apptRoot = visitRootOf(apptId);
+  return apptRoot !== null && apptRoot === visitRootOf(c.id);
+}
+
 // Work already on the floor, or already credited, is authority over services[].
 // A write that SHRINKS services[] must not silently drop a service that has a
 // live queue entry or a completed_services row attached to this appointment:
@@ -504,7 +536,8 @@ function retainBackedServices(
     // A voided row is work that was explicitly undone — it must NOT pin a
     // service in place, or a void followed by a correction could never remove
     // the mistaken service.
-    if (c.originalAppointmentId !== apptId || c.voided) continue;
+    if (c.voided) continue;
+    if (c.originalAppointmentId !== apptId && !backsSameVisitAsAddChild(c, apptId)) continue;
     for (const s of c.services ?? []) {
       if (deliberatelyDropped?.has(s)) continue;
       backed.set(s, (backed.get(s) ?? 0) + 1);

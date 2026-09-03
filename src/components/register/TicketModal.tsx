@@ -652,12 +652,27 @@ export default function TicketModal({
             .filter((n) => n.length > 0);
           const oldAddChildId = `${visitId}-add-${oldStaffId}`;
           const oldAddChild = state.queue.find((q) => q.id === oldAddChildId);
+          // The add-child's TURN CREDIT is a completed_services row under the
+          // same id, and it does not come off with the queue entry. Swapping a
+          // line's tech dropped the entry and left the credit standing, so the
+          // old tech kept earnings for work now billed to someone else — and
+          // nothing surfaced it until the nightly reconciler. CHRISTINA × Nail
+          // Art × Jenifer, 2026-08-31: swapped away at 09:14, credit lived on
+          // into the archive and read as $5 of unbilled work.
+          const oldAddCredit = state.completed.find((c) => c.id === oldAddChildId && !c.voided);
           if (remainingForOldStaff.length === 0) {
             // Old staff has no other work on this ticket. Drop the
             // add-child and return them to AVAILABLE if they were
             // pointing at it.
             if (oldAddChild) {
               dispatch({ type: 'REMOVE_CLIENT', id: oldAddChildId });
+            }
+            if (oldAddCredit) {
+              dispatch({
+                type: 'TOGGLE_VOID_COMPLETED',
+                id: oldAddChildId,
+                reason: 'line reassigned to another tech',
+              });
             }
             const m = state.manicurists.find((mm) => mm.id === oldStaffId);
             if (m && m.currentClient === oldAddChildId) {
@@ -667,14 +682,23 @@ export default function TicketModal({
                 updates: { status: 'available', currentClient: null },
               });
             }
-          } else if (oldAddChild) {
+          } else {
             // Narrow the old staff's add-child services to what's left
             // so their card stops advertising the just-swapped service.
-            dispatch({
-              type: 'UPDATE_CLIENT',
-              id: oldAddChildId,
-              updates: { services: remainingForOldStaff as ServiceType[] },
-            });
+            if (oldAddChild) {
+              dispatch({
+                type: 'UPDATE_CLIENT',
+                id: oldAddChildId,
+                updates: { services: remainingForOldStaff as ServiceType[] },
+              });
+            }
+            if (oldAddCredit) {
+              dispatch({
+                type: 'UPDATE_COMPLETED',
+                id: oldAddChildId,
+                updates: { services: remainingForOldStaff as ServiceType[] },
+              });
+            }
           }
         }
       }
@@ -1117,13 +1141,30 @@ export default function TicketModal({
             (l.name ?? '').trim() === rem.service,
         );
         if (stillOnTicket) continue;
-        const { data: row, error: fErr } = await supabase
+        // Two places the credit can live, and the bare id alone missed one.
+        // A cashier-added line stores the BARE visit id as its queue_entry_id
+        // (the `-add-` form is barred from ticket_items), but the tech's credit
+        // row is keyed `${visit}-add-${staffId}`. Looking up only the bare id
+        // found nothing, hit the `continue` below, and left the credit standing
+        // while the charge came off the ticket — the tech stayed paid for work
+        // no longer billed. Try the add-child id too, scoped to the staff whose
+        // line was removed so this can never touch another tech's row.
+        const candidateIds = [rowId];
+        if (rem.staffId) {
+          const addChildId = `${rowId}-add-${rem.staffId}`;
+          if (!candidateIds.includes(addChildId)) candidateIds.push(addChildId);
+        }
+        const { data: rows, error: fErr } = await supabase
           .from('completed_services')
           .select('id, services, voided')
-          .eq('id', rowId)
-          .maybeSingle();
+          .in('id', candidateIds);
         if (fErr) { console.error('[ticket modal] removed-line lookup failed:', fErr.message); continue; }
+        const row = (rows ?? []).find(
+          (r) => ((r as { services: string[] | null }).services ?? [])
+            .some((s) => (s ?? '').trim() === rem.service),
+        ) ?? (rows ?? [])[0];
         if (!row) continue;
+        const rowIdToPatch = (row as { id: string }).id;
         const current = ((row as { services: string[] | null }).services ?? []).slice();
         // Drop ONE occurrence of the removed service — a row legitimately can
         // list the same service twice.
@@ -1135,7 +1176,7 @@ export default function TicketModal({
         const { error: uErr } = await supabase
           .from('completed_services')
           .update(patch)
-          .eq('id', rowId);
+          .eq('id', rowIdToPatch);
         if (uErr) console.error('[ticket modal] removed-line completed sync failed:', uErr.message);
       }
       setRemovedServiceLines([]);
