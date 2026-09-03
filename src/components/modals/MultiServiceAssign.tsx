@@ -514,7 +514,15 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                     answer; which one is right depends on the client. */}
                 <div className="flex items-center flex-wrap gap-2 mb-2">
                   <Badge label={row.service} variant="blue" size="xl" />
-                  {selectedId && (
+                  {/* Clear and Leave in queue are both about what to do with a
+                      CLIENT REQUEST — drop it, or honour it later. On a row the
+                      receptionist filled in herself there is no request to drop
+                      or defer, so both are noise; "Change" is the only thing
+                      that makes sense there. requestedId is safe to gate on: it
+                      is derived from clientRequest === true, not from a
+                      populated manicuristIds (see getDistinctServices and the
+                      parked-column fix of 2026-08-22). */}
+                  {selectedId && requestedId && (
                     <button
                       onClick={() => handleClearAssignment(key)}
                       className={`${rowActionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
@@ -527,7 +535,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                       just leaves them out of this round; "Clear" above drops the
                       request altogether. Only offered when the tech is actually
                       free — a busy tech already defers on her own. */}
-                  {selectedId && !isNotNow && selectedManicurist?.status === 'available' && (
+                  {selectedId && requestedId && !isNotNow && selectedManicurist?.status === 'available' && (
                     <button
                       onClick={() => setPendingNotNow({
                         key,
