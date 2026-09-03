@@ -43,7 +43,7 @@ export default function AssignConfirmDialog({
               <path d="M7 4v3.5l2 1.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </div>
-          <p className="font-mono text-sm font-semibold text-white uppercase tracking-wide">
+          <p className="font-mono text-base font-semibold text-white uppercase tracking-wide">
             Confirm Turn Assignment
           </p>
         </div>
@@ -52,8 +52,8 @@ export default function AssignConfirmDialog({
         <div className="px-5 pt-4 pb-2">
           {/* Client name */}
           <div className="flex justify-between items-center py-2.5 border-b border-gray-100">
-            <span className="font-mono text-[11px] uppercase tracking-widest text-gray-400">Client</span>
-            <span className="font-mono text-sm font-semibold text-gray-900">{clientName}</span>
+            <span className="font-mono text-xs uppercase tracking-widest text-gray-400">Client</span>
+            <span className="font-mono text-base font-semibold text-gray-900">{clientName}</span>
           </div>
 
           {/* One block per manicurist assignment */}
@@ -61,19 +61,19 @@ export default function AssignConfirmDialog({
             <div key={i} className="pt-3 pb-2.5 border-b border-gray-100 last:border-0">
               {/* Services */}
               <div className="flex justify-between items-start mb-2.5">
-                <span className="font-mono text-[11px] uppercase tracking-widest text-gray-400 pt-0.5 flex-shrink-0">
+                <span className="font-mono text-xs uppercase tracking-widest text-gray-400 pt-0.5 flex-shrink-0">
                   Service
                 </span>
                 <div className="flex flex-wrap gap-1.5 justify-end items-center ml-4">
                   {row.isRequested && (
-                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white font-mono text-[9px] font-bold flex-shrink-0">
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white font-mono text-[11px] font-bold flex-shrink-0">
                       R
                     </span>
                   )}
                   {formatServicesForBadges(row.services).map((label, si) => (
                     <span
                       key={si}
-                      className="inline-block bg-teal-50 text-teal-700 font-mono text-[10px] font-semibold px-2.5 py-1 rounded-full uppercase tracking-wide"
+                      className="inline-block bg-teal-50 text-teal-700 font-mono text-xs font-semibold px-2.5 py-1 rounded-full uppercase tracking-wide"
                     >
                       {label}
                     </span>
@@ -83,7 +83,7 @@ export default function AssignConfirmDialog({
 
               {/* Manicurist */}
               <div className="flex justify-between items-center mb-2.5">
-                <span className="font-mono text-[11px] uppercase tracking-widest text-gray-400">
+                <span className="font-mono text-xs uppercase tracking-widest text-gray-400">
                   Manicurist
                 </span>
                 <div className="flex items-center gap-2">
@@ -91,9 +91,9 @@ export default function AssignConfirmDialog({
                     className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                     style={{ backgroundColor: row.manicuristColor }}
                   />
-                  <span className="font-mono text-sm font-semibold text-gray-900">{row.manicuristName}</span>
+                  <span className="font-mono text-base font-semibold text-gray-900">{row.manicuristName}</span>
                   {row.isDeferred && (
-                    <span className="font-mono text-[9px] font-bold text-amber-500 uppercase">
+                    <span className="font-mono text-[11px] font-bold text-amber-500 uppercase">
                       (waiting)
                     </span>
                   )}
@@ -102,17 +102,17 @@ export default function AssignConfirmDialog({
 
               {/* Turns */}
               <div className="flex justify-between items-center">
-                <span className="font-mono text-[11px] uppercase tracking-widest text-gray-400">
+                <span className="font-mono text-xs uppercase tracking-widest text-gray-400">
                   {row.manicuristName}'s turns
                 </span>
                 {row.isDeferred ? (
-                  <span className="font-mono text-xs text-amber-500 font-semibold">Added when available</span>
+                  <span className="font-mono text-sm text-amber-500 font-semibold">Added when available</span>
                 ) : (
                   <div className="flex items-baseline gap-1.5">
-                    <span className="font-mono text-xl font-semibold text-pink-500">
+                    <span className="font-mono text-2xl font-semibold text-pink-500">
                       {row.turnsToAdd.toFixed(1)}
                     </span>
-                    <span className="font-mono text-[10px] text-gray-400">turns added</span>
+                    <span className="font-mono text-xs text-gray-400">turns added</span>
                   </div>
                 )}
               </div>
@@ -124,13 +124,13 @@ export default function AssignConfirmDialog({
         <div className="flex gap-3 px-5 py-4 border-t border-gray-100">
           <button
             onClick={onCancel}
-            className="flex-1 py-2.5 rounded-xl border border-gray-200 font-mono text-sm font-semibold text-gray-600 hover:bg-gray-50 active:scale-[0.98] transition-all uppercase tracking-wide"
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 font-mono text-base font-semibold text-gray-600 hover:bg-gray-50 active:scale-[0.98] transition-all uppercase tracking-wide"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="flex-1 py-2.5 rounded-xl bg-pink-500 font-mono text-sm font-semibold text-white hover:bg-pink-600 active:scale-[0.98] transition-all uppercase tracking-wide"
+            className="flex-1 py-2.5 rounded-xl bg-pink-500 font-mono text-base font-semibold text-white hover:bg-pink-600 active:scale-[0.98] transition-all uppercase tracking-wide"
           >
             Confirm
           </button>

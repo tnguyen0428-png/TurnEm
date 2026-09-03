@@ -200,16 +200,16 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
         width="max-w-xl"
       >
         <div className="mb-5 p-4 bg-gray-50 rounded-xl">
-          <p className="font-mono text-sm font-semibold text-gray-900">{client.clientName}</p>
-          <p className="font-mono text-xs text-gray-500 mt-1">
+          <p className="font-mono text-base font-semibold text-gray-900">{client.clientName}</p>
+          <p className="font-mono text-sm text-gray-500 mt-1">
             {formatServiceList(client.services)} ({client.turnValue} turns)
           </p>
         </div>
 
         {allEligible.length === 0 ? (
           <div className="text-center py-8">
-            <p className="font-mono text-sm text-gray-400">No eligible staff available</p>
-            <p className="font-mono text-xs text-gray-300 mt-1">
+            <p className="font-mono text-base text-gray-400">No eligible staff available</p>
+            <p className="font-mono text-sm text-gray-300 mt-1">
               Check that staff are clocked in with the right skills
             </p>
             <button
@@ -217,7 +217,7 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                 dispatch({ type: 'SET_SELECTED_CLIENT', clientId: null });
                 dispatch({ type: 'SET_MODAL', modal: null });
               }}
-              className="mt-4 px-6 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-sm text-gray-600 transition-colors"
+              className="mt-4 px-6 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 font-mono text-base text-gray-600 transition-colors"
             >
               Keep in Queue
             </button>
@@ -248,9 +248,9 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <span className="font-mono text-xs text-gray-400 w-6">#{idx + 1}</span>
+                        <span className="font-mono text-sm text-gray-400 w-6">#{idx + 1}</span>
                         <div className="w-3 h-3 rounded-full" style={{ backgroundColor: m.color }} />
-                        <span className="font-mono text-sm font-semibold text-gray-900">{m.name}</span>
+                        <span className="font-mono text-base font-semibold text-gray-900">{m.name}</span>
                         <ServiceHistory m={m} />
                         {!isAlmostDone && requestedIds.has(m.id) && <Badge label="REQUESTED" variant="pink" />}
                         {!isAlmostDone && m.id === suggestedId && is4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
@@ -268,7 +268,7 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                           if (apptIn === null || apptIn >= APPT_PILL_WINDOW_MINS) return null;
                           const apptLate = apptIn < 0;
                           return (
-                            <span className={`inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 animate-pulse ${apptLate ? 'bg-red-100 text-red-700 border border-red-500' : 'bg-yellow-100 text-yellow-700 border border-yellow-400'}`}>
+                            <span className={`inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-xs px-2 py-0.5 animate-pulse ${apptLate ? 'bg-red-100 text-red-700 border border-red-500' : 'bg-yellow-100 text-yellow-700 border border-yellow-400'}`}>
                               {apptLate ? `APPT ${Math.abs(apptIn)} MIN LATE` : `APPT IN ${apptIn} MIN`}
                             </span>
                           );
@@ -283,14 +283,14 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                           />
                         )}
                         {m.phone && (
-                          <span className="flex items-center gap-1 font-mono text-[10px] text-emerald-500" title="SMS alerts enabled">
+                          <span className="flex items-center gap-1 font-mono text-xs text-emerald-500" title="SMS alerts enabled">
                             <MessageSquare size={10} />
                             SMS
                           </span>
                         )}
-                        <span className="font-mono text-xs text-gray-500">{m.totalTurns.toFixed(1)} turns</span>
+                        <span className="font-mono text-sm text-gray-500">{m.totalTurns.toFixed(1)} turns</span>
                         {m.clockInTime && (
-                          <span className="flex items-center gap-1 font-mono text-[10px] text-gray-400">
+                          <span className="flex items-center gap-1 font-mono text-xs text-gray-400">
                             <Clock size={10} />
                             {formatTime(m.clockInTime)}
                           </span>
@@ -301,7 +301,7 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                       <div className="mt-3 flex gap-2">
                         <button
                           onClick={(e) => { e.stopPropagation(); handleWaitForManicurist(m.id); }}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-amber-500 text-white font-mono text-xs font-semibold hover:bg-amber-600 active:scale-[0.98] transition-all"
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-amber-500 text-white font-mono text-sm font-semibold hover:bg-amber-600 active:scale-[0.98] transition-all"
                         >
                           <Timer size={13} />
                           WAIT FOR {m.name}

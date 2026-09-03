@@ -23,6 +23,11 @@ import {
   APPT_PILL_WINDOW_MINS,
 } from './assignHelpers';
 
+/** Shared shape for the per-service row actions. Sized as a real tap target for
+ *  a tablet on the salon floor rather than a text link. */
+const rowActionBtn =
+  'px-3.5 py-2 rounded-lg border-2 font-mono text-sm font-bold uppercase tracking-wide active:scale-[0.97] transition-all';
+
 export function MultiServiceAssign({ client }: { client: QueueEntry }) {
   const { state, dispatch } = useApp();
 
@@ -430,15 +435,15 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
           });
           return (
             <div className="mb-5 p-4 bg-gray-50 rounded-xl">
-              <p className="font-mono text-sm font-semibold text-gray-900">{client.clientName}</p>
-              <p className="font-mono text-xs text-gray-500 mt-1">
+              <p className="font-mono text-base font-semibold text-gray-900">{client.clientName}</p>
+              <p className="font-mono text-sm text-gray-500 mt-1">
                 {formatServiceList(client.services)} ({client.turnValue} turns)
               </p>
-              <p className="mt-2 font-mono text-[10px] text-blue-600 font-semibold">
+              <p className="mt-2 font-mono text-xs text-blue-600 font-semibold">
                 Pick a staff member for each service below
               </p>
               {hasBusyAssignment && (
-                <p className="mt-2 font-mono text-[10px] text-indigo-600 font-semibold">
+                <p className="mt-2 font-mono text-xs text-indigo-600 font-semibold">
                   ⓵ Services requesting busy staff will stay in the waiting queue.
                 </p>
               )}
@@ -464,16 +469,16 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
             <div className="mb-4 p-4 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50">
               <div className="flex items-center gap-2 mb-2">
                 <Timer size={13} className="text-amber-600" />
-                <span className="font-mono text-xs font-semibold text-amber-800">Some staff are currently busy</span>
+                <span className="font-mono text-sm font-semibold text-amber-800">Some staff are currently busy</span>
               </div>
               <div className="space-y-1 mb-2">
                 {deferredItems.map(({ service, manicurist }) => (
-                  <p key={service} className="font-mono text-xs text-amber-700">
+                  <p key={service} className="font-mono text-sm text-amber-700">
                     <span className="font-bold">{service}</span> → waiting for <span className="font-bold">{manicurist.name}</span> — will go back to queue
                   </p>
                 ))}
               </div>
-              <p className="font-mono text-[10px] text-amber-600">Assign the remaining services below.</p>
+              <p className="font-mono text-xs text-amber-600">Assign the remaining services below.</p>
             </div>
           );
         })()}
@@ -493,19 +498,23 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
             return (
               <div key={key}>
-                <div className="flex items-center gap-2 mb-2">
+                {/* Row actions are real buttons, not text links: this is read at
+                    arm's length on a tablet on the floor. Equal-weight pastel
+                    outlines — no dark primary — so none of them reads as "the"
+                    answer; which one is right depends on the client. */}
+                <div className="flex items-center flex-wrap gap-2 mb-2">
                   <Badge label={row.service} variant="blue" size="md" />
                   {selectedId && (
                     <button
                       onClick={() => handleClearAssignment(key)}
-                      className="font-mono text-[10px] text-red-400 hover:text-red-500 transition-colors"
+                      className={`${rowActionBtn} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
                       title="Drop the request — anyone can take this service later"
                     >
                       Clear
                     </button>
                   )}
-                  {/* "Not now" keeps the tech as the client's request and just
-                      leaves them out of this round; "Clear" above drops the
+                  {/* "Leave in queue" keeps the tech as the client's request and
+                      just leaves them out of this round; "Clear" above drops the
                       request altogether. Only offered when the tech is actually
                       free — a busy tech already defers on her own. */}
                   {selectedId && !isNotNow && selectedManicurist?.status === 'available' && (
@@ -515,16 +524,16 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                         manicuristName: selectedManicurist.name,
                         service: row.service,
                       })}
-                      className="font-mono text-[10px] text-amber-500 hover:text-amber-600 transition-colors"
-                      title="Leave this service waiting, with this tech still requested"
+                      className={`${rowActionBtn} border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100`}
+                      title="Leave this service in the queue, with this tech still requested"
                     >
-                      Not now
+                      Leave in queue
                     </button>
                   )}
                   {isNotNow && (
                     <button
                       onClick={() => handleAssignNow(key)}
-                      className="font-mono text-[10px] text-emerald-500 hover:text-emerald-600 transition-colors"
+                      className={`${rowActionBtn} border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
                     >
                       Assign now
                     </button>
@@ -532,7 +541,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                   {isCollapsed && (
                     <button
                       onClick={() => setCollapsedRows((prev) => { const s = new Set(prev); s.delete(key); return s; })}
-                      className="font-mono text-[10px] text-blue-400 hover:text-blue-500 transition-colors"
+                      className={`${rowActionBtn} border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100`}
                     >
                       Change
                     </button>
@@ -547,16 +556,16 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                       ? <Timer size={14} className="text-amber-500 flex-shrink-0" />
                       : <Check size={14} className="text-emerald-500 flex-shrink-0" />}
                     <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: selectedManicurist.color }} />
-                    <span className="font-mono text-sm font-semibold text-gray-900">{selectedManicurist.name}</span>
+                    <span className="font-mono text-base font-semibold text-gray-900">{selectedManicurist.name}</span>
                     {isRowDeferred
-                      ? <span className="font-mono text-[10px] font-bold text-amber-600 uppercase">
-                          {isNotNow ? 'Waiting — still requested' : 'Waiting in queue'}
+                      ? <span className="font-mono text-xs font-bold text-amber-600 uppercase">
+                          {isNotNow ? 'In queue — still requested' : 'Waiting in queue'}
                         </span>
                       : requestedId === selectedManicurist.id && <Badge label="REQUESTED" variant="pink" />}
                   </div>
                 ) : eligible.length === 0 ? (
                   <div className="text-center py-4 bg-gray-50 rounded-xl">
-                    <p className="font-mono text-xs text-gray-400">No available staff with this skill</p>
+                    <p className="font-mono text-sm text-gray-400">No available staff with this skill</p>
                   </div>
                 ) : (
                   <div className="space-y-1.5">
@@ -594,9 +603,9 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
-                                <span className="font-mono text-xs text-gray-400 w-5">#{idx + 1}</span>
+                                <span className="font-mono text-sm text-gray-400 w-5">#{idx + 1}</span>
                                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: m.color }} />
-                                <span className="font-mono text-sm font-semibold text-gray-900">{m.name}</span>
+                                <span className="font-mono text-base font-semibold text-gray-900">{m.name}</span>
                                 <ServiceHistory m={m} />
                                 {isSelected && <Check size={14} className="text-emerald-500" />}
                                 {!isAlmostDone && m._isExplicitlyRequested && <Badge label="REQUESTED" variant="pink" />}
@@ -613,13 +622,13 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                   if (apptIn === null || apptIn >= APPT_PILL_WINDOW_MINS) return null;
                                   const apptLate = apptIn < 0;
                                   return (
-                                    <span className={`inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-[10px] px-2 py-0.5 animate-pulse ${apptLate ? 'bg-red-100 text-red-700 border border-red-500' : 'bg-yellow-100 text-yellow-700 border border-yellow-400'}`}>
+                                    <span className={`inline-flex items-center rounded-full font-mono font-bold tracking-wide uppercase text-xs px-2 py-0.5 animate-pulse ${apptLate ? 'bg-red-100 text-red-700 border border-red-500' : 'bg-yellow-100 text-yellow-700 border border-yellow-400'}`}>
                                       {apptLate ? `APPT ${Math.abs(apptIn)} MIN LATE` : `APPT IN ${apptIn} MIN`}
                                     </span>
                                   );
                                 })()}
                                 {m._takenByOther && (
-                                  <span className="font-mono text-[9px] text-amber-500">(assigned above)</span>
+                                  <span className="font-mono text-[11px] text-amber-500">(assigned above)</span>
                                 )}
                               </div>
                               <div className="flex items-center gap-4">
@@ -631,14 +640,14 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                   />
                                 )}
                                 {m.phone && (
-                                  <span className="flex items-center gap-1 font-mono text-[10px] text-emerald-500" title="SMS alerts enabled">
+                                  <span className="flex items-center gap-1 font-mono text-xs text-emerald-500" title="SMS alerts enabled">
                                     <MessageSquare size={10} />
                                     SMS
                                   </span>
                                 )}
-                                <span className="font-mono text-xs text-gray-500">{m.totalTurns.toFixed(1)} turns</span>
+                                <span className="font-mono text-sm text-gray-500">{m.totalTurns.toFixed(1)} turns</span>
                                 {m.clockInTime && (
-                                  <span className="flex items-center gap-1 font-mono text-[10px] text-gray-400">
+                                  <span className="flex items-center gap-1 font-mono text-xs text-gray-400">
                                     <Clock size={10} />
                                     {formatTime(m.clockInTime)}
                                   </span>
@@ -649,7 +658,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                               <div className="mt-2 flex gap-2">
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handlePickManicurist(key, m.id); }}
-                                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-amber-500 text-white font-mono text-xs font-semibold hover:bg-amber-600 active:scale-[0.98] transition-all"
+                                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-amber-500 text-white font-mono text-sm font-semibold hover:bg-amber-600 active:scale-[0.98] transition-all"
                                 >
                                   <Timer size={13} />
                                   WAIT FOR {m.name}
@@ -674,7 +683,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         <button
           onClick={() => setShowConfirm(true)}
           disabled={!Object.values(assignments).some((id) => id !== null)}
-          className={`w-full py-3 rounded-xl font-mono text-sm font-semibold transition-all duration-150 ${
+          className={`w-full py-3 rounded-xl font-mono text-base font-semibold transition-all duration-150 ${
             Object.values(assignments).some((id) => id !== null)
               ? 'bg-pink-500 text-white hover:bg-pink-600 active:scale-[0.98]'
               : 'bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -684,7 +693,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         </button>
 
         {!allAssigned && Object.values(assignments).some((id) => id !== null) && (
-          <p className="text-center mt-2 font-mono text-[10px] text-gray-400">
+          <p className="text-center mt-2 font-mono text-xs text-gray-400">
             Unassigned services will stay in the waiting queue
           </p>
         )}
@@ -701,8 +710,8 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
       {pendingNotNow && (
         <ConfirmDialog
-          message={`Unassign ${pendingNotNow.manicuristName} for now?\n\n${pendingNotNow.service} stays in the waiting queue with ${pendingNotNow.manicuristName} still requested. Assign ${pendingNotNow.manicuristName} when they're free.`}
-          confirmLabel="Leave waiting"
+          message={`Unassign ${pendingNotNow.manicuristName} for now?\n\n${pendingNotNow.service} stays in the queue with ${pendingNotNow.manicuristName} still requested. Assign ${pendingNotNow.manicuristName} when they're free.`}
+          confirmLabel="Leave in queue"
           onConfirm={() => handleNotNow(pendingNotNow.key)}
           onCancel={() => setPendingNotNow(null)}
         />
