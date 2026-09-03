@@ -4,6 +4,7 @@ import Modal from '../shared/Modal';
 import Badge from '../shared/Badge';
 import CountdownBadge from '../shared/CountdownBadge';
 import AssignConfirmDialog from '../shared/AssignConfirmDialog';
+import ConfirmDialog from '../shared/ConfirmDialog';
 import { useApp } from '../../state/AppContext';
 import { formatTime } from '../../utils/time';
 import { sendTurnAlert } from '../../utils/sms';
@@ -48,6 +49,22 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // Rows the receptionist has explicitly deferred: the tech stays the client's
+  // request, but is not assigned in this round. A client having two services
+  // back-to-back with different techs (Gel Builder with CHRISTINA now, Pedicure
+  // with LEO after) should only tie up CHRISTINA — LEO picks the client up when
+  // he's free. Without this, the only way to leave LEO out was "Clear", which
+  // drops the request entirely and hands the pedicure to whoever is next.
+  //
+  // A deferred row takes the same path as a row whose tech is busy: a waiting
+  // child that keeps clientRequest/requestedManicuristId and the 0.5 request
+  // turn. The difference is that this is a deliberate choice rather than a
+  // consequence of the tech's current status.
+  const [notNowRows, setNotNowRows] = useState<Set<string>>(new Set());
+  const [pendingNotNow, setPendingNotNow] = useState<
+    { key: string; manicuristName: string; service: string } | null
+  >(null);
+
   const assignedManicuristIds = useMemo(() => {
     const ids = new Set<string>();
     for (const id of Object.values(assignments)) {
@@ -56,7 +73,31 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     return ids;
   }, [assignments]);
 
-  const allAssigned = Object.values(assignments).every((id) => id !== null);
+  // A deferred row has a tech picked but is NOT being assigned this round, so
+  // it must not count toward "ASSIGN ALL" or the button lies about what the
+  // confirm step is going to do.
+  const allAssigned = serviceRows.every(
+    (r) => assignments[r.uniqueKey] !== null && !notNowRows.has(r.uniqueKey)
+  );
+
+  /** True when this row is going to become a waiting child rather than an
+   *  assignment — either the tech is busy, or the receptionist deferred it. */
+  function isRowDeferredNow(rowKey: string): boolean {
+    if (notNowRows.has(rowKey)) return true;
+    const mId = assignments[rowKey];
+    if (!mId) return false;
+    return state.manicurists.find((x) => x.id === mId)?.status !== 'available';
+  }
+
+  function handleNotNow(rowKey: string) {
+    setNotNowRows((prev) => new Set([...prev, rowKey]));
+    setCollapsedRows((prev) => new Set([...prev, rowKey]));
+    setPendingNotNow(null);
+  }
+
+  function handleAssignNow(rowKey: string) {
+    setNotNowRows((prev) => { const s = new Set(prev); s.delete(rowKey); return s; });
+  }
 
   function getEligibleForRow(service: ServiceType, rowKey: string): (Manicurist & { _takenByOther: boolean; _isSuggested: boolean; _isExplicitlyRequested: boolean; _almostDone: boolean })[] {
     const skilled = getEligibleForService(service, state.manicurists, state.salonServices, state.queue);
@@ -107,19 +148,46 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     return [preferredRow];
   }
 
+  // Picking or clearing a tech is an explicit fresh decision about this row, so
+  // both drop any earlier "not now" — otherwise a row could silently stay
+  // deferred under a tech the receptionist just changed.
   function handlePickManicurist(rowKey: string, manicuristId: string) {
     setAssignments((prev) => ({ ...prev, [rowKey]: manicuristId }));
     setCollapsedRows((prev) => new Set([...prev, rowKey]));
+    handleAssignNow(rowKey);
   }
 
   function handleClearAssignment(rowKey: string) {
     setAssignments((prev) => ({ ...prev, [rowKey]: null }));
     setCollapsedRows((prev) => { const s = new Set(prev); s.delete(rowKey); return s; });
+    handleAssignNow(rowKey);
   }
 
   function getTurnValueForService(service: ServiceType): number {
     const svc = state.salonServices.find((s) => s.name === service);
     return svc?.turnValue ?? SERVICE_TURN_VALUES[service] ?? 0;
+  }
+
+  /** Did the CLIENT ask for this tech for this service? `clientRequest === true`
+   *  is the only truth — a booking parked in a tech's column carries her id with
+   *  clientRequest: false. Shared by the commit path and the confirm preview so
+   *  the dialog can never show a turn count the commit doesn't credit. */
+  function wasClientRequest(service: ServiceType, mId: string): boolean {
+    return (client.serviceRequests || []).some(
+      (r) => r.service === service && r.clientRequest === true && r.manicuristIds.includes(mId)
+    );
+  }
+
+  /** Turn a deferred (waiting) row credits. A genuine client request is a half
+   *  turn (a Combo is a full one); anything else earns the service's full turn.
+   *  Deferring used to stamp EVERY waiting row as a request on the reasoning
+   *  that choosing to wait is itself a request — but that quietly halved the
+   *  turn on work the client never requested. Tony's rule, 2026-09-03: keep the
+   *  full turn when it wasn't a request. */
+  function deferredTurnValue(service: ServiceType, mId: string): number {
+    const baseTurn = getTurnValueForService(service);
+    if (baseTurn <= 0 || !wasClientRequest(service, mId)) return baseTurn;
+    return state.salonServices.find((s) => s.name === service)?.category === 'Combo' ? 1 : 0.5;
   }
 
   function handleConfirm() {
@@ -132,7 +200,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
       const mId = assignments[key];
       if (mId) {
         const m = state.manicurists.find((x) => x.id === mId);
-        if (m && m.status === 'available') {
+        if (m && m.status === 'available' && !notNowRows.has(key)) {
           if (!manicuristGroups.has(mId)) {
             manicuristGroups.set(mId, { services: [], turnValue: 0 });
           }
@@ -210,19 +278,21 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     }
 
     for (const { service, mId } of deferredRows) {
-      const baseTurn = getTurnValueForService(service);
+      const wasRequested = wasClientRequest(service, mId);
       // Deterministic id — parent + manicurist + service uniquely identifies
       // a deferred-row slot, so re-firing produces the same child id.
       const entry: QueueEntry = {
         id: `${client.id}-${mId}-${service}`,
         clientName: client.clientName,
         services: [service],
-        turnValue: baseTurn > 0 ? (state.salonServices.find((s) => s.name === service)?.category === 'Combo' ? 1 : 0.5) : 0,
-        // Deferred row = user explicitly chose to wait for this (busy) manicurist,
-        // so this is a real customer request. Stamp clientRequest: true.
-        serviceRequests: [{ service: service as ServiceType, manicuristIds: [mId], clientRequest: true as const }],
-        requestedManicuristId: mId,
-        isRequested: true,
+        turnValue: deferredTurnValue(service, mId),
+        // The tech is carried either way so the waiting card still knows who
+        // it's for — but clientRequest only says true when the CLIENT asked.
+        // A false entry is the parked-column shape: this tech is intended,
+        // the client didn't request her, and the full turn stands.
+        serviceRequests: [{ service: service as ServiceType, manicuristIds: [mId], clientRequest: wasRequested }],
+        requestedManicuristId: wasRequested ? mId : null,
+        isRequested: wasRequested,
         isAppointment: client.isAppointment,
         assignedManicuristId: null,
         status: 'waiting',
@@ -292,13 +362,13 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
   function buildConfirmRows() {
     const assignableGroups = new Map<string, { services: string[]; turnValue: number }>();
-    const deferredGroups = new Map<string, { services: string[] }>();
+    const deferredGroups = new Map<string, { services: string[]; turnValue: number }>();
 
     for (const row of serviceRows) {
       const mId = assignments[row.uniqueKey];
       if (!mId) continue;
       const m = state.manicurists.find((x) => x.id === mId);
-      if (m && m.status === 'available') {
+      if (m && m.status === 'available' && !notNowRows.has(row.uniqueKey)) {
         if (!assignableGroups.has(mId)) assignableGroups.set(mId, { services: [], turnValue: 0 });
         const group = assignableGroups.get(mId)!;
         group.services.push(row.service);
@@ -310,8 +380,10 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
           group.turnValue += baseTurn;
         }
       } else if (m) {
-        if (!deferredGroups.has(mId)) deferredGroups.set(mId, { services: [] });
-        deferredGroups.get(mId)!.services.push(row.service);
+        if (!deferredGroups.has(mId)) deferredGroups.set(mId, { services: [], turnValue: 0 });
+        const g = deferredGroups.get(mId)!;
+        g.services.push(row.service);
+        g.turnValue += deferredTurnValue(row.service, mId);
       }
     }
 
@@ -331,10 +403,10 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     for (const [mId, group] of deferredGroups) {
       const m = state.manicurists.find((x) => x.id === mId);
       if (!m) continue;
-      // Deferred = user is explicitly waiting for this person, so the confirm
-      // dialog should reflect that as a request even if the original client
-      // didn't carry a clientRequest entry.
-      rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: 0, isDeferred: true, isRequested: true });
+      // Must use the SAME tests as the deferred loop in handleConfirm, or the
+      // dialog shows a REQUESTED badge and a turn count the commit won't credit.
+      const wasRequested = group.services.some((s) => wasClientRequest(s as ServiceType, mId));
+      rows.push({ manicuristName: m.name, manicuristColor: m.color, services: group.services, turnsToAdd: group.turnValue, isDeferred: true, isRequested: wasRequested });
     }
     return rows;
   }
@@ -416,7 +488,8 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
             const rowIs4thSpecial = rowSvc?.isFourthPositionSpecial === true;
             const isCollapsed = collapsedRows.has(key) && !!selectedId;
             const selectedManicurist = selectedId ? state.manicurists.find((m) => m.id === selectedId) : null;
-            const isRowDeferred = !!selectedManicurist && selectedManicurist.status === 'busy';
+            const isRowDeferred = !!selectedManicurist && isRowDeferredNow(key);
+            const isNotNow = notNowRows.has(key);
 
             return (
               <div key={key}>
@@ -426,8 +499,34 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                     <button
                       onClick={() => handleClearAssignment(key)}
                       className="font-mono text-[10px] text-red-400 hover:text-red-500 transition-colors"
+                      title="Drop the request — anyone can take this service later"
                     >
                       Clear
+                    </button>
+                  )}
+                  {/* "Not now" keeps the tech as the client's request and just
+                      leaves them out of this round; "Clear" above drops the
+                      request altogether. Only offered when the tech is actually
+                      free — a busy tech already defers on her own. */}
+                  {selectedId && !isNotNow && selectedManicurist?.status === 'available' && (
+                    <button
+                      onClick={() => setPendingNotNow({
+                        key,
+                        manicuristName: selectedManicurist.name,
+                        service: row.service,
+                      })}
+                      className="font-mono text-[10px] text-amber-500 hover:text-amber-600 transition-colors"
+                      title="Leave this service waiting, with this tech still requested"
+                    >
+                      Not now
+                    </button>
+                  )}
+                  {isNotNow && (
+                    <button
+                      onClick={() => handleAssignNow(key)}
+                      className="font-mono text-[10px] text-emerald-500 hover:text-emerald-600 transition-colors"
+                    >
+                      Assign now
                     </button>
                   )}
                   {isCollapsed && (
@@ -450,7 +549,9 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                     <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: selectedManicurist.color }} />
                     <span className="font-mono text-sm font-semibold text-gray-900">{selectedManicurist.name}</span>
                     {isRowDeferred
-                      ? <span className="font-mono text-[10px] font-bold text-amber-600 uppercase">Waiting in queue</span>
+                      ? <span className="font-mono text-[10px] font-bold text-amber-600 uppercase">
+                          {isNotNow ? 'Waiting — still requested' : 'Waiting in queue'}
+                        </span>
                       : requestedId === selectedManicurist.id && <Badge label="REQUESTED" variant="pink" />}
                   </div>
                 ) : eligible.length === 0 ? (
@@ -595,6 +696,15 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
           rows={buildConfirmRows()}
           onConfirm={handleConfirm}
           onCancel={() => setShowConfirm(false)}
+        />
+      )}
+
+      {pendingNotNow && (
+        <ConfirmDialog
+          message={`Unassign ${pendingNotNow.manicuristName} for now?\n\n${pendingNotNow.service} stays in the waiting queue with ${pendingNotNow.manicuristName} still requested. Assign ${pendingNotNow.manicuristName} when they're free.`}
+          confirmLabel="Leave waiting"
+          onConfirm={() => handleNotNow(pendingNotNow.key)}
+          onCancel={() => setPendingNotNow(null)}
         />
       )}
     </>
