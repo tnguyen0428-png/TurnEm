@@ -498,6 +498,13 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
             const selectedManicurist = selectedId ? state.manicurists.find((m) => m.id === selectedId) : null;
             const isRowDeferred = !!selectedManicurist && isRowDeferredNow(key);
             const isNotNow = notNowRows.has(key);
+            // When the client requested a specific tech, getEligibleForRow
+            // collapses the picker to that one person — so "Change" would
+            // expand the row and offer the same name back. Derived from the
+            // rendered list rather than from requestedId, so the cases where
+            // the picker DOES open up (tech not clocked in, or already taken
+            // by another row on this client) still get the button.
+            const isRequestLocked = eligible.length === 1 && eligible[0]._isExplicitlyRequested;
 
             return (
               <div key={key}>
@@ -541,7 +548,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                       Assign now
                     </button>
                   )}
-                  {isCollapsed && (
+                  {isCollapsed && !isRequestLocked && (
                     <button
                       onClick={() => setCollapsedRows((prev) => { const s = new Set(prev); s.delete(key); return s; })}
                       className={`${rowActionBtn} border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100`}
