@@ -19,8 +19,9 @@ export function useCountdown(startedAt: number | null, totalDurationMs: number):
 
   const remainingMs = startedAt + totalDurationMs - now;
   const isFinishingUp = remainingMs <= 0;
-  // Measured against the shared clock rather than Date.now(), so the window
-  // widens the moment that clock ticks past the cutoff — no stale render.
+  // Measured against the shared clock rather than Date.now(). The window is a
+  // flat 15 minutes now, so `now` no longer changes the answer — it stays
+  // passed so a time-of-day rule can return without chasing call sites.
   const isAlmostDone = !isFinishingUp && remainingMs <= getAlmostDoneWindowMs(now);
 
   let display: string;

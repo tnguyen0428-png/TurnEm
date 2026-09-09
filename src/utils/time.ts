@@ -19,27 +19,28 @@ export function getNowMinutesLA(at: number = Date.now()): number {
 
 // ── "Almost done" window ───────────────────────────────────────────────────
 //
-// How close to finishing a busy tech must be to count as almost-done. It is
-// wider late in the day (Tony 2026-08-31): at the end of a shift you want the
-// next client lined up rather than left waiting for someone to actually free
-// up.
+// How close to finishing a busy tech must be to count as almost-done.
 //
-// CHANGE THE CUTOFF OR THE WINDOWS HERE — these three constants are the whole
-// rule, and both places that care read them.
+// One window, all day (Tony 2026-09-09). It used to widen from 10 to 15 minutes
+// at 4 PM; he asked for a flat 15, so the same rule now holds at 10 AM and at
+// 7 PM and there is no hour of the day where the list behaves differently.
+//
+// CHANGE THE WINDOW HERE — this constant is the whole rule, and both places
+// that care read it through the function below.
 //
 // This is not only cosmetic. The same window decides who appears in the assign
-// list: a busy tech inside it is offered alongside genuinely available ones. So
-// after the cutoff, late walk-ins start being routed to techs who are still
-// working five minutes sooner than they were before.
-export const ALMOST_DONE_CUTOFF_HOUR_LA = 16;                 // 4 PM LA
-export const ALMOST_DONE_WINDOW_MS = 10 * 60 * 1000;          // before the cutoff
-export const ALMOST_DONE_WINDOW_LATE_MS = 15 * 60 * 1000;     // at or after it
+// list: a busy tech inside it is offered alongside genuinely available ones, so
+// widening it routes walk-ins to techs who are still working sooner than a
+// narrower window would.
+export const ALMOST_DONE_WINDOW_MS = 15 * 60 * 1000;
 
-/** The almost-done window in force at `at` (defaults to now), LA time. */
-export function getAlmostDoneWindowMs(at: number = Date.now()): number {
-  return getNowMinutesLA(at) >= ALMOST_DONE_CUTOFF_HOUR_LA * 60
-    ? ALMOST_DONE_WINDOW_LATE_MS
-    : ALMOST_DONE_WINDOW_MS;
+/**
+ * The almost-done window. Takes a timestamp it no longer needs — the window is
+ * flat now, but both callers pass "when", and keeping the parameter means a
+ * time-of-day rule can come back here without touching them again.
+ */
+export function getAlmostDoneWindowMs(_at: number = Date.now()): number {
+  return ALMOST_DONE_WINDOW_MS;
 }
 
 export function getTodayLA(): string {
