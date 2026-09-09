@@ -8,6 +8,8 @@ import { useEffect, useRef, useState } from 'react';
 import { X, ArrowLeft, Lock } from 'lucide-react';
 import { openShift } from '../../lib/shifts';
 import { appendEvent as appendClockEvent } from '../../lib/clockLog';
+import { pushToOwners } from '../../utils/pushNotifications';
+import { formatTime } from '../../utils/time';
 import MoneyCountTable, {
   totalFromCount,
   type DenominationCount,
@@ -89,6 +91,16 @@ export default function OpenShiftModal({ receptionists, onClose, onOpened, onClo
       setError('Could not open shift — try again.');
       return;
     }
+    // Tell the owner the salon is open, and by whom (Tony 2026-09-09 — the
+    // close already pushed, the open didn't). Fire-and-forget and deliberately
+    // not awaited: a failed notification must never leave an opened drawer
+    // looking like it didn't open. The PIN stage already identified her, so
+    // the name here is the same one written to opened_by_receptionist_id.
+    void pushToOwners(
+      `${matched.name} opened the salon at ${formatTime(shift.openedAt)}`,
+      `Starting cash ${formatMoneyCents(shift.openingCashCents)} — drawer #${shift.drawerNumber} · ${shift.businessDate}`,
+    );
+
     // Clock the opener in at the moment the shift opens, same as the
     // Register's separate time-clock flow: durable clock_events row first,
     // then the reducer toggle. Skip if they're already clocked in so a

@@ -10,6 +10,7 @@ import {
   type ShiftBalanceLine,
 } from '../../lib/shifts';
 import { pushToOwners } from '../../utils/pushNotifications';
+import { formatTime } from '../../utils/time';
 import {
   formatMoneyCents,
   fetchTicketsForDate,
@@ -181,13 +182,26 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
     // closed drawer looking like it did not close.
     const varianceCents = declaredCents - expectedCashCents;
     const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+    // Named and timed, to match the open (Tony 2026-09-09: alerts should say
+    // who). `matched` is the PIN that authorized this close and is the same id
+    // written to closed_by_receptionist_id, so the name can't drift from the
+    // shift row. Drawer and date move to the body now that the title carries
+    // the person.
     void pushToOwners(
-      `Shift closed ${shift.businessDate} - drawer ${shift.drawerNumber}`,
-      `${usd(breakdown.totalReceipts)} receipts, ${usd(breakdown.services)} services, ` +
-        `tips ${usd(breakdown.tips)}. ` +
-        (varianceCents === 0
+      `${matched.name} closed the salon at ${formatTime(Date.now())}`,
+      [
+        `Gross ${usd(breakdown.gross)}`,
+        `Service ${usd(breakdown.services)}`,
+        `Gift ${usd(breakdown.giftCert)}`,
+        `Discounts ${breakdown.discounts > 0 ? '−' : ''}${usd(breakdown.discounts)}`,
+        // No tips line: clients hand tips straight to the manicurist, so
+        // tip_cents is always 0 and the line would report nothing every night.
+      ].join(' · ')
+        + '. '
+        + (varianceCents === 0
           ? 'Cash balanced.'
-          : `Cash ${varianceCents > 0 ? 'over' : 'short'} ${usd(Math.abs(varianceCents))}.`),
+          : `Cash ${varianceCents > 0 ? 'over' : 'short'} ${usd(Math.abs(varianceCents))}.`)
+        + ` — drawer #${shift.drawerNumber} · ${shift.businessDate}`,
     );
 
     onClosed();
@@ -202,8 +216,14 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
     let tips = 0;
     let tax = 0;
     let ticketDiscounts = 0;
+    // Gross = sum of ticket totals, the SAME definition as Blueprint → Sales
+    // "Gross Sales" (sum of t.totalCents over closed tickets). Kept identical
+    // on purpose: the closing alert quotes this number, and a second, subtly
+    // different "gross" would have Tony reconciling two of his own screens.
+    let gross = 0;
     for (const t of tickets) {
       if (t.status === 'voided') continue;
+      gross += t.totalCents;
       for (const it of t.items) {
         const lineCents = it.unitPriceCents * it.quantity;
         const discount = it.discountCents ?? 0;
@@ -221,7 +241,7 @@ export default function CloseShiftScreen({ shift, receptionists, onClose, onClos
     const discounts = lineDiscounts + ticketDiscounts;
     const subTotal = services + retail + giftCert + series - discounts;
     const totalReceipts = subTotal + tips + tax;
-    return { services, retail, giftCert, series, discounts, subTotal, tips, tax, totalReceipts };
+    return { gross, services, retail, giftCert, series, discounts, subTotal, tips, tax, totalReceipts };
   }, [tickets]);
 
   useEffect(() => {
