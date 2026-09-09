@@ -33,6 +33,16 @@ interface PinVerifyModalProps {
   gate: string;
   /** What specifically, if there is one: the date being opened, the shift id. */
   detail?: string;
+  /**
+   * Personal PINs that also unlock this gate, on top of the master PIN.
+   *
+   * Used where the surface is the staff member's own same-day work (Tony
+   * 2026-09-09: a receptionist may reopen TODAY's closed shift with her own
+   * code; a previous day stays admin-only, so the caller simply passes nothing
+   * on those days). Matched before the master PIN, so no round-trip is needed
+   * for the common case, and the audit row + owner push name who it was.
+   */
+  extraPins?: Array<{ pin: string; name: string }>;
 }
 
 
@@ -43,6 +53,7 @@ export function PinVerifyModal({
   title = 'Enter Admin PIN',
   gate,
   detail,
+  extraPins,
 }: PinVerifyModalProps) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -64,6 +75,16 @@ export function PinVerifyModal({
     e.preventDefault();
     if (!pin) return;
     setError('');
+
+    // Personal PINs first — a match here needs no server call, and records the
+    // name so the log doesn't read as an admin unlock.
+    const staff = (extraPins ?? []).find((p) => p.pin && p.pin === pin);
+    if (staff) {
+      recordPinAttempt(gate, detail, 'granted', true, staff.name);
+      onSuccess();
+      return;
+    }
+
     setLoading(true);
     const current = await fetchAdminPin();
     setLoading(false);

@@ -241,6 +241,20 @@ export default function RegisterScreen() {
     () => state.manicurists.filter((m) => m.isReceptionist),
     [state.manicurists],
   );
+
+  // Personal codes that may reopen a closed shift WITHOUT the master PIN —
+  // today's drawer only (Tony 2026-09-09). Reopening the day she just closed is
+  // ordinary receptionist work (a missed ticket, a mis-keyed payment); reaching
+  // back into a previous day is not, so on any earlier date this list is empty
+  // and the gate falls back to admin-PIN-only. Every unlock is still logged and
+  // pushed to the owner, now under her name.
+  const sameDayReceptionistPins = useMemo(() => {
+    const today = getTodayLA();
+    if (!pendingViewShift || pendingViewShift.businessDate !== today) return [];
+    return receptionists
+      .filter((r) => r.pinCode)
+      .map((r) => ({ pin: r.pinCode as string, name: r.name }));
+  }, [pendingViewShift, receptionists]);
   const openTickets = useMemo(() => tickets.filter((t) => t.status === 'open'), [tickets]);
   const closedTickets = useMemo(() => tickets.filter((t) => t.status === 'closed'), [tickets]);
   const voidedTickets = useMemo(() => tickets.filter((t) => t.status === 'voided'), [tickets]);
@@ -320,7 +334,11 @@ export default function RegisterScreen() {
               <button
                 key={cs.id}
                 onClick={() => setPendingViewShift(cs)}
-                title={cs.closedAt ? `Closed ${new Date(cs.closedAt).toLocaleString()} — admin PIN required to view` : 'Admin PIN required to view'}
+                title={`${cs.closedAt ? `Closed ${new Date(cs.closedAt).toLocaleString()} — ` : ''}${
+                  cs.businessDate === getTodayLA()
+                    ? 'enter your PIN to open'
+                    : 'admin PIN required to open'
+                }`}
                 className="h-12 px-4 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 font-mono text-sm font-bold tracking-wider border border-gray-200 transition-colors flex items-center"
               >
                 SHIFT CLOSED
@@ -475,8 +493,13 @@ export default function RegisterScreen() {
       <PinVerifyModal
         isOpen={pendingViewShift !== null}
         gate="register:closed-shift"
-        detail={pendingViewShift ? `drawer #${pendingViewShift.drawerNumber}` : undefined}
-        title="Enter Admin PIN to open a closed shift"
+        detail={pendingViewShift ? `drawer #${pendingViewShift.drawerNumber} · ${pendingViewShift.businessDate}` : undefined}
+        extraPins={sameDayReceptionistPins}
+        title={
+          sameDayReceptionistPins.length > 0
+            ? 'Enter your PIN to open the closed shift'
+            : 'Enter Admin PIN to open a closed shift'
+        }
         onSuccess={() => { setViewShift(pendingViewShift); setPendingViewShift(null); }}
         onCancel={() => setPendingViewShift(null)}
       />
