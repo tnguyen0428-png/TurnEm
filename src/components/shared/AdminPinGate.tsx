@@ -34,15 +34,25 @@ interface PinVerifyModalProps {
   /** What specifically, if there is one: the date being opened, the shift id. */
   detail?: string;
   /**
-   * Personal PINs that also unlock this gate, on top of the master PIN.
+   * Personal PINs, used to NAME whoever is typing — pass them whether or not
+   * they open this gate. Whether one of them also unlocks is `staffPinsUnlock`.
    *
-   * Used where the surface is the staff member's own same-day work (Tony
-   * 2026-09-09: a receptionist may reopen TODAY's closed shift with her own
-   * code; a previous day stays admin-only, so the caller simply passes nothing
-   * on those days). Matched before the master PIN, so no round-trip is needed
-   * for the common case, and the audit row + owner push name who it was.
+   * Identifying on a REFUSAL is the point (Tony 2026-09-09): a receptionist's
+   * code typed on a previous day's closed shift is still refused, but "DENISE
+   * tried to open it" is something he can act on and "someone tried" is not.
+   * Matched before the master PIN, so the common case needs no round-trip.
+   *
+   * Two people sharing a code would report as the first match — the salon
+   * doesn't do that today, and the alternative (refusing to name anyone) loses
+   * the name in every honest case to hedge against one that doesn't happen.
    */
-  extraPins?: Array<{ pin: string; name: string }>;
+  staffPins?: Array<{ pin: string; name: string }>;
+  /** True where a personal code is allowed to open this gate — a receptionist
+   *  may reopen TODAY's closed shift, but not a previous day's. */
+  staffPinsUnlock?: boolean;
+  /** Shown when a real staff code is refused because `staffPinsUnlock` is off.
+   *  Says why the code is right but the day is wrong. */
+  staffPinDeniedMessage?: string;
 }
 
 
@@ -53,7 +63,9 @@ export function PinVerifyModal({
   title = 'Enter Admin PIN',
   gate,
   detail,
-  extraPins,
+  staffPins,
+  staffPinsUnlock = false,
+  staffPinDeniedMessage = 'That code does not open this — Admin PIN required.',
 }: PinVerifyModalProps) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -77,11 +89,21 @@ export function PinVerifyModal({
     setError('');
 
     // Personal PINs first — a match here needs no server call, and records the
-    // name so the log doesn't read as an admin unlock.
-    const staff = (extraPins ?? []).find((p) => p.pin && p.pin === pin);
-    if (staff) {
+    // name so neither the log nor the alert reads as an admin unlock.
+    const staff = (staffPins ?? []).find((p) => p.pin && p.pin === pin);
+    if (staff && staffPinsUnlock) {
       recordPinAttempt(gate, detail, 'granted', true, staff.name);
       onSuccess();
+      return;
+    }
+    if (staff) {
+      // Right person, wrong surface: a real code that this gate doesn't accept.
+      // Refused, but logged and pushed BY NAME — that's the whole reason the
+      // full staff list is passed in even where it cannot unlock anything.
+      recordPinAttempt(gate, detail, 'denied', true, staff.name);
+      setError(staffPinDeniedMessage);
+      setPin('');
+      setTimeout(() => inputRef.current?.focus(), 0);
       return;
     }
 

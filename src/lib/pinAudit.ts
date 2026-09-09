@@ -20,8 +20,11 @@ const GATE_LABELS: Record<string, string> = {
  * "<who>'s PIN used — <label>" wording, so adding a phrase is an opt-in per
  * gate rather than a silent rewrite of every existing alert.
  */
-const GATE_ACTIONS: Record<string, string> = {
-  'register:closed-shift': 'opened a closed shift',
+const GATE_ACTIONS: Record<string, { did: string; tried: string }> = {
+  'register:closed-shift': {
+    did: 'opened a closed shift',
+    tried: 'tried to open a closed shift',
+  },
 };
 
 /**
@@ -41,15 +44,20 @@ export function recordPinAttempt(
   detail: string | undefined,
   outcome: 'granted' | 'denied',
   alertOwner = true,
-  /** Who unlocked it, when the gate was opened with something other than the
-   *  master PIN (e.g. a receptionist's own code on a same-day closed shift).
-   *  Keeps the push honest — "Admin PIN used" for a staff code would send Tony
-   *  looking for an admin who was never there. */
+  /** Whose code it was, whenever the entered PIN is one we can put a name to —
+   *  a receptionist's own code, granted or refused. Absent means the code
+   *  matched nothing personal: the master PIN (grant) or an unrecognized code
+   *  (refusal). Keeps the alert honest either way; "Admin PIN used" for a staff
+   *  code would send Tony looking for an admin who was never there, and
+   *  "someone tried" for a code we could name is the thing he can't act on. */
   actor?: string,
 ) {
+  // The name goes into `detail` too — the log table has no actor column, and a
+  // row that can't say who is half a record.
+  const loggedDetail = [detail, actor].filter(Boolean).join(' · ') || null;
   void supabase
     .from('admin_pin_attempt_log')
-    .insert({ gate, detail: detail ?? null, outcome })
+    .insert({ gate, detail: loggedDetail, outcome })
     .then(({ error }) => {
       if (error) console.warn('[pin] attempt log failed:', error.message);
     });
@@ -61,13 +69,18 @@ export function recordPinAttempt(
   const where = GATE_LABELS[gate] ?? gate;
 
   const action = GATE_ACTIONS[gate];
-  if (outcome === 'granted' && action) {
-    // Named when a personal code was used; the master PIN says nothing about
-    // who is holding it, so it stays "Admin" rather than guessing at a name.
+  if (action) {
     const at = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    // Who, as precisely as the entered code allows. A personal code names the
+    // person on both outcomes. The master PIN identifies nobody who holds it,
+    // so a grant is "Admin"; a refusal matched nothing at all, so it is
+    // "Someone" — and the body says the code itself was unrecognized, which is
+    // the difference between a wrong keypress and a stranger guessing.
+    const who = actor ?? (outcome === 'granted' ? 'Admin' : 'Someone');
+    const tail = [detail, when].filter(Boolean).join(' — ');
     void pushToOwners(
-      `${actor ?? 'Admin'} ${action} at ${at}`,
-      detail ? `${detail} — ${when}` : when,
+      `${who} ${outcome === 'granted' ? action.did : action.tried} at ${at}`,
+      outcome === 'granted' || actor ? tail : `Unrecognized code — ${tail}`,
     );
     return;
   }

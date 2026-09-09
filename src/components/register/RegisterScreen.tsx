@@ -242,19 +242,23 @@ export default function RegisterScreen() {
     [state.manicurists],
   );
 
-  // Personal codes that may reopen a closed shift WITHOUT the master PIN —
-  // today's drawer only (Tony 2026-09-09). Reopening the day she just closed is
-  // ordinary receptionist work (a missed ticket, a mis-keyed payment); reaching
-  // back into a previous day is not, so on any earlier date this list is empty
-  // and the gate falls back to admin-PIN-only. Every unlock is still logged and
-  // pushed to the owner, now under her name.
-  const sameDayReceptionistPins = useMemo(() => {
-    const today = getTodayLA();
-    if (!pendingViewShift || pendingViewShift.businessDate !== today) return [];
-    return receptionists
+  // Every receptionist code, passed to the gate on EVERY date — not because
+  // they all open it, but so the alert can name whoever typed one. A code
+  // refused on a previous day still tells Tony who tried; before this, his
+  // 9/09 test on the 9/08 drawer pushed "Admin PIN failed" with no name.
+  const receptionistPins = useMemo(
+    () => receptionists
       .filter((r) => r.pinCode)
-      .map((r) => ({ pin: r.pinCode as string, name: r.name }));
-  }, [pendingViewShift, receptionists]);
+      .map((r) => ({ pin: r.pinCode as string, name: r.name })),
+    [receptionists],
+  );
+
+  // ...but a personal code only UNLOCKS today's drawer (Tony 2026-09-09).
+  // Reopening the day she just closed is ordinary receptionist work (a missed
+  // ticket, a mis-keyed payment); reaching back into a previous day is not, and
+  // stays master-PIN-only.
+  const canUseOwnPin =
+    pendingViewShift !== null && pendingViewShift.businessDate === getTodayLA();
   const openTickets = useMemo(() => tickets.filter((t) => t.status === 'open'), [tickets]);
   const closedTickets = useMemo(() => tickets.filter((t) => t.status === 'closed'), [tickets]);
   const voidedTickets = useMemo(() => tickets.filter((t) => t.status === 'voided'), [tickets]);
@@ -494,9 +498,11 @@ export default function RegisterScreen() {
         isOpen={pendingViewShift !== null}
         gate="register:closed-shift"
         detail={pendingViewShift ? `drawer #${pendingViewShift.drawerNumber} · ${pendingViewShift.businessDate}` : undefined}
-        extraPins={sameDayReceptionistPins}
+        staffPins={receptionistPins}
+        staffPinsUnlock={canUseOwnPin}
+        staffPinDeniedMessage="Your PIN opens today's shift only — a previous day needs the Admin PIN."
         title={
-          sameDayReceptionistPins.length > 0
+          canUseOwnPin
             ? 'Enter your PIN to open the closed shift'
             : 'Enter Admin PIN to open a closed shift'
         }
