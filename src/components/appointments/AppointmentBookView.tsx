@@ -275,52 +275,9 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nudgePopup]);
 
-  // Set of appt ids that visually collide with another live appt in the
-  // same manicurist column at the exact same start time. Used to paint
-  // the small OVERLAP pill. Recomputed only when the appointments list
-  // changes (the membership test below is O(1)).
-  const collidingApptIds = useMemo(() => {
-    const out = new Set<string>();
-    const byKey = new Map<string, string[]>();
-    for (const a of state.appointments) {
-      if (a.status === 'cancelled' || a.status === 'no-show') continue;
-      const key = `${a.date}__${a.manicuristId ?? ''}__${a.time}`;
-      const list = byKey.get(key) ?? [];
-      list.push(a.id);
-      byKey.set(key, list);
-    }
-    for (const list of byKey.values()) {
-      if (list.length >= 2) for (const id of list) out.add(id);
-    }
-    return out;
-  }, [state.appointments]);
-
-  // For every double-booked appointment, the OTHER appointment(s) sharing its
-  // exact (date, manicurist, time) slot — used to explain the "!" caution
-  // badge on hover (who it clashes with), instead of a generic message.
-  const collisionPartnersById = useMemo(() => {
-    const byKey = new Map<string, typeof state.appointments>();
-    for (const a of state.appointments) {
-      if (a.status === 'cancelled' || a.status === 'no-show') continue;
-      const key = `${a.date}__${a.manicuristId ?? ''}__${a.time}`;
-      const list = byKey.get(key) ?? [];
-      list.push(a);
-      byKey.set(key, list);
-    }
-    const out = new Map<string, Array<{ name: string; time: string }>>();
-    for (const list of byKey.values()) {
-      if (list.length < 2) continue;
-      for (const a of list) {
-        out.set(
-          a.id,
-          list
-            .filter((o) => o.id !== a.id)
-            .map((o) => ({ name: o.clientName || 'Walk-in', time: o.time })),
-        );
-      }
-    }
-    return out;
-  }, [state.appointments]);
+  // Double-booked ("!") detection lives further down, next to the block
+  // builder — it is computed from the blocks the book actually DRAWS
+  // (see collidingBlockKeys below), not from the appointment header.
 
   // Auto-fit dimensions — initial values used for the very first render before
   // the ResizeObserver in useLayoutEffect computes the real fit.
@@ -864,7 +821,17 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     return result;
   }
 
-  function getServiceBlocks(mId: string | null): ServiceBlock[] {
+  // Lays out EVERY block of the day across ALL columns in one pass. Placement
+  // never depended on which column we were rendering — the loop computes
+  // `assignedMId` for every service and the old per-column version simply threw
+  // away the ones that didn't match. Building the whole board once means the
+  // "!" double-booked check can be asked the only question that matters ("what
+  // else is drawn in this column at this minute?") instead of re-deriving it
+  // from the appointment header, which stops agreeing with the board the moment
+  // a service is moved to another tech (Linda -> Katelyn/Mia, 2026-09-10, left
+  // a phantom "!" on Mary in Macy's column). Also cheaper: one pass instead of
+  // one per visible technician.
+  function getAllServiceBlocks(): ServiceBlock[] {
     const blocks: ServiceBlock[] = [];
 
     for (const appt of dayAppts) {
@@ -878,7 +845,13 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
       // pedi requested with Tammy auto-shifts to start when the fill with
       // Sam ends, instead of overlapping it at 10:00.
       let elapsedMins = 0;
-      let isFirst = true;
+      // `isFirst` means "first service of this appt IN THIS COLUMN" — it drives
+      // the block's left padding and whether it wears the time label. The old
+      // per-column pass got that for free by starting `true` and flipping on
+      // the first match. Laying out every column at once, we have to track it
+      // per column, or a two-tech booking would lose the label on its second
+      // tech's block.
+      const firstSeenInColumn = new Set<string>();
 
       // When "Same time" is checked on the appointment, multi-service bookings
       // should fan out across DIFFERENT staff columns at the same start time
@@ -974,7 +947,10 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
         // the next service) reflects both staff- and booking-level tweaks.
         const dur = svcDuration(svcName, assignedMId, req?.durationAdjustment);
 
-        if (assignedMId === mId) {
+        {
+          const colKey  = assignedMId ?? '';
+          const isFirst = !firstSeenInColumn.has(colKey);
+
           let blockTopPx: number;
           let blockTime: string;
           if (req?.startTime) {
@@ -1005,9 +981,9 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           const requestedManicuristId = hasRequest ? (req!.manicuristIds[0] ?? null) : null;
 
           blocks.push({ appt, serviceName: svcName, occurrence: occ, blockTime, duration: dur,
-            top: blockTopPx, height, isFirst, isApptFirst, colManicuristId: mId,
+            top: blockTopPx, height, isFirst, isApptFirst, colManicuristId: assignedMId,
             hasRequest, requestedManicuristId });
-          isFirst = false;
+          firstSeenInColumn.add(colKey);
         }
 
         // Always advance elapsed time across all services in the appointment,
@@ -1022,6 +998,67 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
       }
     }
     return blocks;
+  }
+
+  // The whole board, laid out once per render.
+  const allBlocks = getAllServiceBlocks();
+
+  function getServiceBlocks(mId: string | null): ServiceBlock[] {
+    return allBlocks.filter((b) => b.colManicuristId === mId);
+  }
+
+  // ── Double-booked ("!") badge ─────────────────────────────────────────────
+  // A block is double-booked when ANOTHER appointment's block is drawn in the
+  // same column starting at the same minute. Both halves of that question come
+  // off the laid-out block — its real column and its own start time — because
+  // that is what the receptionist is looking at.
+  //
+  // This used to key on the appointment row's `manicuristId` + `time`. Those
+  // are the booking's ANCHOR tech and header time, and nothing keeps them in
+  // step with the board: a drag writes the per-service tech and never the
+  // header (executeDrop), and the edit modal deliberately keeps the old anchor
+  // whenever no service is a client request (AppointmentModal). So moving a
+  // block to another tech — the exact fix the badge's own tooltip asks for —
+  // left the warning lit, while a booking whose services had moved away kept
+  // flagging the column it had left, taking an innocent neighbour with it
+  // (Mary x Macy 11:30, 2026-09-10). Every one of the 34 warnings raised in the
+  // 30 days to 2026-09-10 was that shape; none was a real clash on the board.
+  //
+  // Flagging is per BLOCK, not per appointment. The old set held appointment
+  // ids, so a booking flagged in one column wore the badge on its blocks in
+  // every other column too.
+  const collisionKeyOf = (apptId: string, serviceName: string, occurrence: number) =>
+    `${apptId}__${serviceName}__${occurrence}`;
+
+  const collidingBlockKeys = new Set<string>();
+  const collisionPartnersByBlock = new Map<string, string[]>();
+  {
+    const bySlot = new Map<string, ServiceBlock[]>();
+    for (const b of allBlocks) {
+      // A block with no column is never drawn (an entry with an explicitly
+      // empty manicuristIds is "unassigned" and the book renders no column for
+      // it) — an invisible block must not put a "!" on a visible one.
+      if (!b.colManicuristId) continue;
+      const key  = `${b.colManicuristId}__${b.blockTime}`;
+      const list = bySlot.get(key) ?? [];
+      list.push(b);
+      bySlot.set(key, list);
+    }
+    for (const list of bySlot.values()) {
+      if (list.length < 2) continue;
+      for (const b of list) {
+        // Two services of ONE booking landing together is that client's own
+        // pair of blocks, not a double-book — same rule as before.
+        const partners = list.filter((o) => o.appt.id !== b.appt.id);
+        if (partners.length === 0) continue;
+        const key = collisionKeyOf(b.appt.id, b.serviceName, b.occurrence);
+        collidingBlockKeys.add(key);
+        collisionPartnersByBlock.set(
+          key,
+          Array.from(new Set(partners.map((p) => p.appt.clientName || 'Walk-in'))),
+        );
+      }
+    }
   }
 
   function removeSvcFromAppt(appt: Appointment, svcName: string, occurrence: number) {
@@ -1922,16 +1959,17 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                   {appt.sameTime && (
                     <span className="flex-shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white font-bold text-[9px]" title="Same time">S</span>
                   )}
-                  {collidingApptIds.has(appt.id) && (
+                  {collidingBlockKeys.has(collisionKeyOf(appt.id, serviceName, occurrence)) && (
                     <span
                       className="flex-shrink-0 inline-flex items-center justify-center px-1 h-4 rounded-full bg-red-500 text-white font-bold text-[8px] tracking-wider"
                       title={(() => {
-                        const partners = collisionPartnersById.get(appt.id) ?? [];
-                        const who = partners
-                          .map((p) => `${p.name} (${formatTimeOfDay(p.time)})`)
-                          .join(', ');
-                        return who
-                          ? `Double-booked: this ${formatTimeOfDay(appt.time)} slot already has ${who} on the same technician. Two appointments start at the same time — drag one to a clear slot to fix it.`
+                        const partners = collisionPartnersByBlock.get(
+                          collisionKeyOf(appt.id, serviceName, occurrence),
+                        ) ?? [];
+                        const colName = state.manicurists.find((mm) => mm.id === colManicuristId)?.name;
+                        const where = colName ? `${colName} also has` : 'This technician also has';
+                        return partners.length
+                          ? `Double-booked: ${where} ${partners.join(', ')} starting at ${formatTimeOfDay(blockTime)}. Drag one to a clear slot to fix it.`
                           : 'Double-booked: another appointment starts at this same time on this technician. Drag one to a clear slot to fix it.';
                       })()}
                     >!</span>
