@@ -69,6 +69,48 @@ export function isWalkInBlockBacked(
   return false;
 }
 
+/**
+ * The queue-entry id a check-in should USE for this appointment block, or null
+ * to mint a fresh uuid.
+ *
+ * A walk-in block carries its visit's identity inside its own id
+ * (`walkin:<visitId>`) — that convention is what `isWalkInBlockBacked` parses,
+ * what the `tickets_complete_appointment_on_close` DB trigger matches on, and
+ * what the ticket opened at check-in is keyed to. Check-in nevertheless minted a
+ * brand-new `crypto.randomUUID()` every time, which is harmless the FIRST time
+ * (the ticket is created against that new id) and destructive on a RE-check-in:
+ * cancel a client off a tech and check the surviving block back in, and the same
+ * visit now has two identities — the block and the ticket holding the old one,
+ * the work carrying the new one. Everything downstream keys off that identity,
+ * so both lookups miss at once:
+ *   - `reconcileMissingTicketsForDate` finds no ticket for the new id and mints
+ *     a phantom duplicate (Cherie #14, an unpaid $40 twin of the paid #5)
+ *   - the orphan sweep no longer recognises the block and deletes it mid-service
+ *     (the same visit, deleted 9x between 9:54 and 10:33)
+ * Reusing the embedded id keeps block, queue entry and ticket as ONE identity
+ * across a cancel/re-check-in, which kills both symptoms at the source.
+ * (Cherie x KIMBERLY, 2026-09-10.)
+ *
+ * Only reuses an id that is genuinely free. An id already held by a live queue
+ * entry, by one of its split children, or by a completed row belongs to a visit
+ * that already exists — a second visit today on the same block, or a double
+ * check-in — and must get its own fresh uuid instead.
+ */
+export function visitIdForCheckIn(
+  apptId: string,
+  liveQueueIds: ReadonlySet<string>,
+  completedIds: ReadonlySet<string>,
+): string | null {
+  if (!apptId.startsWith('walkin:')) return null;
+  const embedded = apptId.slice('walkin:'.length);
+  if (!embedded) return null;
+  if (liveQueueIds.has(embedded) || completedIds.has(embedded)) return null;
+  const childPrefix = `${embedded}-`;
+  for (const id of liveQueueIds) if (id.startsWith(childPrefix)) return null;
+  for (const id of completedIds) if (id.startsWith(childPrefix)) return null;
+  return embedded;
+}
+
 // ── DB ↔ TS mappers ──────────────────────────────────────────────────────────
 
 interface DbTicket {

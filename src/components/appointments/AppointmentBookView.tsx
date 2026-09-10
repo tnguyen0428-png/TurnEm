@@ -8,6 +8,7 @@ import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType }
 import DayScheduleOverrideModal from './DayScheduleOverrideModal';
 import { resolveScheduleForDate } from '../../utils/schedule';
 import { getPermanentNoteByPhone } from '../../lib/customers';
+import { visitIdForCheckIn } from '../../lib/tickets';
 import CustomerNoteAlert from '../shared/CustomerNoteAlert';
 
 const START_HOUR   = 8;
@@ -1186,8 +1187,18 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
         const hasReq = serviceRequests.some((r) => r.service === svc && r.clientRequest === true && r.manicuristIds.length > 0);
         return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
       }, 0);
+      // Keep one identity across a cancel/re-check-in: a walk-in block already
+      // names its visit (`walkin:<visitId>`), and the ticket is keyed to it.
+      // See visitIdForCheckIn — minting a fresh uuid here is what gave Cherie's
+      // visit two identities on 2026-09-10, costing her block (deleted 9x
+      // mid-service) and producing a phantom duplicate ticket.
+      const reusableVisitId = visitIdForCheckIn(
+        appt.id,
+        new Set(state.queue.map((q) => q.id)),
+        new Set(state.completed.map((c) => c.id)),
+      );
       dispatch({ type: 'ADD_CLIENT', client: {
-        id: crypto.randomUUID(), clientName: appt.clientName || 'Walk-in',
+        id: reusableVisitId ?? crypto.randomUUID(), clientName: appt.clientName || 'Walk-in',
         services, turnValue, serviceRequests, requestedManicuristId: firstRequestedId,
         isRequested, isAppointment: true, assignedManicuristId: null, status: 'waiting',
         arrivedAt: Date.now(), startedAt: null, completedAt: null, extraTimeMs: 0,
