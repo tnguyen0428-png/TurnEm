@@ -1115,6 +1115,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const recentDates = new Set([todayLA]);
     const liveQueueIds = new Set(queue.map((q) => q.id));
     const completedIds = new Set(completed.map((c) => c.id));
+    // Blocks that live or completed work explicitly claims as its origin. This
+    // is the only test that still works once a visit has been re-keyed to an
+    // unrelated id — every other one compares id shapes. See isWalkInBlockBacked.
+    const claimedApptIds = new Set<string>();
+    for (const c of completed) {
+      if (!c.voided && c.originalAppointmentId) claimedApptIds.add(c.originalAppointmentId);
+    }
+    for (const q of queue) {
+      if (q.originalAppointment?.id) claimedApptIds.add(q.originalAppointment.id);
+    }
     const orphanCandidateIds = appointments
       .filter((a) => a.id.startsWith('walkin:') && recentDates.has(a.date))
       // A block already marked 'completed' is proven real work — the ticket
@@ -1125,7 +1135,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // live/completed DESCENDANTS — a SPLIT_AND_ASSIGN re-key leaves the block
       // sitting on the now-deleted parent id while its children do the work.
       // See isWalkInBlockBacked for why this is not just getVisitId().
-      .filter((a) => !isWalkInBlockBacked(a.id.slice('walkin:'.length), liveQueueIds, completedIds))
+      .filter((a) => !isWalkInBlockBacked(a.id.slice('walkin:'.length), liveQueueIds, completedIds, claimedApptIds))
       .map((a) => a.id);
 
     dispatch({ type: 'LOAD_STATE', state: {
@@ -1151,18 +1161,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (orphanCandidateIds.length > 0) {
       void (async () => {
         await new Promise((resolve) => setTimeout(resolve, 5000));
+        // Re-fetch the claim links too, not just the ids — this pass is the one
+        // that actually deletes, so it has to see every reason a block is real.
+        // Without them the confirmation would still delete a re-keyed visit's
+        // block that the first pass had correctly spared.
         const [{ data: freshQueue }, { data: freshCompleted }] = await Promise.all([
-          supabase.from('queue_entries').select('id'),
-          supabase.from('completed_services').select('id'),
+          supabase.from('queue_entries').select('id, original_appointment'),
+          supabase.from('completed_services').select('id, original_appointment_id, voided'),
         ]);
         const freshLiveQueueIds = new Set((freshQueue ?? []).map((r) => (r as { id: string }).id));
         const freshCompletedIds = new Set((freshCompleted ?? []).map((r) => (r as { id: string }).id));
+        const freshClaimedApptIds = new Set<string>();
+        for (const r of freshQueue ?? []) {
+          const snap = (r as { original_appointment?: { id?: string } | null }).original_appointment;
+          if (snap?.id) freshClaimedApptIds.add(snap.id);
+        }
+        for (const r of freshCompleted ?? []) {
+          const row = r as { original_appointment_id?: string | null; voided?: boolean | null };
+          if (!row.voided && row.original_appointment_id) freshClaimedApptIds.add(row.original_appointment_id);
+        }
         const stillOrphanIds = orphanCandidateIds.filter(
           (apptId) =>
             !isWalkInBlockBacked(
               apptId.slice('walkin:'.length),
               freshLiveQueueIds,
               freshCompletedIds,
+              freshClaimedApptIds,
             ),
         );
         if (stillOrphanIds.length === 0) return;

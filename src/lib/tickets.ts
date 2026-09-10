@@ -56,13 +56,31 @@ export function getVisitId(id: string): string {
 //
 // Matching on `${qid}-` rather than a bare prefix stops an unrelated id that
 // merely starts with the same characters from counting as a descendant.
+// `claimedApptIds` closes the case where the ids are not related at all. Every
+// match above compares the block's id to a queue/completed id — exactly or as an
+// ancestor — so it only works while the visit KEEPS its identity. When a visit
+// is re-keyed to an unrelated uuid, the block's id and the working id share
+// nothing, both tests fail, and a live visit reads as an orphan (Cherie x
+// KIMBERLY 2026-09-10: block `walkin:223b02e8…`, work under `80a5ef9d…`,
+// deleted 9x mid-service). But the work has always known where it came from —
+// `completed_services.original_appointment_id` (and a queue entry's
+// `originalAppointment.id`) names the block directly. Passing those in means a
+// block is backed whenever live or completed work CLAIMS it, whatever the ids
+// look like.
+//
+// This can only ever spare a block, never delete one, and it spares it on the
+// strongest possible evidence: real work pointing at it. Voided completed rows
+// are excluded by the caller — a void means the work didn't happen, matching how
+// assignHelpers treats originalAppointmentId.
 export function isWalkInBlockBacked(
   qid: string,
   liveQueueIds: ReadonlySet<string>,
   completedIds: ReadonlySet<string>,
+  claimedApptIds?: ReadonlySet<string>,
 ): boolean {
   if (!qid) return false;
   if (liveQueueIds.has(qid) || completedIds.has(qid)) return true;
+  if (claimedApptIds?.has(`walkin:${qid}`)) return true;
   const childPrefix = `${qid}-`;
   for (const id of liveQueueIds) if (id.startsWith(childPrefix)) return true;
   for (const id of completedIds) if (id.startsWith(childPrefix)) return true;
@@ -829,6 +847,10 @@ export async function reconcileMissingTicketsForDate(
     manicuristName: string;
     manicuristColor: string;
     completedAt: number;
+    /** The appointment block this work came from (`originalAppointmentId`).
+     *  Used to recognise a ticket opened under the visit's PREVIOUS identity —
+     *  see the re-key guard below. Optional: omit and behaviour is unchanged. */
+    originalAppointmentId?: string | null;
   }>,
   salonServices: Array<{ id: string; name: string; price: number }>,
 ): Promise<{ created: number; appendedTo: number }> {
@@ -917,6 +939,36 @@ export async function reconcileMissingTicketsForDate(
     if (!c.manicuristId) continue;          // can't credit a ticket without staff
     const visitId = getVisitId(c.id);
     if (existingByVisitId.has(visitId)) continue; // already linked to a ticket via the visit
+
+    // Re-key guard. The check above asks "is a ticket keyed to the id this work
+    // carries NOW?" — which misses whenever the visit was re-keyed after its
+    // ticket was opened. All three of this function's paths then fall through:
+    // the visit-id lookup misses, the open-ticket-by-client lookup misses if
+    // checkout just closed the real ticket (a seconds-wide race), and the
+    // closed-ticket adoption below only accepts a ticket whose key is EMPTY, not
+    // one whose key is merely from the visit's earlier identity. Result: a
+    // phantom duplicate — Cherie's unpaid ticket #14, a $40 twin of the paid #5,
+    // minted 1.4s after #5 closed.
+    //
+    // The work names its originating block, and that block names the visit id
+    // the ticket was opened under. If THAT is already on a ticket, this work is
+    // already accounted for and must not spawn a second one.
+    //
+    // Deliberately only SKIPS — it never creates, adopts or edits. The worst
+    // case is that a service goes unbilled and a human has to add it, which is
+    // recoverable; minting a duplicate ticket is how clients get charged twice.
+    // Logged loudly rather than silently, so it is visible when it happens.
+    const originVisitId = c.originalAppointmentId?.startsWith('walkin:')
+      ? getVisitId(c.originalAppointmentId.slice('walkin:'.length))
+      : null;
+    if (originVisitId && existingByVisitId.has(originVisitId)) {
+      console.warn(
+        `[tickets] reconcile: "${c.clientName}" completed as ${visitId} but its block ` +
+        `(${c.originalAppointmentId}) is already on a ticket under ${originVisitId} — ` +
+        `the visit was re-keyed. Skipping ticket creation; check the service is on that ticket.`,
+      );
+      continue;
+    }
 
     const items = (c.services ?? [])
       .filter((name) => typeof name === 'string' && name.trim().length > 0)
