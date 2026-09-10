@@ -291,3 +291,36 @@ export function reconcileServiceRequests(
   }
   return requests.filter((_, i) => keep[i]);
 }
+
+/**
+ * The appointment's anchor manicurist — the column the booking is SITTING in,
+ * which is the tech on its first placed service.
+ *
+ * `appointments.manicuristId` is a leftover from before per-service placement
+ * existed, and nothing kept it in step with the board: a drag wrote the
+ * per-service tech and never the header, and the edit modal preserved the old
+ * anchor whenever no service was a client request. So a booking whose services
+ * had all moved to other techs went on naming the column it had left — for
+ * months, on 79 bookings in the 30 days to 2026-09-10. That drove a phantom
+ * double-booked "!" (Mary x MACY 11:30, 2026-09-10) and made the header
+ * untrustworthy for every reader that still consults it, including the book's
+ * own fallback placement for a service with no request entry of its own.
+ *
+ * Tony's rule, 2026-09-10: "manicurist id should be where it's sitting, not
+ * when it was originally made."
+ *
+ * Never returns null when given a usable fallback — an entry with an
+ * explicitly empty `manicuristIds` is deliberately unassigned, not a reason to
+ * strand the booking with no column at all (blocks that fall back to the header
+ * for placement would vanish from the book).
+ */
+export function anchorManicuristId(
+  requests: ReadonlyArray<ServiceRequest> | null | undefined,
+  fallback: string | null,
+): string | null {
+  for (const r of requests ?? []) {
+    const id = r.manicuristIds?.[0];
+    if (id) return id;
+  }
+  return fallback;
+}

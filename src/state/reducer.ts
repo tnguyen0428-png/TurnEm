@@ -3,7 +3,7 @@ import type { AppAction } from './actions';
 import { clientHasAnyWaxService } from '../utils/salonRules';
 import { isFourthPositionSpecialService } from '../utils/priority';
 import { getLocalDateStr } from '../utils/time';
-import { reconcileServiceRequests, relocateServiceRequests } from '../lib/serviceRequests';
+import { anchorManicuristId, reconcileServiceRequests, relocateServiceRequests } from '../lib/serviceRequests';
 
 // ─── totalTurns convergence ──────────────────────────────────────────────
 //
@@ -1160,11 +1160,34 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       const nextAppointments = synthAppt
         ? [...state.appointments, synthAppt]
         : existingAppt && assignedApptPlacement
-          ? state.appointments.map((a) =>
-              a.id === existingAppt.id
-                ? {
+          ? state.appointments.map((a) => {
+              if (a.id !== existingAppt.id) return a;
+              const relocatedReqs = relocateServiceRequests(
+                a.serviceRequests ?? [],
+                (() => {
+                  const pending = new Map<string, string[]>();
+                  for (const s of client.services) {
+                    const q = pending.get(s) ?? [];
+                    q.push(action.manicuristId);
+                    pending.set(s, q);
+                  }
+                  return pending;
+                })(),
+                // Protect slots held by a tech already working that service —
+                // state.queue is still pre-assignment here, so the tech being
+                // assigned NOW is correctly not backed and stays free to take
+                // a slot.
+                backedWorkersByService(a.id, state.queue, state.completed),
+              ).next;
+              return {
                     ...a,
-                    manicuristId: action.manicuristId,
+                    // The anchor names the column the booking SITS in, which
+                    // after this relocate is the tech on its first placed
+                    // service — not necessarily this assignee, because
+                    // relocateServiceRequests deliberately moves only the
+                    // service(s) THIS queue entry covers and leaves a
+                    // multi-tech booking's other slots where they are.
+                    manicuristId: anchorManicuristId(relocatedReqs, action.manicuristId),
                     time: assignedApptPlacement.time,
                     sameTime: assignedApptPlacement.alignedWithBuddy,
                     // CRITICAL for the block to actually relocate: the appt-book
@@ -1210,26 +1233,9 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                     // whichever occurrence came first in the array, which can be
                     // the customer's requested slot instead of the one actually
                     // being reassigned).
-                    serviceRequests: relocateServiceRequests(
-                      a.serviceRequests ?? [],
-                      (() => {
-                        const pending = new Map<string, string[]>();
-                        for (const s of client.services) {
-                          const q = pending.get(s) ?? [];
-                          q.push(action.manicuristId);
-                          pending.set(s, q);
-                        }
-                        return pending;
-                      })(),
-                      // Protect slots held by a tech already working that
-                      // service — state.queue is still pre-assignment here, so
-                      // the tech being assigned NOW is correctly not backed and
-                      // stays free to take a slot.
-                      backedWorkersByService(a.id, state.queue, state.completed),
-                    ).next,
-                  }
-                : a,
-            )
+                    serviceRequests: relocatedReqs,
+                  };
+            })
           // No linked appt (assignedApptPlacement === null and no synth) →
           // nothing to move; leave appointments untouched.
           : state.appointments;
@@ -1567,7 +1573,14 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                 nextReqs.push({ service: service as ServiceType, manicuristIds: [tech], startTime: undefined });
               }
             }
-            return { ...a, serviceRequests: nextReqs };
+            // Anchor follows the fan-out: after a split the booking sits in
+            // the column of its first placed service, not wherever it was
+            // booked.
+            return {
+              ...a,
+              serviceRequests: nextReqs,
+              manicuristId: anchorManicuristId(nextReqs, a.manicuristId),
+            };
           })
         : apptAcc;
       const queueById = new Map(filteredQueue.map((c) => [c.id, c]));
@@ -2165,6 +2178,20 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
                 workers,
               )
             : reconciled;
+          // Re-anchor manicuristId to the column the booking now SITS in.
+          // Only when this write actually moved placement — a status-only
+          // write (check-in, complete, cancel) leaves the anchor alone, and so
+          // does a write that sets manicuristId by itself with no services or
+          // requests to derive from. See anchorManicuristId for why the header
+          // used to go stale and what it broke.
+          const rewriteAnchor =
+            updates.services !== undefined || updates.serviceRequests !== undefined;
+          const nextManicuristId = rewriteAnchor
+            ? anchorManicuristId(
+                serviceRequests ?? a.serviceRequests,
+                updates.manicuristId !== undefined ? updates.manicuristId : a.manicuristId,
+              )
+            : undefined;
           return {
             ...a,
             ...updates,
@@ -2172,6 +2199,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
               ? { services: nextServices, service: (nextServices[0] ?? a.service) }
               : {}),
             ...(serviceRequests !== undefined ? { serviceRequests } : {}),
+            ...(nextManicuristId !== undefined ? { manicuristId: nextManicuristId } : {}),
             lastEditedAt: Date.now(),
           };
         }),
