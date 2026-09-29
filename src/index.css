@@ -14,6 +14,12 @@
     color: #111827;
   }
 
+  /* Stop iOS Safari's double-tap-to-zoom from swallowing quick taps on
+     buttons and form controls. */
+  button, a, input, select, textarea, label, [role='button'] {
+    touch-action: manipulation;
+  }
+
   ::selection {
     background-color: #ec489940;
     color: #111827;

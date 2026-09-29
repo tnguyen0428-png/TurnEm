@@ -1,7 +1,7 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './state/AuthContext';
 import { AppProvider, useApp } from './state/AppContext';
-import TabBar from './components/layout/TabBar';
+import TabBar, { MobileTabBar } from './components/layout/TabBar';
 import LoginScreen from './components/auth/LoginScreen';
 import QueueScreen from './components/queue/QueueScreen';
 import SmsToast from './components/shared/SmsToast';
@@ -47,7 +47,7 @@ function AppContent() {
   }
 
   return (
-    <div className="h-screen bg-[#fafafa] flex flex-col overflow-hidden">
+    <div className="h-screen h-dvh bg-[#fafafa] flex flex-col overflow-hidden">
       {syncError && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, background: '#dc2626', color: 'white', padding: '10px 16px', fontSize: '14px', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           {'⚠️'} {syncError}
@@ -77,6 +77,7 @@ function AppContent() {
           {(state.view === 'blueprint' || state.view === 'staff' || state.view === 'services' || state.view === 'criteria' || state.view === 'calendar') && <BlueprintScreen />}
         </Suspense>
       </main>
+      <MobileTabBar />
 
       <Suspense fallback={null}>
         {state.modal === 'addClient' && <AddClientModal />}
