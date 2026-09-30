@@ -476,19 +476,21 @@ export default function BlueprintScreen() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <div className="w-64 flex-shrink-0 bg-white border-r border-gray-100 overflow-y-auto flex flex-col">
-        <div className="px-5 pt-5 pb-4 border-b border-gray-50">
+    // Below md the 256px sidebar would eat most of a phone screen, so the
+    // section list folds into a horizontally scrolling strip across the top.
+    <div className="flex flex-col md:flex-row h-full overflow-hidden">
+      <div className="md:w-64 flex-shrink-0 bg-white border-b md:border-b-0 md:border-r border-gray-100 md:overflow-y-auto flex flex-col">
+        <div className="hidden md:block px-5 pt-5 pb-4 border-b border-gray-50">
           <h2 className="font-bebas text-2xl tracking-[3px] text-gray-900">BLUEPRINT</h2>
           <p className="font-mono text-[11px] text-gray-400 mt-0.5">
             {accessTier === 'receptionist' ? 'Receptionist · Customer Profiles' : 'Salon configuration'}
           </p>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-6">
+        <nav className="flex-1 flex md:block gap-1 overflow-x-auto md:overflow-visible hide-scrollbar px-2 py-2 md:px-3 md:py-4 md:space-y-6">
           {visibleNavGroups.map((group) => (
-            <div key={group.heading}>
-              <p className="font-mono text-[10px] font-bold text-gray-400 tracking-[2px] px-3 mb-2">{group.heading}</p>
-              <div className="space-y-0.5">
+            <div key={group.heading} className="flex-shrink-0">
+              <p className="hidden md:block font-mono text-[10px] font-bold text-gray-400 tracking-[2px] px-3 mb-2">{group.heading}</p>
+              <div className="flex md:block gap-1 md:space-y-0.5">
                 {group.items.map((item) => {
                   const Icon = item.icon;
                   const isActive = active === item.id;
@@ -496,11 +498,11 @@ export default function BlueprintScreen() {
                     <button
                       key={item.id}
                       onClick={() => setActive(item.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all ${isActive ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
+                      className={`md:w-full flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-xl text-left whitespace-nowrap flex-shrink-0 transition-all ${isActive ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
                     >
                       <Icon size={15} className="flex-shrink-0" />
                       <span className="font-mono text-[13px] font-semibold flex-1">{item.label}</span>
-                      {isActive && <ChevronRight size={12} className="flex-shrink-0 text-pink-400" />}
+                      {isActive && <ChevronRight size={12} className="hidden md:block flex-shrink-0 text-pink-400" />}
                     </button>
                   );
                 })}
@@ -511,7 +513,7 @@ export default function BlueprintScreen() {
       </div>
       <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
         {activeItem && (
-          <div className="flex-shrink-0 bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-3">
+          <div className="flex-shrink-0 bg-white border-b border-gray-100 px-4 md:px-6 py-3 flex items-center gap-3">
             <activeItem.icon size={16} className="text-pink-400 flex-shrink-0" />
             <div>
               <h3 className="font-bebas text-lg tracking-[2px] text-gray-800 leading-none">{activeItem.label.toUpperCase()}</h3>
