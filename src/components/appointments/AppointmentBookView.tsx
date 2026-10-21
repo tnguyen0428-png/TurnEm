@@ -1593,10 +1593,13 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           // gray (the technician isn't here); lunch is the technician's
           // scheduled break in the middle of the day — visually different
           // signals different schedule semantics.
+          // Vacation / time-off days get light purple stripes so they read
+          // differently from a regular day off.
           const isLunch = band.label === 'LUNCH';
-          const bandBg = isLunch ? 'rgba(251, 191, 36, 0.10)' : 'rgba(75, 85, 99, 0.15)';
-          const bandStripeRgba = isLunch ? 'rgba(180, 83, 9, 0.06)' : 'rgba(75, 85, 99, 0.08)';
-          const bandLabelColor = isLunch ? 'text-amber-600' : 'text-gray-400';
+          const isTimeOff = band.label === 'TIME OFF';
+          const bandBg = isLunch ? 'rgba(251, 191, 36, 0.10)' : isTimeOff ? 'rgba(196, 181, 253, 0.18)' : 'rgba(75, 85, 99, 0.15)';
+          const bandStripeRgba = isLunch ? 'rgba(180, 83, 9, 0.06)' : isTimeOff ? 'rgba(167, 139, 250, 0.22)' : 'rgba(75, 85, 99, 0.08)';
+          const bandLabelColor = isLunch ? 'text-amber-600' : isTimeOff ? 'text-violet-400' : 'text-gray-400';
           return (
           <div
             key={`offband-${idx}`}
