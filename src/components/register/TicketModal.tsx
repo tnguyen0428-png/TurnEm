@@ -1298,7 +1298,12 @@ export default function TicketModal({
       // edited line is reallocated at ticket save
       // (reallocateTurnsForStaffChanges); adjusting it here too would correct
       // the same change twice.
-      const queueRenames = new Map<string, Svc[]>();
+      // services[] AND serviceRequests[] travel together: COMPLETE_SERVICE
+      // reads the request flag off serviceRequests by service name, so
+      // renaming only services[] left the request on the OLD name and the
+      // finished service came through as a non-request, full turn (Karen Bak
+      // x SAM, Gel Full Set -> Gel Fill at checkout, 2026-10-21).
+      const queueRenames = new Map<string, { services: Svc[]; serviceRequests: SvcReq[] }>();
 
       // `renamed` tracks whether any line on this appointment had its SERVICE
       // NAME changed, as opposed to only its staff. It gates the
@@ -1402,13 +1407,23 @@ export default function TicketModal({
               ? state.queue.find((q) => `walkin:${q.id}` === ownBlockId)
               : null);
           if (qe) {
-            const cur = queueRenames.get(qe.id) ?? [...(qe.services ?? [])];
-            const qi = cur.findIndex((s) => s === oldName);
+            const cur = queueRenames.get(qe.id) ?? {
+              services: [...(qe.services ?? [])],
+              serviceRequests: (qe.serviceRequests ?? []).map((r) => ({ ...r })),
+            };
+            const qi = cur.services.findIndex((s) => s === oldName);
             // Only the first matching occurrence, mirroring the services[]
             // rename below. No match means this entry never carried the old
             // name and renaming anything here would be a guess.
             if (qi >= 0) {
-              cur[qi] = newName as Svc;
+              cur.services[qi] = newName as Svc;
+              // Same slot on the request side, matched on staff first. Only the
+              // name moves; clientRequest / manicuristIds stay as booked.
+              let ri = cur.serviceRequests.findIndex(
+                (r) => r.service === oldName && (orig.staff1Id ? (r.manicuristIds ?? []).includes(orig.staff1Id) : true),
+              );
+              if (ri < 0) ri = cur.serviceRequests.findIndex((r) => r.service === oldName);
+              if (ri >= 0) cur.serviceRequests[ri] = { ...cur.serviceRequests[ri], service: newName as Svc };
               queueRenames.set(qe.id, cur);
             }
           }
@@ -1576,7 +1591,7 @@ export default function TicketModal({
         dispatch({
           type: 'UPDATE_CLIENT',
           id: qid,
-          updates: { services: renamed },
+          updates: { services: renamed.services, serviceRequests: renamed.serviceRequests },
           allowDroppingBackedServices: true,
         });
       }
