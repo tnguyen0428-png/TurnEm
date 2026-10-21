@@ -1613,8 +1613,8 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           // differently from a regular day off.
           const isLunch = band.label === 'LUNCH';
           const isTimeOff = band.dates !== undefined;
-          const bandBg = isLunch ? 'rgba(251, 191, 36, 0.10)' : isTimeOff ? 'rgba(196, 181, 253, 0.07)' : 'rgba(75, 85, 99, 0.15)';
-          const bandStripeRgba = isLunch ? 'rgba(180, 83, 9, 0.06)' : isTimeOff ? 'rgba(167, 139, 250, 0.08)' : 'rgba(75, 85, 99, 0.08)';
+          const bandBg = isLunch ? 'rgba(251, 191, 36, 0.10)' : isTimeOff ? 'rgba(196, 181, 253, 0.10)' : 'rgba(75, 85, 99, 0.15)';
+          const bandStripeRgba = isLunch ? 'rgba(180, 83, 9, 0.06)' : isTimeOff ? 'rgba(167, 139, 250, 0.12)' : 'rgba(75, 85, 99, 0.08)';
           const bandLabelColor = isLunch ? 'text-amber-600' : isTimeOff ? 'text-violet-400' : 'text-gray-400';
           return (
           <div
@@ -1639,10 +1639,27 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
             }}
             title="Double-click to edit this technician's hours for this day"
           >
-            {band.label && band.height > 24 && (
+            {band.dates !== undefined && (() => {
+              // Time-off label sits inside one whole hour cell (between the
+              // hour lines, mid-day) on a solid backing so the slot grid
+              // lines don't run through the text.
+              const hourPx = (60 / SLOT_MINUTES) * slotHeight;
+              const hours = Math.floor(band.height / hourPx);
+              if (hours < 1) return null;
+              return (
+                <div
+                  className="absolute left-1 right-1 flex flex-col items-center justify-center gap-0.5 rounded-md bg-violet-50 ring-1 ring-violet-200 font-mono text-violet-500 overflow-hidden"
+                  style={{ top: Math.floor(hours / 2) * hourPx + 3, height: hourPx - 5 }}
+                >
+                  <span className="text-center px-1 text-sm font-bold tracking-wider leading-tight">{band.label}</span>
+                  <span className="text-xs font-semibold leading-tight">{band.dates}</span>
+                  <span className="opacity-0 group-hover/off:opacity-100 transition-opacity text-pink-500 text-[9px] font-semibold">DOUBLE-CLICK TO EDIT</span>
+                </div>
+              );
+            })()}
+            {band.dates === undefined && band.label && band.height > 24 && (
               <div className={`absolute inset-0 flex flex-col items-center justify-center font-mono text-[10px] font-bold tracking-wider gap-0.5 ${bandLabelColor}`}>
-                <span className="text-center px-1">{band.label}</span>
-                {band.dates && <span className="text-[9px] font-semibold">{band.dates}</span>}
+                <span>{band.label}</span>
                 <span className="opacity-0 group-hover/off:opacity-100 transition-opacity text-pink-500 text-[9px] font-semibold">DOUBLE-CLICK TO EDIT</span>
               </div>
             )}
