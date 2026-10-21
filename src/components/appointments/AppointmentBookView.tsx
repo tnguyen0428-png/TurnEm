@@ -106,6 +106,17 @@ interface OffBand {
   top: number;        // px from top of column
   height: number;     // px
   label: string | null;
+  // Set on vacation / time-off bands: the date range shown under the reason.
+  dates?: string;
+}
+
+// "Oct 20" or "Oct 20 – Oct 24" for a YYYY-MM-DD range.
+function fmtTimeOffDates(start: string, end: string): string {
+  const fmt = (ymd: string) => {
+    const [y, mo, d] = ymd.split('-').map(Number);
+    return new Date(y, mo - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+  return start === end ? fmt(start) : `${fmt(start)} – ${fmt(end)}`;
 }
 
 interface ServiceBlock {
@@ -302,13 +313,18 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     for (const m of manicurists) {
       // Resolver layers time-off > per-date override > weekly blueprint.
       // Tag the OFF band differently when time-off is the reason so the
-      // band can still read "TIME OFF" (the override-off case just shows
-      // a plain "OFF").
-      const inTimeOff = state.staffTimeOff.some(
+      // band shows the time-off reason and dates (the override-off case
+      // just shows a plain "OFF").
+      const timeOff = state.staffTimeOff.find(
         (t) => t.manicuristId === m.id && selectedDate >= t.startDate && selectedDate <= t.endDate
       );
-      if (inTimeOff) {
-        map.set(m.id, [{ top: 0, height: (totalDayMins / SLOT_MINUTES) * slotHeight, label: 'TIME OFF' }]);
+      if (timeOff) {
+        map.set(m.id, [{
+          top: 0,
+          height: (totalDayMins / SLOT_MINUTES) * slotHeight,
+          label: timeOff.reason.trim() ? timeOff.reason.trim().toUpperCase() : 'TIME OFF',
+          dates: fmtTimeOffDates(timeOff.startDate, timeOff.endDate),
+        }]);
         continue;
       }
       const sched = resolveScheduleForDate(
@@ -1596,7 +1612,7 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           // Vacation / time-off days get light purple stripes so they read
           // differently from a regular day off.
           const isLunch = band.label === 'LUNCH';
-          const isTimeOff = band.label === 'TIME OFF';
+          const isTimeOff = band.dates !== undefined;
           const bandBg = isLunch ? 'rgba(251, 191, 36, 0.10)' : isTimeOff ? 'rgba(196, 181, 253, 0.07)' : 'rgba(75, 85, 99, 0.15)';
           const bandStripeRgba = isLunch ? 'rgba(180, 83, 9, 0.06)' : isTimeOff ? 'rgba(167, 139, 250, 0.08)' : 'rgba(75, 85, 99, 0.08)';
           const bandLabelColor = isLunch ? 'text-amber-600' : isTimeOff ? 'text-violet-400' : 'text-gray-400';
@@ -1625,7 +1641,8 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           >
             {band.label && band.height > 24 && (
               <div className={`absolute inset-0 flex flex-col items-center justify-center font-mono text-[10px] font-bold tracking-wider gap-0.5 ${bandLabelColor}`}>
-                <span>{band.label}</span>
+                <span className="text-center px-1">{band.label}</span>
+                {band.dates && <span className="text-[9px] font-semibold">{band.dates}</span>}
                 <span className="opacity-0 group-hover/off:opacity-100 transition-opacity text-pink-500 text-[9px] font-semibold">DOUBLE-CLICK TO EDIT</span>
               </div>
             )}
