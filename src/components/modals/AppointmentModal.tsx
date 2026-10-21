@@ -230,6 +230,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [date, setDate] = useState(draft?.date ?? today);
+  // Follow the book: paging the appointment book to another day while a NEW
+  // appointment is open moves the form's date with it (customer changes the
+  // day mid-booking, Tony 2026-10-21). AppointmentsScreen writes the book's
+  // date into the draft; moveBookToDate below is the other direction. Held
+  // while the recap is up so the booked day can't shift under it.
+  const draftDate = draft?.date;
+  useEffect(() => {
+    if (mode !== 'add' || !draftDate || recap) return;
+    setDate((cur) => (cur === draftDate ? cur : draftDate));
+  }, [mode, draftDate, recap]);
   const [time, setTime] = useState(draft?.time ?? '10:00');
   // Free-form time entry: receptionist can type '130' (auto → 1:30 PM),
   // '11' (→ 11:00 AM), '9:30am', etc. We keep the raw input here for

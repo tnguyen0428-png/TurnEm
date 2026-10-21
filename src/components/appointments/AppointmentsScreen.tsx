@@ -270,6 +270,17 @@ export default function AppointmentsScreen() {
     setSelectedDate((cur) => (cur === restore ? cur : restore));
   }, [addApptModalOpen]);
 
+  // The other direction: paging the book while the NEW APPOINTMENT form is
+  // open re-points the form at that day. Writing the draft is a no-op for the
+  // effect above (the book is already on that date), so there's no loop.
+  const appointmentDraft = state.appointmentDraft;
+  useEffect(() => {
+    if (!addApptModalOpen || !appointmentDraft) return;
+    if (appointmentDraft.date === selectedDate) return;
+    dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: { ...appointmentDraft, date: selectedDate } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a BOOK date change should push into the draft
+  }, [selectedDate]);
+
   const isToday = selectedDate === today;
   const todayWeekday = weekdayOf(today);
   const dayTotal = state.appointments.filter((a) => a.date === selectedDate).length;
