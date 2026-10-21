@@ -2479,6 +2479,21 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
     case 'REMOTE_COMPLETED_DELETE':
       return { ...state, completed: state.completed.filter((c) => c.id !== action.id) };
 
+    case 'REMOTE_COMPLETED_ADD_MISSING': {
+      // Add-only: a row this device already holds is never touched, so a
+      // catch-up fetch can't roll back a void or edit still in flight. The
+      // presence check lives here (not at the call site) so a realtime echo
+      // that lands between the fetch and this dispatch still wins.
+      const have = new Set(state.completed.map((c) => c.id));
+      const missing = action.entries.filter((e) => !have.has(e.id));
+      // Always return a NEW state object, even when nothing is missing. The
+      // caller set isApplyingRemoteRef; if we returned `state` React would skip
+      // the render, the sync effect would never clear the flag, and the next
+      // LOCAL change would be mistaken for a remote one and never saved (same
+      // trap as the system_state channel).
+      return { ...state, completed: missing.length > 0 ? [...state.completed, ...missing] : state.completed };
+    }
+
     case 'REMOTE_APPOINTMENT_UPSERT': {
       const idx = state.appointments.findIndex((a) => a.id === action.appointment.id);
       if (idx === -1) return { ...state, appointments: [...state.appointments, action.appointment] };

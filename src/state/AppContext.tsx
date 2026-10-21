@@ -475,6 +475,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // and self-heals on the next load.
   const pendingCompletedDeletesRef = useRef<Set<string>>(new Set());
   const bulkCompletedClearRef = useRef<boolean>(false);
+  // When completed rows last left this device on purpose (id -> ms), and when a
+  // bulk clear last ran. reconcileCompleted must not re-add a row whose DB
+  // delete is still in flight: syncCompleted consumes pendingCompletedDeletes
+  // BEFORE its await, so that set alone can't cover the window.
+  const recentlyRemovedCompletedRef = useRef<Map<string, number>>(new Map());
+  const lastCompletedBulkClearAtRef = useRef<number>(0);
   // The synthetic `walkin:` block ids that an action is about to remove as a
   // deliberate part of its own job. REMOVE_CLIENT and CANCEL_SERVICE drop the
   // queue entry and its block in ONE reducer pass, so the diff downstream can't
@@ -539,7 +545,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       tombstoneManicurist(action.id);
     } else if (action.type === 'DELETE_COMPLETED') {
       pendingCompletedDeletesRef.current.add(action.id);
+      recentlyRemovedCompletedRef.current.set(action.id, Date.now());
     } else if (action.type === 'CLEAR_HISTORY' || action.type === 'DAILY_RESET') {
+      lastCompletedBulkClearAtRef.current = Date.now();
       // Both clear `state.completed` wholesale by design. CLEAR_HISTORY is the
       // History screen's red Clear button (gated behind a successful save);
       // DAILY_RESET only fires after saveTodayHistory() succeeds. Authorize the
@@ -565,6 +573,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const completedRef = useRef<AppState['completed']>(INITIAL_STATE.completed);
   const dailyHistoryRef = useRef<AppState['dailyHistory']>(INITIAL_STATE.dailyHistory);
   const manicuristsRef = useRef<AppState['manicurists']>(INITIAL_STATE.manicurists);
+
+  // Catch-up for completed_services events this device never received.
+  // Supabase realtime does not replay what it missed while the socket was
+  // down or rejoining, and nothing else re-reads this table after startup, so
+  // one dropped INSERT stays missing until a full reload. 2026-10-20 Tessa x
+  // TOMMY: checkout wrote TAMMY's and TOMMY's rows a second apart, the Queue
+  // device reconnected its socket in between, got the queue delete but not
+  // TOMMY's row — so his 1.5 turns and the History line vanished from that
+  // screen (3 instead of 4.5) while the DB was right the whole time.
+  // Runs on focus AND on every (re)subscribe of the completed channel: a
+  // front-desk PC that never leaves the foreground never fires focus.
+  // Add-only and today-only — see REMOTE_COMPLETED_ADD_MISSING.
+  const reconcileCompletedInFlightRef = useRef(false);
+  const reconcileCompleted = useCallback(async (trigger: string) => {
+    if (!prevStateRef.current.loaded) return;
+    if (reconcileCompletedInFlightRef.current) return;
+    reconcileCompletedInFlightRef.current = true;
+    try {
+      const HOLD_MS = 2 * 60_000;
+      const now = Date.now();
+      // A Clear / nightly reset empties state on purpose and its DB delete may
+      // still be running — re-adding now would put the whole day back.
+      if (now - lastCompletedBulkClearAtRef.current < HOLD_MS) return;
+      const since = new Date(now - 36 * 60 * 60_000).toISOString();
+      const { data, error } = await withRetry(() => fetchAllRows(() =>
+        supabase.from('completed_services').select('*').gte('started_at', since)));
+      if (error || !data) {
+        console.warn(`[reconcileCompleted] fetch failed (${trigger})`, error);
+        return;
+      }
+      if (now - lastCompletedBulkClearAtRef.current < HOLD_MS) return;
+      const removed = recentlyRemovedCompletedRef.current;
+      for (const [id, at] of removed) if (Date.now() - at > HOLD_MS) removed.delete(id);
+      const today = getLocalDateStr(new Date());
+      const have = new Set(prevStateRef.current.completed.map((c) => c.id));
+      const missing = (data as Record<string, unknown>[])
+        .map(mapDbCompleted)
+        .filter((c) => !have.has(c.id) && !removed.has(c.id))
+        .filter((c) => getLocalDateStr(new Date(c.completedAt ?? c.startedAt)) === today);
+      if (missing.length === 0) return;
+      console.warn(
+        `[reconcileCompleted] recovered ${missing.length} missed completed row(s) (${trigger}):`,
+        missing.map((c) => `${c.clientName} x ${c.manicuristName} (${c.id})`),
+      );
+      isApplyingRemoteRef.current = true;
+      dispatch({ type: 'REMOTE_COMPLETED_ADD_MISSING', entries: missing });
+    } finally {
+      reconcileCompletedInFlightRef.current = false;
+    }
+  }, [dispatch]);
 
   // Wraps a sync function so we track in-flight count and surface 'saving' / 'saved' /
   // 'error' to the UI. Each call increments the counter and shows 'saving'; when the
@@ -743,13 +801,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'REMOTE_APPOINTMENT_UPSERT', appointment: appt });
       }
     }
-    document.addEventListener('visibilitychange', reconcileAppts);
-    window.addEventListener('focus', reconcileAppts);
+    function onForeground() {
+      if (document.visibilityState !== 'visible') return;
+      void reconcileAppts();
+      void reconcileCompleted('focus');
+    }
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('focus', onForeground);
     return () => {
-      document.removeEventListener('visibilitychange', reconcileAppts);
-      window.removeEventListener('focus', reconcileAppts);
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('focus', onForeground);
     };
-  }, []);
+  }, [reconcileCompleted]);
 
   async function loadInitialData() {
     const [
@@ -1952,13 +2015,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         isApplyingRemoteRef.current = true;
         if (payload.eventType === 'DELETE') {
           const id = (payload.old as { id?: string } | null)?.id;
-          if (id) dispatch({ type: 'REMOTE_COMPLETED_DELETE', id });
+          if (id) {
+            // Another device removed it — don't let a catch-up fetch that
+            // raced the delete put it back.
+            recentlyRemovedCompletedRef.current.set(id, Date.now());
+            dispatch({ type: 'REMOTE_COMPLETED_DELETE', id });
+          }
           else isApplyingRemoteRef.current = false;
         } else {
           dispatch({ type: 'REMOTE_COMPLETED_UPSERT', entry: mapDbCompleted(payload.new as Record<string, unknown>) });
         }
       })
-      .subscribe();
+      // Fires on the first join AND on every rejoin after a socket drop —
+      // exactly the moments events can be lost (see reconcileCompleted).
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') void reconcileCompleted('subscribed');
+      });
 
     const appointmentsChan = supabase
       .channel('realtime:appointments')
@@ -2111,7 +2183,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(staffScheduleOverridesChan);
       supabase.removeChannel(systemStateChan);
     };
-  }, [state.loaded]);
+  }, [state.loaded, reconcileCompleted]);
 
   useEffect(() => {
     if (!state.loaded) return;

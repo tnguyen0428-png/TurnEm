@@ -83,6 +83,9 @@ export type AppAction =
   | { type: 'REMOTE_QUEUE_DELETE'; id: string }
   | { type: 'REMOTE_COMPLETED_UPSERT'; entry: CompletedEntry }
   | { type: 'REMOTE_COMPLETED_DELETE'; id: string }
+  /** Catch-up after a missed realtime event: inserts only the rows whose id is
+   *  not already in state.completed. Never overwrites or removes. */
+  | { type: 'REMOTE_COMPLETED_ADD_MISSING'; entries: CompletedEntry[] }
   | { type: 'REMOTE_APPOINTMENT_UPSERT'; appointment: Appointment }
   | { type: 'REMOTE_APPOINTMENT_DELETE'; id: string }
   | { type: 'REMOTE_SALON_SERVICE_UPSERT'; service: SalonService }
