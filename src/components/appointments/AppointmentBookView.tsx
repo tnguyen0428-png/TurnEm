@@ -1597,8 +1597,8 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
           // differently from a regular day off.
           const isLunch = band.label === 'LUNCH';
           const isTimeOff = band.label === 'TIME OFF';
-          const bandBg = isLunch ? 'rgba(251, 191, 36, 0.10)' : isTimeOff ? 'rgba(196, 181, 253, 0.18)' : 'rgba(75, 85, 99, 0.15)';
-          const bandStripeRgba = isLunch ? 'rgba(180, 83, 9, 0.06)' : isTimeOff ? 'rgba(167, 139, 250, 0.22)' : 'rgba(75, 85, 99, 0.08)';
+          const bandBg = isLunch ? 'rgba(251, 191, 36, 0.10)' : isTimeOff ? 'rgba(196, 181, 253, 0.09)' : 'rgba(75, 85, 99, 0.15)';
+          const bandStripeRgba = isLunch ? 'rgba(180, 83, 9, 0.06)' : isTimeOff ? 'rgba(167, 139, 250, 0.11)' : 'rgba(75, 85, 99, 0.08)';
           const bandLabelColor = isLunch ? 'text-amber-600' : isTimeOff ? 'text-violet-400' : 'text-gray-400';
           return (
           <div
