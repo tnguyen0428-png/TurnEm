@@ -654,7 +654,14 @@ function TicketList({
             {t.items.length > 0 ? (
               <>
                 <span className="flex-shrink-0 w-7 h-7 rounded-full border-2 border-red-500 text-red-600 font-mono text-base font-bold flex items-center justify-center">
-                  {t.items.filter((i) => i.kind === 'service').length}
+                  {(() => {
+                    // One ticket expected per manicurist, not per service: 3
+                    // techs on 4 services is 3. Lines with no staff yet fall
+                    // back to counting the line itself.
+                    const svc = t.items.filter((i) => i.kind === 'service');
+                    const staff = new Set(svc.map((i, idx) => i.staff1Id || i.staff1Name || `line-${idx}`));
+                    return staff.size;
+                  })()}
                 </span>
                 <span className="text-gray-700 leading-snug break-words self-center">{t.items.map((i) => i.name).join(', ')}</span>
               </>
