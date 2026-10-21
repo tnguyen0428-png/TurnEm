@@ -295,15 +295,12 @@ export default function AppointmentsScreen() {
     }
   }, [selectedDate, tabStart, today]);
 
-  // TODAY jumps the book to today AND, now that the strip's < arrow can page
-  // into the past, drops the strip back to its default forward window when
-  // today has scrolled off the right-hand end — otherwise TODAY leaves a strip
-  // sitting weeks back with nothing highlighted and no obvious way home.
-  // Deliberately NOT triggered when today merely sits one day before a strip
-  // that starts tomorrow: that's the resting state, not a stranded one.
+  // TODAY jumps the book to today AND always resets the strip to its default
+  // window starting tomorrow. A strip left paged weeks ahead (or back) next to
+  // a book showing today was confusing (Tony 2026-10-21).
   function goToToday() {
     setSelectedDate(today);
-    if (today > shiftDate(tabStart, TAB_DAYS - 1)) setTabStart(tomorrow);
+    setTabStart(tomorrow);
   }
 
   // Quick-jump strip. Booking a week or two out meant stepping through the
