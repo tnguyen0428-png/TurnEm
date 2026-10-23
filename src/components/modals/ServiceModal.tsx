@@ -7,9 +7,11 @@ import { useServiceCategories } from '../../hooks/useServiceCategories';
 interface ServiceModalProps {
   mode: 'add' | 'edit';
   onClose: () => void;
+  /** Add mode: preselect this category (e.g. the tab the user is on). */
+  defaultCategory?: string;
 }
 
-export default function ServiceModal({ mode, onClose }: ServiceModalProps) {
+export default function ServiceModal({ mode, onClose, defaultCategory }: ServiceModalProps) {
   const { state, dispatch } = useApp();
   const { categoryNames } = useServiceCategories();
 
@@ -21,7 +23,9 @@ export default function ServiceModal({ mode, onClose }: ServiceModalProps) {
   const [turnValue, setTurnValue] = useState(0);
   const [duration, setDuration] = useState(30);
   const [price, setPrice] = useState(0);
-  const [category, setCategory] = useState(categoryNames[0] ?? '');
+  const [category, setCategory] = useState(
+    defaultCategory && categoryNames.includes(defaultCategory) ? defaultCategory : categoryNames[0] ?? '',
+  );
 
   useEffect(() => {
     if (editing) {

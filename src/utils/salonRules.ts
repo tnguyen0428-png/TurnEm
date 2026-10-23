@@ -1,19 +1,10 @@
 import type { Manicurist, SalonService, ServiceType } from '../types';
 
+// Matched by name, which is why Wax Services is locked in service_categories.
 export const WAX = 'Wax Services';
-export const ACRYLIC_FULL = 'Acrylic Full Set';
-export const ACRYLIC_FILL = 'Acrylic Fill';
-
-export const LEGACY_ACRYLIC_SERVICE_TYPES = new Set<string>(['Acrylics/Full', 'Fills']);
 
 export function isWaxService(service: string, salonServices: SalonService[]): boolean {
   return salonServices.find((s) => s.name === service)?.category === WAX;
-}
-
-export function isAcrylicService(serviceName: string, salonServices: SalonService[]): boolean {
-  if (LEGACY_ACRYLIC_SERVICE_TYPES.has(serviceName)) return true;
-  const svc = salonServices.find(s => s.name === serviceName);
-  return !!svc && (svc.category === ACRYLIC_FULL || svc.category === ACRYLIC_FILL);
 }
 
 export function clientHasAnyWaxService(services: ServiceType[], salonServices: SalonService[]): boolean {

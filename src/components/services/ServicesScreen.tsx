@@ -508,7 +508,11 @@ export default function ServicesScreen() {
       )}
 
       {showModal === 'add' && (
-        <ServiceModal mode="add" onClose={() => setShowModal(null)} />
+        <ServiceModal
+          mode="add"
+          defaultCategory={activeCategory === 'All' ? undefined : activeCategory}
+          onClose={() => setShowModal(null)}
+        />
       )}
       {showCategories && <CategoryManagerModal onClose={() => setShowCategories(false)} />}
       {showModal === 'edit' && (
