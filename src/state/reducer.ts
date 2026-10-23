@@ -3,6 +3,7 @@ import type { AppAction } from './actions';
 import { clientHasAnyWaxService } from '../utils/salonRules';
 import { isFourthPositionSpecialService } from '../utils/priority';
 import { getLocalDateStr } from '../utils/time';
+import { categoryNameProblem } from '../utils/serviceCategories';
 import { anchorManicuristId, reconcileServiceRequests, relocateServiceRequests } from '../lib/serviceRequests';
 
 // ─── totalTurns convergence ──────────────────────────────────────────────
@@ -2418,9 +2419,8 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       return { ...state, serviceCategories: action.categories };
 
     case 'ADD_SERVICE_CATEGORY': {
-      // name is UNIQUE in the DB — refuse duplicates here so the sync never 409s.
-      const name = action.category.name.trim().toLowerCase();
-      if (state.serviceCategories.some((c) => c.id === action.category.id || c.name.trim().toLowerCase() === name)) return state;
+      if (state.serviceCategories.some((c) => c.id === action.category.id)) return state;
+      if (categoryNameProblem(state.serviceCategories, action.category.name)) return state;
       return { ...state, serviceCategories: [...state.serviceCategories, action.category] };
     }
 
@@ -2434,14 +2434,31 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         delete updates.name;
         delete updates.isLocked;
       }
-      if (updates.name !== undefined) {
-        const name = updates.name.trim().toLowerCase();
-        if (!name || state.serviceCategories.some((c) => c.id !== action.id && c.name.trim().toLowerCase() === name)) return state;
-      }
+      if (updates.name !== undefined && categoryNameProblem(state.serviceCategories, updates.name, action.id)) return state;
       if (Object.keys(updates).length === 0) return state;
       return {
         ...state,
         serviceCategories: state.serviceCategories.map((c) => c.id === action.id ? { ...c, ...updates } : c),
+      };
+    }
+
+    case 'RENAME_SERVICE_CATEGORY': {
+      // Services store their category by NAME, so the rename carries every
+      // service (active or not) along in the same state update — otherwise
+      // they'd be orphaned under the old name. Priority lists are keyed by
+      // name too; renameServiceCategory in AppContext remaps those.
+      const target = state.serviceCategories.find((c) => c.id === action.id);
+      if (!target || target.isLocked) return state;
+      if (categoryNameProblem(state.serviceCategories, action.name, action.id)) return state;
+      const oldName = target.name;
+      const newName = action.name.trim();
+      if (newName === oldName) return state;
+      return {
+        ...state,
+        serviceCategories: state.serviceCategories.map((c) => c.id === action.id ? { ...c, name: newName } : c),
+        salonServices: state.salonServices.some((s) => s.category === oldName)
+          ? state.salonServices.map((s) => s.category === oldName ? { ...s, category: newName } : s)
+          : state.salonServices,
       };
     }
 

@@ -6,6 +6,7 @@ import { appReducer, INITIAL_STATE } from './reducer';
 import { supabase, fetchAllRows } from '../lib/supabase';
 import { defaultSalonServices } from '../constants/salonServices';
 import { DEFAULT_SERVICE_CATEGORIES } from '../constants/services';
+import { categoryNameProblem } from '../utils/serviceCategories';
 import { defaultManicurists } from '../constants/manicurists';
 import { getLocalDateStr, getTodayLA } from '../utils/time';
 import { addMissingServiceRequests } from '../lib/serviceRequests';
@@ -36,6 +37,11 @@ interface AppContextType {
    *  call this before reading state.appointments. Idempotent and cheap once
    *  the range is already loaded; see APPT_WINDOW_DAYS_BACK. */
   ensureAppointmentsFrom: (fromDate: string) => Promise<void>;
+  /** Rename a service category and carry everything keyed by its name along:
+   *  its services (via RENAME_SERVICE_CATEGORY) and both priority lists. Use
+   *  this, never UPDATE_SERVICE_CATEGORY with a name. Returns why it was
+   *  refused, or null on success. */
+  renameServiceCategory: (id: string, name: string) => 'empty' | 'duplicate' | 'locked' | null;
 }
 
 // localStorage keys mirrored from utils/priorityStorage. Duplicated here so the
@@ -1601,6 +1607,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, [trackSave, setSyncErrorTracked]);
 
+  const renameServiceCategory = useCallback((id: string, name: string) => {
+    const target = state.serviceCategories.find((c) => c.id === id);
+    if (!target || target.isLocked) return 'locked' as const;
+    const problem = categoryNameProblem(state.serviceCategories, name, id);
+    if (problem) return problem;
+    const oldName = target.name;
+    const newName = name.trim();
+    if (newName === oldName) return null;
+    dispatch({ type: 'RENAME_SERVICE_CATEGORY', id, name: newName });
+    const priorityUpdate: { categoryPriority?: string[]; servicePriority?: Record<string, string[]> } = {};
+    if (state.categoryPriority?.includes(oldName)) {
+      priorityUpdate.categoryPriority = state.categoryPriority.map((c) => c === oldName ? newName : c);
+    }
+    if (state.servicePriority && oldName in state.servicePriority) {
+      // Rebuild rather than delete+add so the key keeps its position.
+      priorityUpdate.servicePriority = Object.fromEntries(
+        Object.entries(state.servicePriority).map(([k, v]) => [k === oldName ? newName : k, v]),
+      );
+    }
+    if (priorityUpdate.categoryPriority || priorityUpdate.servicePriority) void setPriority(priorityUpdate);
+    return null;
+  }, [state.serviceCategories, state.categoryPriority, state.servicePriority, setPriority, dispatch]);
+
   const isStaffMode = typeof window !== 'undefined' && (
     new URLSearchParams(window.location.search).get('mode') === 'staff' ||
     (window as any).__TURNEM_STAFF_MODE__ === true
@@ -2300,8 +2329,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [dispatch, setSyncErrorTracked]);
 
   const ctxValue = useMemo(
-    () => ({ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom }),
-    [state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom],
+    () => ({ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom, renameServiceCategory }),
+    [state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom, renameServiceCategory],
   );
 
   return (

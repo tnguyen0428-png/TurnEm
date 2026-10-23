@@ -68,6 +68,7 @@ export type AppAction =
   | { type: 'SET_SERVICE_CATEGORIES'; categories: ServiceCategory[] }
   | { type: 'ADD_SERVICE_CATEGORY'; category: ServiceCategory }
   | { type: 'UPDATE_SERVICE_CATEGORY'; id: string; updates: Partial<Omit<ServiceCategory, 'id'>> }
+  | { type: 'RENAME_SERVICE_CATEGORY'; id: string; name: string }
   | { type: 'DELETE_SERVICE_CATEGORY'; id: string }
   | { type: 'REORDER_SERVICE_CATEGORY'; ids: string[] }
   | { type: 'TOGGLE_FOURTH_POSITION_SPECIAL'; id: string }

@@ -1,10 +1,11 @@
-import { useState, useMemo, type CSSProperties } from 'react';
-import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
+import { useState, useMemo, useEffect, type CSSProperties } from 'react';
+import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, ChevronRight, GripVertical, Tags } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import ServiceModal from '../modals/ServiceModal';
+import CategoryManagerModal from '../modals/CategoryManagerModal';
 import { paletteFor } from '../../constants/categoryPalette';
 import { useServiceCategories } from '../../hooks/useServiceCategories';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
@@ -16,26 +17,9 @@ import type { SalonService } from '../../types';
 // 'All' isn't a real category, so it keeps its own fixed styling.
 const ALL_TAB_COLORS = { active: 'bg-gray-900 text-white', inactive: 'bg-white text-gray-600 hover:bg-gray-50' };
 
-const STORAGE_KEY = 'turnem_category_order';
-
-// Per-device tab order from drag-and-drop. Step 3 moves this to the shared
-// service_categories.sort_order; until then the saved order is merged against
-// the live category list (unknown names dropped, new ones appended in order).
-function getSavedOrder(): string[] {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch {}
-  return [];
-}
-
-function mergeOrder(saved: string[], categoryNames: string[]): string[] {
-  const live = new Set(categoryNames);
-  const merged = saved.filter(c => live.has(c));
-  const known = new Set(merged);
-  categoryNames.forEach(c => { if (!known.has(c)) merged.push(c); });
-  return merged;
-}
+// Tab order used to be saved per device under this key; it now lives in the
+// shared service_categories.sort_order, so the old value is just cleared.
+const LEGACY_ORDER_KEY = 'turnem_category_order';
 
 interface SortableTabProps {
   cat: string;
@@ -207,7 +191,10 @@ export default function ServicesScreen() {
   const { categories, categoryNames } = useServiceCategories();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState<'add' | 'edit' | null>(null);
-  const [activeCategory, setActiveCategory] = useState('All');
+  // Tracked by id so the selected tab survives a rename; a deleted category
+  // falls back to 'All'.
+  const [activeCategoryId, setActiveCategoryId] = useState('All');
+  const [showCategories, setShowCategories] = useState(false);
   const [search, setSearch] = useState('');
   const [view, setView] = useState<'services' | 'priority'>('services');
 
@@ -216,8 +203,12 @@ export default function ServicesScreen() {
     [state.salonServices]
   );
 
-  const [savedOrder, setSavedOrder] = useState<string[]>(getSavedOrder);
-  const sortableCategories = useMemo(() => mergeOrder(savedOrder, categoryNames), [savedOrder, categoryNames]);
+  const activeCategory = categories.find(c => c.id === activeCategoryId)?.name ?? 'All';
+  const setActiveCategory = (name: string) => setActiveCategoryId(categories.find(c => c.name === name)?.id ?? 'All');
+
+  useEffect(() => {
+    try { localStorage.removeItem(LEGACY_ORDER_KEY); } catch { /* nothing to clear */ }
+  }, []);
   const colorByCategory = useMemo(() => new Map(categories.map(c => [c.name, c.color])), [categories]);
   const iconClassFor = (category: string) => paletteFor(colorByCategory.get(category)).icon;
   const tabColorsFor = (category: string) => {
@@ -234,11 +225,10 @@ export default function ServicesScreen() {
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      const oldIndex = sortableCategories.indexOf(active.id as string);
-      const newIndex = sortableCategories.indexOf(over.id as string);
-      const next = arrayMove(sortableCategories, oldIndex, newIndex);
-      setSavedOrder(next);
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* order just won't persist */ }
+      const oldIndex = categories.findIndex(c => c.name === active.id);
+      const newIndex = categories.findIndex(c => c.name === over.id);
+      if (oldIndex < 0 || newIndex < 0) return;
+      dispatch({ type: 'REORDER_SERVICE_CATEGORY', ids: arrayMove(categories, oldIndex, newIndex).map(c => c.id) });
     }
   }
 
@@ -320,13 +310,22 @@ export default function ServicesScreen() {
             {sorted.length} services
           </p>
         </div>
-        <button
-          onClick={() => setShowModal('add')}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-pink-500 text-white font-mono text-xs font-semibold hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm"
-        >
-          <Plus size={14} />
-          ADD SERVICE
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCategories(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 font-mono text-xs font-semibold hover:bg-gray-50 active:scale-[0.98] transition-all shadow-sm"
+          >
+            <Tags size={14} />
+            CATEGORIES
+          </button>
+          <button
+            onClick={() => setShowModal('add')}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-pink-500 text-white font-mono text-xs font-semibold hover:bg-pink-600 active:scale-[0.98] transition-all shadow-sm"
+          >
+            <Plus size={14} />
+            ADD SERVICE
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-1 mb-5 p-1 bg-gray-100 rounded-xl w-fit">
@@ -393,8 +392,8 @@ export default function ServicesScreen() {
 
           {/* Draggable category tabs */}
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={sortableCategories} strategy={horizontalListSortingStrategy}>
-              {sortableCategories.map(cat => (
+            <SortableContext items={categoryNames} strategy={horizontalListSortingStrategy}>
+              {categoryNames.map(cat => (
                 <SortableTab
                   key={cat}
                   cat={cat}
@@ -511,6 +510,7 @@ export default function ServicesScreen() {
       {showModal === 'add' && (
         <ServiceModal mode="add" onClose={() => setShowModal(null)} />
       )}
+      {showCategories && <CategoryManagerModal onClose={() => setShowCategories(false)} />}
       {showModal === 'edit' && (
         <ServiceModal mode="edit" onClose={() => { setShowModal(null); dispatch({ type: 'SET_EDITING_SERVICE', serviceId: null }); }} />
       )}
