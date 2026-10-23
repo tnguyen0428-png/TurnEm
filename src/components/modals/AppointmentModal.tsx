@@ -14,7 +14,7 @@ import {
   appointmentStaffLabel, updateCustomer,
 } from '../../lib/customers';
 import type { Customer } from '../../types';
-import { SERVICE_CATEGORIES } from '../../constants/services';
+import { useServiceCategories } from '../../hooks/useServiceCategories';
 import { getTodayLA } from '../../utils/time';
 import { dedupeClientName } from '../../utils/clientNaming';
 import { resolveScheduleForDate } from '../../utils/schedule';
@@ -105,6 +105,7 @@ function formatTo12Hr(hhmm: string): string {
 
 export default function AppointmentModal({ mode }: AppointmentModalProps) {
   const { state, dispatch } = useApp();
+  const { categoryNames } = useServiceCategories();
 
   const editing = mode === 'edit'
     ? state.appointments.find((a) => a.id === state.editingAppointmentId)
@@ -376,8 +377,8 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
   const availableCategories = useMemo(() => {
     const cats = new Set(sortedServices.map((s) => s.category).filter(Boolean));
-    return SERVICE_CATEGORIES.filter((c) => cats.has(c));
-  }, [sortedServices]);
+    return categoryNames.filter((c) => cats.has(c));
+  }, [sortedServices, categoryNames]);
 
   const servicesInCategory = useMemo(() => {
     if (!selectedCategory) return [];

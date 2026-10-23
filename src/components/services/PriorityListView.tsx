@@ -2,7 +2,7 @@ import { useState, useMemo, type ReactNode } from 'react';
 import { GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
-import { SERVICE_CATEGORIES } from '../../constants/services';
+import { useServiceCategories } from '../../hooks/useServiceCategories';
 import {
   DndContext,
   closestCenter,
@@ -167,6 +167,7 @@ function SortableCategoryRow({
 
 export default function PriorityListView() {
   const { state, setPriority } = useApp();
+  const { categoryNames } = useServiceCategories();
 
   // Group active services by category, ordered by sortOrder as the default
   const servicesByCategory = useMemo(() => {
@@ -186,8 +187,8 @@ export default function PriorityListView() {
     const present = new Set(
       state.salonServices.map(s => s.category).filter(Boolean)
     );
-    return SERVICE_CATEGORIES.filter(c => present.has(c));
-  }, [state.salonServices]);
+    return categoryNames.filter(c => present.has(c));
+  }, [state.salonServices, categoryNames]);
 
   // Derive the visible orderings from cross-device-synced state. Memoised against the
   // saved priority and the live service catalogue, so an admin adding/removing a

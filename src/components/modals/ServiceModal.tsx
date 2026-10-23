@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
 import type { SalonService } from '../../types';
-import { SERVICE_CATEGORIES } from '../../constants/services';
+import { useServiceCategories } from '../../hooks/useServiceCategories';
 
 interface ServiceModalProps {
   mode: 'add' | 'edit';
@@ -11,6 +11,7 @@ interface ServiceModalProps {
 
 export default function ServiceModal({ mode, onClose }: ServiceModalProps) {
   const { state, dispatch } = useApp();
+  const { categoryNames } = useServiceCategories();
 
   const editing = mode === 'edit'
     ? state.salonServices.find((s) => s.id === state.editingServiceId)
@@ -20,7 +21,7 @@ export default function ServiceModal({ mode, onClose }: ServiceModalProps) {
   const [turnValue, setTurnValue] = useState(0);
   const [duration, setDuration] = useState(30);
   const [price, setPrice] = useState(0);
-  const [category, setCategory] = useState(SERVICE_CATEGORIES[0]);
+  const [category, setCategory] = useState(categoryNames[0] ?? '');
 
   useEffect(() => {
     if (editing) {
@@ -28,8 +29,11 @@ export default function ServiceModal({ mode, onClose }: ServiceModalProps) {
       setTurnValue(editing.turnValue);
       setDuration(editing.duration);
       setPrice(editing.price);
-      setCategory(editing.category || SERVICE_CATEGORIES[0]);
+      setCategory(editing.category || categoryNames[0] || '');
     }
+  // Seed only when the edited service changes; a live category update must not
+  // reset what the user has typed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
   function handleSubmit(e: React.FormEvent) {
@@ -96,7 +100,12 @@ export default function ServiceModal({ mode, onClose }: ServiceModalProps) {
             onChange={(e) => setCategory(e.target.value)}
             className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 bg-white transition-all"
           >
-            {SERVICE_CATEGORIES.map((c) => (
+            {/* A service whose category isn't in the list still gets its own
+                option, so saving the form never silently re-categorizes it. */}
+            {category && !categoryNames.includes(category) && (
+              <option value={category}>{category}</option>
+            )}
+            {categoryNames.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>

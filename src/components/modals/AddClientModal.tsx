@@ -101,6 +101,7 @@ export default function AddClientModal() {
       >
         <ClientForm
           salonServices={state.salonServices}
+          serviceCategories={state.serviceCategories}
           manicurists={state.manicurists}
           submitLabel="ADD TO QUEUE"
           onSubmit={handleSubmit}

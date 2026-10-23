@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
-import { SERVICE_CATEGORIES } from '../../constants/services';
+import { sortServiceCategories } from '../../hooks/useServiceCategories';
 import { toTitleCase, searchCustomers } from '../../lib/customers';
 import CustomerNoteAlert from '../shared/CustomerNoteAlert';
-import type { SalonService, ServiceType, Manicurist, ServiceRequest } from '../../types';
+import type { SalonService, ServiceCategory, ServiceType, Manicurist, ServiceRequest } from '../../types';
 
 interface SelectedService {
   serviceId: string;
@@ -25,6 +25,7 @@ interface ClientFormProps {
   initialIsAppointment?: boolean;
   initialSelectedServices?: SelectedService[];
   salonServices: SalonService[];
+  serviceCategories: ServiceCategory[];
   manicurists: Manicurist[];
   submitLabel: string;
   onSubmit: (data: ClientFormData) => void;
@@ -39,6 +40,7 @@ export default function ClientForm({
   initialIsAppointment = false,
   initialSelectedServices,
   salonServices,
+  serviceCategories,
   manicurists,
   submitLabel,
   onSubmit,
@@ -113,8 +115,8 @@ export default function ClientForm({
 
   const availableCategories = useMemo(() => {
     const cats = new Set(sorted.map((s) => s.category).filter(Boolean));
-    return SERVICE_CATEGORIES.filter((c) => cats.has(c));
-  }, [sorted]);
+    return sortServiceCategories(serviceCategories).map((c) => c.name).filter((c) => cats.has(c));
+  }, [sorted, serviceCategories]);
 
   const servicesInCategory = useMemo(() => {
     if (!selectedCategory) return [];

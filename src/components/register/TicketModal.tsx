@@ -41,7 +41,7 @@ import { fetchOpenShift } from '../../lib/shifts';
 import GiftCardSaleModal from './GiftCardSaleModal';
 import GiftRedeemModal from './GiftRedeemModal';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
-import { SERVICE_CATEGORIES } from '../../constants/services';
+import { useServiceCategories } from '../../hooks/useServiceCategories';
 import { supabase } from '../../lib/supabase';
 import { lookupGiftCardBalance, normalizeSerial, type GiftCardBalance } from '../../lib/giftCertificates';
 import { reconcileServiceRequests } from '../../lib/serviceRequests';
@@ -99,6 +99,7 @@ export default function TicketModal({
   onChanged,
 }: Props) {
   const { state, dispatch } = useApp();
+  const { categoryNames } = useServiceCategories();
   // History panel state — opens a side modal showing this customer's
   // past tickets. Wired by the HISTORY footer button.
   const [showHistory, setShowHistory] = useState(false);
@@ -363,8 +364,8 @@ export default function TicketModal({
   const [pickerServiceId, setPickerServiceId] = useState('');
   const availableCategories = useMemo(() => {
     const set = new Set(sortedServices.map((s) => s.category).filter(Boolean));
-    return SERVICE_CATEGORIES.filter((c) => set.has(c));
-  }, [sortedServices]);
+    return categoryNames.filter((c) => set.has(c));
+  }, [sortedServices, categoryNames]);
   const servicesInCategory = useMemo(() => {
     if (!pickerCategory) return [];
     return sortedServices.filter((s) => s.category === pickerCategory);

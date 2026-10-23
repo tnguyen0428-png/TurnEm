@@ -85,6 +85,7 @@ export default function EditClientModal() {
         initialIsAppointment={client.isAppointment}
         initialSelectedServices={initialSelectedServices}
         salonServices={state.salonServices}
+        serviceCategories={state.serviceCategories}
         manicurists={state.manicurists}
         submitLabel="SAVE CHANGES"
         onSubmit={handleSubmit}

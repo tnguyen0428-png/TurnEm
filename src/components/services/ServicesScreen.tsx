@@ -5,55 +5,36 @@ import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import ServiceModal from '../modals/ServiceModal';
-import { SERVICE_CATEGORIES } from '../../constants/services';
+import { paletteFor } from '../../constants/categoryPalette';
+import { useServiceCategories } from '../../hooks/useServiceCategories';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import PriorityListView from './PriorityListView';
 import type { SalonService } from '../../types';
 
-const CATEGORY_ICONS: Record<string, string> = {
-  'All': '',
-  'Acrylic Fill': 'bg-rose-50 text-rose-500',
-  'Acrylic Full Set': 'bg-rose-50 text-rose-500',
-  'Healthy Nails': 'bg-emerald-50 text-emerald-500',
-  'Manicures': 'bg-sky-50 text-sky-500',
-  'Pedicures': 'bg-sky-50 text-sky-500',
-  'Combo': 'bg-amber-50 text-amber-500',
-  'A La Carte & Add-Ons': 'bg-teal-50 text-teal-500',
-  'Kids Services': 'bg-pink-50 text-pink-500',
-  'Wax Services': 'bg-orange-50 text-orange-500',
-  'Special Request': 'bg-purple-50 text-purple-500',
-};
-
-const TAB_COLORS: Record<string, { active: string; inactive: string }> = {
-  'All': { active: 'bg-gray-900 text-white', inactive: 'bg-white text-gray-600 hover:bg-gray-50' },
-  'Acrylic Fill': { active: 'bg-rose-500 text-white', inactive: 'bg-white text-rose-600 hover:bg-rose-50' },
-  'Acrylic Full Set': { active: 'bg-rose-500 text-white', inactive: 'bg-white text-rose-600 hover:bg-rose-50' },
-  'Healthy Nails': { active: 'bg-emerald-500 text-white', inactive: 'bg-white text-emerald-600 hover:bg-emerald-50' },
-  'Manicures': { active: 'bg-sky-500 text-white', inactive: 'bg-white text-sky-600 hover:bg-sky-50' },
-  'Pedicures': { active: 'bg-sky-500 text-white', inactive: 'bg-white text-sky-600 hover:bg-sky-50' },
-  'Combo': { active: 'bg-amber-500 text-white', inactive: 'bg-white text-amber-600 hover:bg-amber-50' },
-  'A La Carte & Add-Ons': { active: 'bg-teal-500 text-white', inactive: 'bg-white text-teal-600 hover:bg-teal-50' },
-  'Kids Services': { active: 'bg-pink-500 text-white', inactive: 'bg-white text-pink-600 hover:bg-pink-50' },
-  'Wax Services': { active: 'bg-orange-500 text-white', inactive: 'bg-white text-orange-600 hover:bg-orange-50' },
-  'Special Request': { active: 'bg-purple-500 text-white', inactive: 'bg-white text-purple-600 hover:bg-purple-50' },
-};
+// 'All' isn't a real category, so it keeps its own fixed styling.
+const ALL_TAB_COLORS = { active: 'bg-gray-900 text-white', inactive: 'bg-white text-gray-600 hover:bg-gray-50' };
 
 const STORAGE_KEY = 'turnem_category_order';
 
+// Per-device tab order from drag-and-drop. Step 3 moves this to the shared
+// service_categories.sort_order; until then the saved order is merged against
+// the live category list (unknown names dropped, new ones appended in order).
 function getSavedOrder(): string[] {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      const parsed: string[] = JSON.parse(saved);
-      const known = new Set(parsed);
-      const merged = parsed.filter(c => SERVICE_CATEGORIES.includes(c));
-      SERVICE_CATEGORIES.forEach(c => { if (!known.has(c)) merged.push(c); });
-      return merged;
-    }
+    if (saved) return JSON.parse(saved);
   } catch {}
-  return [...SERVICE_CATEGORIES];
+  return [];
+}
+
+function mergeOrder(saved: string[], categoryNames: string[]): string[] {
+  const live = new Set(categoryNames);
+  const merged = saved.filter(c => live.has(c));
+  const known = new Set(merged);
+  categoryNames.forEach(c => { if (!known.has(c)) merged.push(c); });
+  return merged;
 }
 
 interface SortableTabProps {
@@ -101,6 +82,7 @@ interface SortableServiceRowProps {
   onEdit: () => void;
   onDelete: () => void;
   onToggleFourth: () => void;
+  iconClass: string;
 }
 
 function SortableServiceRow({
@@ -112,6 +94,7 @@ function SortableServiceRow({
   onEdit,
   onDelete,
   onToggleFourth,
+  iconClass,
 }: SortableServiceRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: svc.id });
   const style: CSSProperties = {
@@ -160,9 +143,7 @@ function SortableServiceRow({
               <ChevronDown size={14} />
             </button>
           </div>
-          <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
-            CATEGORY_ICONS[svc.category] || 'bg-gray-50 text-gray-500'
-          }`}>
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${iconClass}`}>
             <Sparkles size={14} />
           </div>
           <div className="min-w-0">
@@ -223,6 +204,7 @@ function SortableServiceRow({
 
 export default function ServicesScreen() {
   const { state, dispatch } = useApp();
+  const { categories, categoryNames } = useServiceCategories();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState<'add' | 'edit' | null>(null);
   const [activeCategory, setActiveCategory] = useState('All');
@@ -234,7 +216,15 @@ export default function ServicesScreen() {
     [state.salonServices]
   );
 
-  const [sortableCategories, setSortableCategories] = useState<string[]>(getSavedOrder);
+  const [savedOrder, setSavedOrder] = useState<string[]>(getSavedOrder);
+  const sortableCategories = useMemo(() => mergeOrder(savedOrder, categoryNames), [savedOrder, categoryNames]);
+  const colorByCategory = useMemo(() => new Map(categories.map(c => [c.name, c.color])), [categories]);
+  const iconClassFor = (category: string) => paletteFor(colorByCategory.get(category)).icon;
+  const tabColorsFor = (category: string) => {
+    if (!colorByCategory.has(category)) return ALL_TAB_COLORS;
+    const p = paletteFor(colorByCategory.get(category));
+    return { active: p.tabActive, inactive: p.tabInactive };
+  };
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   const sensors = useSensors(
@@ -244,13 +234,11 @@ export default function ServicesScreen() {
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setSortableCategories(prev => {
-        const oldIndex = prev.indexOf(active.id as string);
-        const newIndex = prev.indexOf(over.id as string);
-        const next = arrayMove(prev, oldIndex, newIndex);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-        return next;
-      });
+      const oldIndex = sortableCategories.indexOf(active.id as string);
+      const newIndex = sortableCategories.indexOf(over.id as string);
+      const next = arrayMove(sortableCategories, oldIndex, newIndex);
+      setSavedOrder(next);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* order just won't persist */ }
     }
   }
 
@@ -310,10 +298,10 @@ export default function ServicesScreen() {
       if (!map.has(cat)) map.set(cat, []);
       map.get(cat)!.push(s);
     });
-    return SERVICE_CATEGORIES
+    return categoryNames
       .filter(c => map.has(c))
       .map(c => ({ category: c, services: map.get(c)! }));
-  }, [filtered, activeCategory]);
+  }, [filtered, activeCategory, categoryNames]);
 
   function handleMoveUp(id: string) {
     dispatch({ type: 'REORDER_SALON_SERVICE', id, direction: 'up' });
@@ -393,8 +381,8 @@ export default function ServicesScreen() {
             style={{ padding: '10px 20px', fontSize: '15px' }}
             className={`flex items-center gap-1.5 rounded-full font-mono font-semibold whitespace-nowrap border transition-all duration-200 ${
               activeCategory === 'All'
-                ? `${TAB_COLORS['All'].active} border-transparent shadow-sm`
-                : `${TAB_COLORS['All'].inactive} border-gray-200`
+                ? `${ALL_TAB_COLORS.active} border-transparent shadow-sm`
+                : `${ALL_TAB_COLORS.inactive} border-gray-200`
             }`}
           >
             All
@@ -411,7 +399,7 @@ export default function ServicesScreen() {
                   key={cat}
                   cat={cat}
                   isActive={activeCategory === cat}
-                  colors={TAB_COLORS[cat] || TAB_COLORS['All']}
+                  colors={tabColorsFor(cat)}
                   count={categoryCounts[cat] || 0}
                   onClick={() => setActiveCategory(cat)}
                 />
@@ -450,7 +438,7 @@ export default function ServicesScreen() {
                     <span className="text-gray-300 group-hover:text-gray-500 transition-colors flex-shrink-0">
                       {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                     </span>
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${CATEGORY_ICONS[group.category] || 'bg-gray-50 text-gray-500'}`}>
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${iconClassFor(group.category)}`}>
                       <Sparkles size={13} />
                     </div>
                     <h3 className="font-mono text-[11px] text-gray-500 font-semibold tracking-wider uppercase">
@@ -485,6 +473,7 @@ export default function ServicesScreen() {
                               setShowModal('edit');
                             }}
                             onDelete={() => setDeleteId(svc.id)}
+                            iconClass={iconClassFor(svc.category)}
                             onToggleFourth={() =>
                               dispatch({
                                 type: 'UPDATE_SALON_SERVICE',

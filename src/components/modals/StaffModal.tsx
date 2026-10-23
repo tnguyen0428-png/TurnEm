@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { Sparkles } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
-import { STAFF_COLORS, SERVICE_CATEGORIES } from '../../constants/services';
+import { STAFF_COLORS } from '../../constants/services';
+import { useServiceCategories } from '../../hooks/useServiceCategories';
 import type { Manicurist } from '../../types';
 
 interface StaffModalProps {
@@ -11,6 +12,7 @@ interface StaffModalProps {
 
 export default function StaffModal({ mode }: StaffModalProps) {
   const { state, dispatch } = useApp();
+  const { categoryNames } = useServiceCategories();
 
   const editingStaff = mode === 'edit'
     ? state.manicurists.find((m) => m.id === state.editingStaffId)
@@ -37,10 +39,10 @@ export default function StaffModal({ mode }: StaffModalProps) {
       if (!map.has(cat)) map.set(cat, []);
       map.get(cat)!.push(s);
     });
-    return SERVICE_CATEGORIES
+    return categoryNames
       .filter(c => map.has(c))
       .map(c => ({ category: c, services: map.get(c)! }));
-  }, [sortedServices]);
+  }, [sortedServices, categoryNames]);
 
   // Only seed the form when the modal opens for a specific staff (or switches to a
   // different one). Depending on `editingStaff` directly would re-fire whenever that

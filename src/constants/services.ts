@@ -10,19 +10,6 @@ export const SERVICE_TURN_VALUES: Record<ServiceType, number> = {
   'Waxing': 0.5,
 };
 
-export const SERVICE_CATEGORIES = [
-  'Acrylic Fill',
-  'Acrylic Full Set',
-  'Healthy Nails',
-  'Manicures',
-  'Pedicures',
-  'Combo',
-  'Kids Services',
-  'A La Carte & Add-Ons',
-  'Wax Services',
-  'Special Request',
-];
-
 // In-memory fallback for the service_categories table (seeded by
 // 20261023120000_service_categories.sql — keep the two in sync). Used only
 // when the fetch fails or returns no rows; never written to the DB.

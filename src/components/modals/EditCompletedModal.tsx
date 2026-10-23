@@ -3,7 +3,7 @@ import { Ban, RotateCcw, X } from 'lucide-react';
 import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
-import { SERVICE_CATEGORIES } from '../../constants/services';
+import { useServiceCategories } from '../../hooks/useServiceCategories';
 import type { CompletedEntry, ServiceType } from '../../types';
 
 interface Props {
@@ -13,6 +13,7 @@ interface Props {
 
 export default function EditCompletedModal({ entry, onClose }: Props) {
   const { state, dispatch } = useApp();
+  const { categoryNames } = useServiceCategories();
   const [manicuristId, setManicuristId] = useState(entry.manicuristId);
   const [turnValue, setTurnValue] = useState(String(entry.turnValue));
   const [services, setServices] = useState<ServiceType[]>(entry.services);
@@ -39,8 +40,8 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
 
   const availableCategories = useMemo(() => {
     const cats = new Set(sortedServices.map((s) => s.category).filter(Boolean));
-    return SERVICE_CATEGORIES.filter((c) => cats.has(c));
-  }, [sortedServices]);
+    return categoryNames.filter((c) => cats.has(c));
+  }, [sortedServices, categoryNames]);
 
   const servicesInCategory = useMemo(() => {
     if (!selectedCategory) return [];
