@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, type CSSProperties } from 'react';
-import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, ChevronRight, GripVertical, Tags } from 'lucide-react';
+import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, ChevronRight, GripVertical, Tags, RotateCcw } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
+import { supabase } from '../../lib/supabase';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
@@ -66,6 +67,7 @@ interface SortableServiceRowProps {
   onEdit: () => void;
   onDelete: () => void;
   onToggleFourth: () => void;
+  onRestore: () => void;
   iconClass: string;
 }
 
@@ -78,6 +80,7 @@ function SortableServiceRow({
   onEdit,
   onDelete,
   onToggleFourth,
+  onRestore,
   iconClass,
 }: SortableServiceRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: svc.id });
@@ -91,7 +94,9 @@ function SortableServiceRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="bg-white rounded-xl border border-gray-100 p-4 transition-all duration-200 hover:shadow-md hover:border-gray-200"
+      className={`bg-white rounded-xl border border-gray-100 p-4 transition-all duration-200 hover:shadow-md hover:border-gray-200 ${
+        svc.isActive ? '' : 'opacity-60'
+      }`}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -135,6 +140,14 @@ function SortableServiceRow({
               {svc.name}
             </h4>
             <div className="flex items-center gap-2 flex-wrap">
+              {!svc.isActive && (
+                <span
+                  title="Hidden from pickers; kept because it's on past tickets"
+                  className="px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[10px] font-semibold text-gray-500"
+                >
+                  HIDDEN
+                </span>
+              )}
               <Badge label={`${svc.turnValue} turn`} variant={getTurnBadgeVariant(svc.turnValue)} />
               <span className="font-mono text-[11px] text-gray-400">{svc.duration} min</span>
               <span className="font-mono text-[11px] font-semibold text-gray-600">
@@ -174,12 +187,22 @@ function SortableServiceRow({
           >
             <Pencil size={14} />
           </button>
-          <button
-            onClick={onDelete}
-            className="p-2 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
-          >
-            <Trash2 size={14} />
-          </button>
+          {svc.isActive ? (
+            <button
+              onClick={onDelete}
+              className="p-2 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
+            >
+              <Trash2 size={14} />
+            </button>
+          ) : (
+            <button
+              onClick={onRestore}
+              title="Restore — show in pickers again"
+              className="p-2 rounded-lg hover:bg-emerald-50 text-gray-300 hover:text-emerald-600 transition-colors"
+            >
+              <RotateCcw size={14} />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -292,6 +315,22 @@ export default function ServicesScreen() {
       .filter(c => map.has(c))
       .map(c => ({ category: c, services: map.get(c)! }));
   }, [filtered, activeCategory, categoryNames]);
+
+  // Deleting a service nulls ticket_items.service_id on every past line, and
+  // the voided-ticket guard rejects that — so a service with any ticket history
+  // is hidden (isActive false) instead. If the check itself fails, hide too:
+  // that's always safe and reversible.
+  async function deleteOrHideService(id: string) {
+    const { count, error } = await supabase
+      .from('ticket_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('service_id', id);
+    if (error || (count ?? 0) > 0) {
+      dispatch({ type: 'UPDATE_SALON_SERVICE', id, updates: { isActive: false } });
+    } else {
+      dispatch({ type: 'DELETE_SALON_SERVICE', id });
+    }
+  }
 
   function handleMoveUp(id: string) {
     dispatch({ type: 'REORDER_SALON_SERVICE', id, direction: 'up' });
@@ -472,6 +511,7 @@ export default function ServicesScreen() {
                               setShowModal('edit');
                             }}
                             onDelete={() => setDeleteId(svc.id)}
+                            onRestore={() => dispatch({ type: 'UPDATE_SALON_SERVICE', id: svc.id, updates: { isActive: true } })}
                             iconClass={iconClassFor(svc.category)}
                             onToggleFourth={() =>
                               dispatch({
@@ -496,12 +536,13 @@ export default function ServicesScreen() {
 
       {deleteId && (
         <ConfirmDialog
-          message="Delete this service? This cannot be undone."
+          message="Delete this service? If it's on past tickets it will be hidden instead, so that history stays intact."
           confirmLabel="Delete"
           danger
           onConfirm={() => {
-            dispatch({ type: 'DELETE_SALON_SERVICE', id: deleteId });
+            const id = deleteId;
             setDeleteId(null);
+            void deleteOrHideService(id);
           }}
           onCancel={() => setDeleteId(null)}
         />
