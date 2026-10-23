@@ -1,4 +1,4 @@
-import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
+import type { AppState, ViewType, ModalType, Manicurist, QueueEntry, Appointment, SalonService, ServiceCategory, TurnCriteria, CalendarDay, DailyHistory, AppointmentDraft, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 
 export type AppAction =
   | { type: 'SET_VIEW'; view: ViewType }
@@ -65,6 +65,11 @@ export type AppAction =
   | { type: 'SET_MANICURIST_ORDER'; ids: string[] }
   | { type: 'REORDER_SALON_SERVICE'; id: string; direction: 'up' | 'down' }
   | { type: 'SET_SALON_SERVICE_ORDER'; ids: string[] }
+  | { type: 'SET_SERVICE_CATEGORIES'; categories: ServiceCategory[] }
+  | { type: 'ADD_SERVICE_CATEGORY'; category: ServiceCategory }
+  | { type: 'UPDATE_SERVICE_CATEGORY'; id: string; updates: Partial<Omit<ServiceCategory, 'id'>> }
+  | { type: 'DELETE_SERVICE_CATEGORY'; id: string }
+  | { type: 'REORDER_SERVICE_CATEGORY'; ids: string[] }
   | { type: 'TOGGLE_FOURTH_POSITION_SPECIAL'; id: string }
   | { type: 'TOGGLE_CHECK2'; id: string }
   | { type: 'TOGGLE_CHECK3'; id: string }
@@ -90,6 +95,8 @@ export type AppAction =
   | { type: 'REMOTE_APPOINTMENT_DELETE'; id: string }
   | { type: 'REMOTE_SALON_SERVICE_UPSERT'; service: SalonService }
   | { type: 'REMOTE_SALON_SERVICE_DELETE'; id: string }
+  | { type: 'REMOTE_SERVICE_CATEGORY_UPSERT'; category: ServiceCategory }
+  | { type: 'REMOTE_SERVICE_CATEGORY_DELETE'; id: string }
   | { type: 'REMOTE_TURN_CRITERIA_UPSERT'; criteria: TurnCriteria }
   | { type: 'REMOTE_TURN_CRITERIA_DELETE'; id: string }
   | { type: 'REMOTE_CALENDAR_DAY_UPSERT'; day: CalendarDay }

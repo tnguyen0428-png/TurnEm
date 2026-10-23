@@ -368,6 +368,7 @@ export const INITIAL_STATE: AppState = {
   completed: [],
   appointments: [],
   salonServices: [],
+  serviceCategories: [],
   turnCriteria: [],
   calendarDays: [],
   dailyHistory: [],
@@ -2413,6 +2414,55 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'SET_SERVICE_CATEGORIES':
+      return { ...state, serviceCategories: action.categories };
+
+    case 'ADD_SERVICE_CATEGORY': {
+      // name is UNIQUE in the DB — refuse duplicates here so the sync never 409s.
+      const name = action.category.name.trim().toLowerCase();
+      if (state.serviceCategories.some((c) => c.id === action.category.id || c.name.trim().toLowerCase() === name)) return state;
+      return { ...state, serviceCategories: [...state.serviceCategories, action.category] };
+    }
+
+    case 'UPDATE_SERVICE_CATEGORY': {
+      const target = state.serviceCategories.find((c) => c.id === action.id);
+      if (!target) return state;
+      const updates = { ...action.updates };
+      // Locked categories (Combo, Wax Services): recolor/reorder only. The lock
+      // itself can't be toggled from the client either.
+      if (target.isLocked) {
+        delete updates.name;
+        delete updates.isLocked;
+      }
+      if (updates.name !== undefined) {
+        const name = updates.name.trim().toLowerCase();
+        if (!name || state.serviceCategories.some((c) => c.id !== action.id && c.name.trim().toLowerCase() === name)) return state;
+      }
+      if (Object.keys(updates).length === 0) return state;
+      return {
+        ...state,
+        serviceCategories: state.serviceCategories.map((c) => c.id === action.id ? { ...c, ...updates } : c),
+      };
+    }
+
+    case 'DELETE_SERVICE_CATEGORY': {
+      const target = state.serviceCategories.find((c) => c.id === action.id);
+      if (!target || target.isLocked) return state;
+      return { ...state, serviceCategories: state.serviceCategories.filter((c) => c.id !== action.id) };
+    }
+
+    case 'REORDER_SERVICE_CATEGORY': {
+      // Carries the full new ID ordering; sortOrder becomes the index.
+      const order = new Map(action.ids.map((id, i) => [id, i]));
+      if (order.size !== state.serviceCategories.length || state.serviceCategories.some((c) => !order.has(c.id))) return state;
+      return {
+        ...state,
+        serviceCategories: state.serviceCategories.map((c) =>
+          c.sortOrder === order.get(c.id) ? c : { ...c, sortOrder: order.get(c.id)! },
+        ),
+      };
+    }
+
     case 'DAILY_RESET':
       return {
         ...state,
@@ -2511,6 +2561,15 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
 
     case 'REMOTE_SALON_SERVICE_DELETE':
       return { ...state, salonServices: state.salonServices.filter((s) => s.id !== action.id) };
+
+    case 'REMOTE_SERVICE_CATEGORY_UPSERT': {
+      const idx = state.serviceCategories.findIndex((c) => c.id === action.category.id);
+      if (idx === -1) return { ...state, serviceCategories: [...state.serviceCategories, action.category] };
+      return { ...state, serviceCategories: state.serviceCategories.map((c, i) => i === idx ? action.category : c) };
+    }
+
+    case 'REMOTE_SERVICE_CATEGORY_DELETE':
+      return { ...state, serviceCategories: state.serviceCategories.filter((c) => c.id !== action.id) };
 
     case 'REMOTE_TURN_CRITERIA_UPSERT': {
       const idx = state.turnCriteria.findIndex((c) => c.id === action.criteria.id);

@@ -1,4 +1,4 @@
-import type { ServiceType } from '../types';
+import type { ServiceCategory, ServiceType } from '../types';
 
 // Legacy fallback turn values for old service names. New services come from
 // the salon_services table via the salonServices state slice.
@@ -21,6 +21,22 @@ export const SERVICE_CATEGORIES = [
   'A La Carte & Add-Ons',
   'Wax Services',
   'Special Request',
+];
+
+// In-memory fallback for the service_categories table (seeded by
+// 20261023120000_service_categories.sql — keep the two in sync). Used only
+// when the fetch fails or returns no rows; never written to the DB.
+export const DEFAULT_SERVICE_CATEGORIES: ServiceCategory[] = [
+  { id: 'acrylic-fill', name: 'Acrylic Fill', color: 'rose', sortOrder: 0, isLocked: false },
+  { id: 'acrylic-full-set', name: 'Acrylic Full Set', color: 'rose', sortOrder: 1, isLocked: false },
+  { id: 'healthy-nails', name: 'Healthy Nails', color: 'emerald', sortOrder: 2, isLocked: false },
+  { id: 'manicures', name: 'Manicures', color: 'sky', sortOrder: 3, isLocked: false },
+  { id: 'pedicures', name: 'Pedicures', color: 'sky', sortOrder: 4, isLocked: false },
+  { id: 'combo', name: 'Combo', color: 'amber', sortOrder: 5, isLocked: true },
+  { id: 'kids-services', name: 'Kids Services', color: 'pink', sortOrder: 6, isLocked: false },
+  { id: 'a-la-carte-add-ons', name: 'A La Carte & Add-Ons', color: 'teal', sortOrder: 7, isLocked: false },
+  { id: 'wax-services', name: 'Wax Services', color: 'orange', sortOrder: 8, isLocked: true },
+  { id: 'special-request', name: 'Special Request', color: 'purple', sortOrder: 9, isLocked: false },
 ];
 
 export const STAFF_COLORS = [

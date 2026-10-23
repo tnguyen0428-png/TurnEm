@@ -310,6 +310,17 @@ export interface SalonService {
   isFourthPositionSpecial: boolean;
 }
 
+export interface ServiceCategory {
+  id: string;
+  name: string;
+  /** Palette key (e.g. 'rose', 'sky'), not a hex value. */
+  color: string;
+  sortOrder: number;
+  /** Locked categories (Combo, Wax Services) can be recolored and reordered
+   *  but never renamed or deleted — salon rules key off their names. */
+  isLocked: boolean;
+}
+
 export interface TurnCriteria {
   id: string;
   name: string;
@@ -400,6 +411,7 @@ export interface AppState {
   completed: CompletedEntry[];
   appointments: Appointment[];
   salonServices: SalonService[];
+  serviceCategories: ServiceCategory[];
   turnCriteria: TurnCriteria[];
   calendarDays: CalendarDay[];
   dailyHistory: DailyHistory[];

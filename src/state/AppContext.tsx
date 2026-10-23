@@ -1,10 +1,11 @@
 import { createContext, useContext, useReducer, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { appendItemsToTicket, backfillTicketAppointment, backfillTicketStaff, cleanupDuplicateLinesForEntry, completedServiceIdsForTicketVoid, createTicketAtCheckin, fetchTicketByLineQueueEntry, fetchTicketByQueueEntry, findOpenTicketForClient, getVisitId, isWalkInBlockBacked, removeOrphanTicketLines, removeTicketLinesByEntryPrefix, syncEntryToTicket, voidTicket } from '../lib/tickets';
-import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
+import type { AppState, Manicurist, QueueEntry, ServiceRequest, ServiceType, Appointment, SalonService, ServiceCategory, TurnCriteria, CalendarDay, DailyHistory, CompletedEntry, StaffScheduleEntry, StaffScheduleOverride, StaffTimeOff } from '../types';
 import type { AppAction } from './actions';
 import { appReducer, INITIAL_STATE } from './reducer';
 import { supabase, fetchAllRows } from '../lib/supabase';
 import { defaultSalonServices } from '../constants/salonServices';
+import { DEFAULT_SERVICE_CATEGORIES } from '../constants/services';
 import { defaultManicurists } from '../constants/manicurists';
 import { getLocalDateStr, getTodayLA } from '../utils/time';
 import { addMissingServiceRequests } from '../lib/serviceRequests';
@@ -270,6 +271,16 @@ function mapDbSalonService(row: Record<string, unknown>): SalonService {
     category: (row.category as string) || '',
     sortOrder: Number(row.sort_order) || 0,
     isFourthPositionSpecial: (row.is_fourth_position_special as boolean) || false,
+  };
+}
+
+function mapDbServiceCategory(row: Record<string, unknown>): ServiceCategory {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    color: (row.color as string) || 'gray',
+    sortOrder: Number(row.sort_order) || 0,
+    isLocked: (row.is_locked as boolean) || false,
   };
 }
 
@@ -827,6 +838,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       { data: scheduleRows },
       { data: timeOffRows },
       { data: scheduleOverrideRows },
+      { data: categoryRows, error: categoryError },
     ] = await Promise.all([
       // Every fetch here goes through fetchAllRows so the PostgREST 1000-row
       // Range default never silently truncates the response. The appointments
@@ -847,6 +859,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       fetchAllRows(() => supabase.from('staff_schedules').select('*')),
       fetchAllRows(() => supabase.from('staff_time_off').select('*')),
       fetchAllRows(() => supabase.from('staff_schedule_overrides').select('*')),
+      fetchAllRows(() => supabase.from('service_categories').select('*').order('sort_order')),
     ]);
 
     let appointments = (appointmentRows || []).map(mapDbAppointment);
@@ -871,6 +884,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const salonServices = (serviceRows && serviceRows.length > 0)
       ? serviceRows.map(mapDbSalonService)
       : defaultSalonServices;
+    // Fetch error or empty table → in-memory defaults so the app never loses
+    // its categories. Deliberately NOT seeded back to the DB (the migration owns
+    // the seed); the per-row diff in syncServiceCategories only writes rows that
+    // are actually edited afterwards.
+    if (categoryError) console.error('[loadInitialData] service_categories fetch error:', categoryError);
+    const serviceCategories = (!categoryError && categoryRows && categoryRows.length > 0)
+      ? categoryRows.map(mapDbServiceCategory)
+      : DEFAULT_SERVICE_CATEGORIES;
     const turnCriteria = (criteriaRows || []).map(mapDbTurnCriteria);
     const calendarDays = (calendarRows || []).map(mapDbCalendarDay);
     const staffSchedules = (scheduleRows || []).map(mapDbStaffSchedule);
@@ -1202,7 +1223,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .map((a) => a.id);
 
     dispatch({ type: 'LOAD_STATE', state: {
-      manicurists, queue, completed, appointments, salonServices,
+      manicurists, queue, completed, appointments, salonServices, serviceCategories,
       turnCriteria, calendarDays, dailyHistory: cleanedHistory,
       staffSchedules, staffScheduleOverrides, staffTimeOff,
       categoryPriority: initialCatPriority,
@@ -1773,6 +1794,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       trackSave(() => chainAppointmentWrite(() => syncAppointments(state.appointments, prev.appointments, setSyncErrorTracked, dispatch, isApplyingRemoteRef)));
     }
     if (prev.salonServices !== state.salonServices) trackSave(() => syncSalonServices(state.salonServices, prev.salonServices, setSyncErrorTracked));
+    if (prev.serviceCategories !== state.serviceCategories) trackSave(() => syncServiceCategories(state.serviceCategories, prev.serviceCategories, setSyncErrorTracked));
     if (prev.turnCriteria !== state.turnCriteria) trackSave(() => syncTurnCriteria(state.turnCriteria, prev.turnCriteria, setSyncErrorTracked));
     if (prev.calendarDays !== state.calendarDays) trackSave(() => syncCalendarDays(state.calendarDays, prev.calendarDays, setSyncErrorTracked));
     if (prev.dailyHistory !== state.dailyHistory) trackSave(() => syncDailyHistory(state.dailyHistory, prev.dailyHistory, setSyncErrorTracked));
@@ -2067,6 +2089,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .subscribe();
 
+    const serviceCategoriesChan = supabase
+      .channel('realtime:service_categories')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_categories' }, (payload) => {
+        isApplyingRemoteRef.current = true;
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string } | null)?.id;
+          if (id) dispatch({ type: 'REMOTE_SERVICE_CATEGORY_DELETE', id });
+          else isApplyingRemoteRef.current = false;
+        } else {
+          dispatch({ type: 'REMOTE_SERVICE_CATEGORY_UPSERT', category: mapDbServiceCategory(payload.new as Record<string, unknown>) });
+        }
+      })
+      .subscribe();
+
     const turnCriteriaChan = supabase
       .channel('realtime:turn_criteria')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'turn_criteria' }, (payload) => {
@@ -2176,6 +2212,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(completedChan);
       supabase.removeChannel(appointmentsChan);
       supabase.removeChannel(salonServicesChan);
+      supabase.removeChannel(serviceCategoriesChan);
       supabase.removeChannel(turnCriteriaChan);
       supabase.removeChannel(calendarDaysChan);
       supabase.removeChannel(staffSchedulesChan);
@@ -3462,6 +3499,45 @@ async function syncSalonServices(salonServices: SalonService[], prev: SalonServi
   if (changed.length === 0) return;
   const { error } = await withRetry(() => supabase.from('salon_services').upsert(changed, { onConflict: 'id' }));
   if (error) { console.error('[syncSalonServices] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+}
+
+function serviceCategoryUnchanged(a: ServiceCategory, b: ServiceCategory): boolean {
+  if (a === b) return true;
+  return (
+    a.name === b.name &&
+    a.color === b.color &&
+    a.sortOrder === b.sortOrder &&
+    a.isLocked === b.isLocked
+  );
+}
+
+function serviceCategoryToRow(c: ServiceCategory) {
+  return {
+    id: c.id,
+    name: c.name,
+    color: c.color,
+    sort_order: c.sortOrder,
+    is_locked: c.isLocked,
+  };
+}
+
+async function syncServiceCategories(serviceCategories: ServiceCategory[], prev: ServiceCategory[], onError: (msg: string) => void) {
+  const currentIds = new Set(serviceCategories.map((c) => c.id));
+  const removed = prev.filter((c) => !currentIds.has(c.id));
+  if (removed.length > 0) {
+    const { error } = await withRetry(() => supabase.from('service_categories').delete().in('id', removed.map((c) => c.id)));
+    if (error) { console.error('[syncServiceCategories] delete error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  }
+  const prevById = new Map(prev.map((c) => [c.id, c]));
+  const changed: ReturnType<typeof serviceCategoryToRow>[] = [];
+  for (const c of serviceCategories) {
+    const previous = prevById.get(c.id);
+    if (previous && serviceCategoryUnchanged(previous, c)) continue;
+    changed.push(serviceCategoryToRow(c));
+  }
+  if (changed.length === 0) return;
+  const { error } = await withRetry(() => supabase.from('service_categories').upsert(changed, { onConflict: 'id' }));
+  if (error) { console.error('[syncServiceCategories] upsert error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
 }
 
 function turnCriteriaUnchanged(a: TurnCriteria, b: TurnCriteria): boolean {
