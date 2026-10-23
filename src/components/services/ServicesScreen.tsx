@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, type CSSProperties } from 'react';
-import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, ChevronRight, GripVertical, Tags, RotateCcw } from 'lucide-react';
+import { Plus, Pencil, Trash2, Sparkles, Search, X, ChevronUp, ChevronDown, ChevronRight, GripVertical, Tags, RotateCcw, UserPlus } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
@@ -7,6 +7,7 @@ import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import ServiceModal from '../modals/ServiceModal';
 import CategoryManagerModal from '../modals/CategoryManagerModal';
+import ServiceStaffModal from '../modals/ServiceStaffModal';
 import { paletteFor } from '../../constants/categoryPalette';
 import { useServiceCategories } from '../../hooks/useServiceCategories';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
@@ -68,6 +69,8 @@ interface SortableServiceRowProps {
   onDelete: () => void;
   onToggleFourth: () => void;
   onRestore: () => void;
+  onStaff: () => void;
+  staffCount: number;
   iconClass: string;
 }
 
@@ -81,6 +84,8 @@ function SortableServiceRow({
   onDelete,
   onToggleFourth,
   onRestore,
+  onStaff,
+  staffCount,
   iconClass,
 }: SortableServiceRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: svc.id });
@@ -182,6 +187,16 @@ function SortableServiceRow({
             #4
           </button>
           <button
+            onClick={onStaff}
+            title="Staff who do this service"
+            className={`flex items-center gap-1 p-2 rounded-lg hover:bg-pink-50 hover:text-pink-600 transition-colors ${
+              staffCount > 0 ? 'text-gray-400' : 'text-amber-500'
+            }`}
+          >
+            <UserPlus size={14} />
+            <span className="font-mono text-[10px] font-semibold">{staffCount}</span>
+          </button>
+          <button
             onClick={onEdit}
             className="p-2 rounded-lg hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors"
           >
@@ -234,6 +249,12 @@ export default function ServicesScreen() {
   }, []);
   const colorByCategory = useMemo(() => new Map(categories.map(c => [c.name, c.color])), [categories]);
   const iconClassFor = (category: string) => paletteFor(colorByCategory.get(category)).icon;
+  const [staffServiceId, setStaffServiceId] = useState<string | null>(null);
+  const staffCountByService = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const m of state.manicurists) for (const sk of m.skills) counts.set(sk, (counts.get(sk) ?? 0) + 1);
+    return counts;
+  }, [state.manicurists]);
   const tabColorsFor = (category: string) => {
     if (!colorByCategory.has(category)) return ALL_TAB_COLORS;
     const p = paletteFor(colorByCategory.get(category));
@@ -511,6 +532,8 @@ export default function ServicesScreen() {
                               setShowModal('edit');
                             }}
                             onDelete={() => setDeleteId(svc.id)}
+                            onStaff={() => setStaffServiceId(svc.id)}
+                            staffCount={staffCountByService.get(svc.name) ?? 0}
                             onRestore={() => dispatch({ type: 'UPDATE_SALON_SERVICE', id: svc.id, updates: { isActive: true } })}
                             iconClass={iconClassFor(svc.category)}
                             onToggleFourth={() =>
@@ -555,6 +578,7 @@ export default function ServicesScreen() {
           onClose={() => setShowModal(null)}
         />
       )}
+      {staffServiceId && <ServiceStaffModal serviceId={staffServiceId} onClose={() => setStaffServiceId(null)} />}
       {showCategories && <CategoryManagerModal onClose={() => setShowCategories(false)} />}
       {showModal === 'edit' && (
         <ServiceModal mode="edit" onClose={() => { setShowModal(null); dispatch({ type: 'SET_EDITING_SERVICE', serviceId: null }); }} />
