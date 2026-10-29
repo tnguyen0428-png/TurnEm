@@ -182,7 +182,13 @@ export function getEligibleForService(service: ServiceType, manicurists: Manicur
 // can. Without it the eligibility check falls back to the raw manicurist row,
 // which can wrongly offer a tech who is actually mid-service.
 export function getSuggestedForService(service: ServiceType, manicurists: Manicurist[], salonServices: SalonService[], excludeIds: Set<string> = new Set(), queue?: QueueEntry[]): Manicurist | null {
-  const eligible = getEligibleForService(service, manicurists, salonServices, queue).filter((m) => !excludeIds.has(m.id));
+  // Only techs who can take the client NOW. getEligibleForService also lists
+  // ALMOST DONE techs (shown amber, not clickable); one of those sorting first
+  // used to "win" the suggestion, and since the row can't show RECOMMENDED on
+  // an almost-done tech, nobody got highlighted at all (Tiffany / Kelly,
+  // 2026-10-29: Joe almost done ahead of Kelly on the rotation).
+  const eligible = getEligibleForService(service, manicurists, salonServices, queue)
+    .filter((m) => !excludeIds.has(m.id) && !m._almostDone);
   if (eligible.length === 0) return null;
   const svc = salonServices.find((s) => s.name === service);
   if (svc?.isFourthPositionSpecial) {
