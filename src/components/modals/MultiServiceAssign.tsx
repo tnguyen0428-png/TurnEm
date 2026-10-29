@@ -615,7 +615,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                     : isRequested
                                       ? 'cursor-pointer border-pink-200 bg-pink-50/30 hover:border-pink-300 hover:shadow-md'
                                       : m._isSuggested
-                                        ? 'cursor-pointer border-emerald-200 bg-emerald-50/30 hover:border-emerald-300 hover:shadow-md'
+                                        ? 'cursor-pointer border-emerald-500 bg-emerald-200/70 hover:border-emerald-600 hover:shadow-md'
                                         : 'cursor-pointer border-gray-100 bg-white hover:border-pink-200 hover:shadow-md'
                             }`}
                           >
