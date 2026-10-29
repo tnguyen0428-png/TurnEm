@@ -257,8 +257,11 @@ export default function AppointmentsScreen() {
   selectedDateRef.current = selectedDate;
   const dateBeforeBooking = useRef<string | null>(null);
   const addApptModalOpen = state.modal === 'addAppointment';
+  // Edit counts too: changing an existing appointment's date jumps the book
+  // there (moveBookToDate), so closing the edit form has to put it back as well.
+  const apptFormOpen = addApptModalOpen || state.modal === 'editAppointment';
   useEffect(() => {
-    if (addApptModalOpen) {
+    if (apptFormOpen) {
       if (dateBeforeBooking.current === null) {
         dateBeforeBooking.current = selectedDateRef.current;
       }
@@ -268,7 +271,7 @@ export default function AppointmentsScreen() {
     const restore = dateBeforeBooking.current;
     dateBeforeBooking.current = null;
     setSelectedDate((cur) => (cur === restore ? cur : restore));
-  }, [addApptModalOpen]);
+  }, [apptFormOpen]);
 
   // The other direction: paging the book while the NEW APPOINTMENT form is
   // open re-points the form at that day. Writing the draft is a no-op for the

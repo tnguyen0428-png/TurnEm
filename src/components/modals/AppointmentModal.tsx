@@ -1344,10 +1344,11 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // spread through untouched: it carries bookedByReceptionistId, which becomes
   // the booking's audit trail.
   //
-  // Add mode only. In edit mode the book jumping around while someone corrects
-  // a typo on an existing appointment would be movement they didn't ask for.
+  // Both modes. Only fires when a date is actually PICKED, so correcting a typo
+  // on an existing appointment never moves the book — but moving an
+  // appointment to another day shows that day's availability (Tony 2026-10-29).
+  // In edit mode the spread keeps editingReceptionistId intact.
   function moveBookToDate(d: string) {
-    if (mode !== 'add') return;
     dispatch({
       type: 'SET_APPOINTMENT_DRAFT',
       draft: { ...(state.appointmentDraft ?? {}), date: d },
