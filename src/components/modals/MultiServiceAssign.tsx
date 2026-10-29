@@ -568,7 +568,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
                 {isCollapsed && selectedManicurist ? (
                   <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 ${
-                    isRowDeferred ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50/50'
+                    isRowDeferred ? 'border-amber-300 bg-amber-50' : 'border-emerald-400 bg-emerald-200/50'
                   }`}>
                     {isRowDeferred
                       ? <Timer size={14} className="text-amber-500 flex-shrink-0" />
@@ -609,13 +609,13 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                 : m._takenByOther
                                 ? 'opacity-40 cursor-not-allowed border-gray-100 bg-gray-50'
                                 : isSelected
-                                  ? 'cursor-pointer border-emerald-300 bg-emerald-50/50 shadow-sm'
+                                  ? 'cursor-pointer border-emerald-400 bg-emerald-200/50 shadow-sm'
                                   : m._isExplicitlyRequested
                                     ? 'cursor-pointer border-pink-200 bg-pink-50/30 hover:border-pink-300 hover:shadow-md'
                                     : isRequested
                                       ? 'cursor-pointer border-pink-200 bg-pink-50/30 hover:border-pink-300 hover:shadow-md'
                                       : m._isSuggested
-                                        ? 'cursor-pointer border-emerald-500 bg-emerald-200/70 hover:border-emerald-600 hover:shadow-md'
+                                        ? 'cursor-pointer border-emerald-400 bg-emerald-200/50 hover:border-emerald-500 hover:shadow-md'
                                         : 'cursor-pointer border-gray-100 bg-white hover:border-pink-200 hover:shadow-md'
                             }`}
                           >

@@ -242,7 +242,7 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
                         : requestedIds.has(m.id)
                         ? 'cursor-pointer border-pink-300 bg-pink-50/50 hover:border-pink-400 hover:shadow-md'
                         : m.id === suggestedId
-                        ? 'cursor-pointer border-emerald-500 bg-emerald-200/70 hover:border-emerald-600 hover:shadow-md'
+                        ? 'cursor-pointer border-emerald-400 bg-emerald-200/50 hover:border-emerald-500 hover:shadow-md'
                         : 'cursor-pointer border-gray-100 bg-white hover:border-pink-200 hover:shadow-md'
                     }`}
                   >
