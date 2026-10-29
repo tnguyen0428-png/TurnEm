@@ -3252,15 +3252,8 @@ canEdit && (
                     clientFirstName: first,
                     clientLastName: last,
                     clientPhone,
-                    // Come back to the register when the booking closes.
-                    returnToView: 'register',
                   },
                 });
-                // Show the appointment book behind the form, so picking a date
-                // moves the book to that day and the receptionist can see
-                // what's open (Tony 2026-10-29). The book's existing
-                // draft-date sync does the rest.
-                dispatch({ type: 'SET_VIEW', view: 'appointments' });
                 dispatch({ type: 'SET_MODAL', modal: 'addAppointment' });
                 onClose();
               }}

@@ -359,10 +359,6 @@ export interface AppointmentDraft {
   clientFirstName?: string;
   clientLastName?: string;
   clientPhone?: string;
-  /** Screen to return to when the modal closes. Set by flows that switch to
-   *  the appointment book just so the book can follow the form's date (BOOK
-   *  APPT on the register), so the receptionist lands back where she was. */
-  returnToView?: ViewType;
 }
 
 // One row per (manicurist, weekday). Absence of a row for a (manicurist,
