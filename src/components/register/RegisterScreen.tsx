@@ -2,7 +2,7 @@
 // (Closed-shift viewing wired in.)
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer, X } from 'lucide-react';
+import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer, CalendarPlus, X } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import {
@@ -575,6 +575,26 @@ function TicketList({
   sortDir: SortDir;
   onSortChange: (k: SortKey) => void;
 }) {
+  const { dispatch } = useApp();
+  // Book this client's next visit straight from a closed ticket — same
+  // pre-fill as the ticket's own BOOK APPT button, so the receptionist
+  // doesn't re-pick the client. Dated today (a closed ticket may be from a
+  // past day; the next booking is from now on).
+  function bookNextAppt(t: Ticket) {
+    const parts = (t.clientName ?? '').trim().split(/\s+/);
+    const first = parts.shift() ?? '';
+    const last = parts.join(' ');
+    dispatch({
+      type: 'SET_APPOINTMENT_DRAFT',
+      draft: {
+        date: getTodayLA(),
+        clientFirstName: first,
+        clientLastName: last,
+        clientPhone: t.clientPhone ?? '',
+      },
+    });
+    dispatch({ type: 'SET_MODAL', modal: 'addAppointment' });
+  }
   const sorted = useMemo(() => {
     const dirMul = sortDir === 'asc' ? 1 : -1;
     return [...tickets].sort((a, b) => {
@@ -591,7 +611,7 @@ function TicketList({
 
   return (
     <div>
-      <div className="grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_110px] gap-3 px-4 py-2 border-b border-gray-100 font-mono text-base tracking-wider font-normal text-gray-400 uppercase">
+      <div className="grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_150px] gap-3 px-4 py-2 border-b border-gray-100 font-mono text-base tracking-wider font-normal text-gray-400 uppercase">
         <SortHdr label="#"      keyId="number" sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
         <SortHdr label="Time"   keyId="time"   sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
         <SortHdr label="Client" keyId="client" sortKey={sortKey} sortDir={sortDir} onClick={onSortChange} />
@@ -615,7 +635,7 @@ function TicketList({
               onClick(t);
             }
           }}
-          className="w-full grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_110px] gap-3 px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-pink-100 transition-colors text-left items-center cursor-pointer focus:outline-none focus:bg-pink-100"
+          className="w-full grid grid-cols-[60px_80px_180px_minmax(160px,1.2fr)_minmax(220px,2fr)_150px] gap-3 px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-pink-100 transition-colors text-left items-center cursor-pointer focus:outline-none focus:bg-pink-100"
         >
           <span className="font-mono text-base font-bold text-gray-900">#{t.ticketNumber}</span>
           <span className="font-mono text-base text-gray-700">{formatTimeShort(t.openedAt)}</span>
@@ -669,8 +689,19 @@ function TicketList({
               <span>—</span>
             )}
           </span>
-          <span className="font-mono text-base font-bold text-gray-900 text-right flex items-center justify-end gap-1.5">
+          <span className="font-mono text-base font-bold text-gray-900 text-right flex items-center justify-end gap-3">
             {formatMoneyCents(t.totalCents)}
+            {t.status === 'closed' && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); bookNextAppt(t); }}
+                title="Book appointment"
+                aria-label={'Book appointment for ' + (t.clientName || 'client')}
+                className="p-1 -m-1 rounded text-gray-400 hover:text-pink-600 hover:bg-pink-50 transition-colors"
+              >
+                <CalendarPlus size={20} />
+              </button>
+            )}
             {t.status === 'closed' ? (
               <button
                 type="button"
@@ -679,7 +710,7 @@ function TicketList({
                 aria-label={'Print receipt for ticket #' + t.ticketNumber}
                 className="p-1 -m-1 rounded text-gray-400 hover:text-pink-600 hover:bg-pink-50 transition-colors"
               >
-                <Printer size={14} />
+                <Printer size={20} />
               </button>
             ) : (
               <Receipt size={12} className="text-gray-300" />
