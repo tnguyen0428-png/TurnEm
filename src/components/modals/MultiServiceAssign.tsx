@@ -568,11 +568,18 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
 
                 {isCollapsed && selectedManicurist ? (
                   <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 ${
-                    isRowDeferred ? 'border-amber-300 bg-amber-50' : 'border-emerald-400 bg-emerald-200/50'
+                    isRowDeferred
+                      ? 'border-amber-300 bg-amber-50'
+                      // The client's own request stays pink once it's pre-filled,
+                      // matching the REQUESTED badge (Tony 2026-10-29). Green is
+                      // for a tech the receptionist picked off the rotation.
+                      : requestedId === selectedId
+                        ? 'border-pink-400 bg-pink-200/50'
+                        : 'border-emerald-400 bg-emerald-200/50'
                   }`}>
                     {isRowDeferred
                       ? <Timer size={14} className="text-amber-500 flex-shrink-0" />
-                      : <Check size={14} className="text-emerald-500 flex-shrink-0" />}
+                      : <Check size={14} className={`${requestedId === selectedId ? 'text-pink-500' : 'text-emerald-500'} flex-shrink-0`} />}
                     <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: selectedManicurist.color }} />
                     <span className="font-mono text-base font-semibold text-gray-900">{selectedManicurist.name}</span>
                     {isRowDeferred
@@ -609,7 +616,9 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                 : m._takenByOther
                                 ? 'opacity-40 cursor-not-allowed border-gray-100 bg-gray-50'
                                 : isSelected
-                                  ? 'cursor-pointer border-emerald-400 bg-emerald-200/50 shadow-sm'
+                                  ? (isRequested || m._isExplicitlyRequested)
+                                    ? 'cursor-pointer border-pink-400 bg-pink-200/50 shadow-sm'
+                                    : 'cursor-pointer border-emerald-400 bg-emerald-200/50 shadow-sm'
                                   : m._isExplicitlyRequested
                                     ? 'cursor-pointer border-pink-400 bg-pink-200/50 hover:border-pink-500 hover:shadow-md'
                                     : isRequested
@@ -625,7 +634,7 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
                                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: m.color }} />
                                 <span className="font-mono text-base font-semibold text-gray-900">{m.name}</span>
                                 <ServiceHistory m={m} />
-                                {isSelected && <Check size={14} className="text-emerald-500" />}
+                                {isSelected && <Check size={14} className={(isRequested || m._isExplicitlyRequested) ? 'text-pink-500' : 'text-emerald-500'} />}
                                 {!isAlmostDone && m._isExplicitlyRequested && <Badge label="REQUESTED" variant="pink" />}
                                 {!isAlmostDone && !m._isExplicitlyRequested && isRequested && <Badge label="REQUESTED" variant="pink" />}
                                 {!isAlmostDone && m._isSuggested && !isRequested && rowIs4thSpecial && <Badge label="4TH POSITION" variant="amber" />}
