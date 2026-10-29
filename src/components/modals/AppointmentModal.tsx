@@ -1356,12 +1356,14 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   }
 
   function handleClose() {
+    const returnTo = state.appointmentDraft?.returnToView;
     // Belt and braces: every exit clears the ghost blocks. Leaving a preview
     // behind would paint an appointment in the book that does not exist.
     dispatch({ type: 'SET_PENDING_APPOINTMENT_PREVIEW', appointments: null });
     dispatch({ type: 'SET_MODAL', modal: null });
     dispatch({ type: 'SET_EDITING_APPOINTMENT', appointmentId: null });
     dispatch({ type: 'SET_APPOINTMENT_DRAFT', draft: null });
+    if (returnTo) dispatch({ type: 'SET_VIEW', view: returnTo });
   }
 
   // Cancel (delete) the appointment from inside the edit modal. Removes
