@@ -1071,7 +1071,7 @@ export default function TicketModal({
     ticketDiscountCents > 0 ||
     lines.some((l) => parseDollarsToCents(l.discountInput) > 0);
 
-  async function doSave(): Promise<Ticket | null> {
+  async function doSave(opts: { closing?: boolean } = {}): Promise<Ticket | null> {
     setError(null);
     if (lines.some((l) => !l.name.trim())) {
       setError('Every line needs a name.');
@@ -1577,6 +1577,51 @@ export default function TicketModal({
             clientRequest: false,
           } as SvcReq);
           w.touched = true;
+        }
+      }
+
+      // ── Checkout: trim the booking to what was actually paid for ────────
+      // Only when this save is the one closing the ticket. A service still on
+      // the booking but on no ticket line was not done (customer changed her
+      // mind), and leaving it draws a slot in the book for work that never
+      // happened (Megan Smith 2026-10-29: booked Gel Fill + Gel Pedicure, paid
+      // only the Gel Fill, Gel Pedicure block stayed on the book).
+      //
+      // Runs on the same working copy as the renames/adds above, so it sees
+      // the booking as this save is about to write it. Deliberately narrow:
+      //   • exact link only (ticket.appointmentId), never a name match;
+      //   • count-aware: two Pedicures booked, one paid, drops exactly one;
+      //   • anything still IN PROGRESS on the floor for this booking is kept;
+      //   • never empties a booking (no matching names is not evidence that
+      //     nothing was done).
+      if (opts.closing && ticket.appointmentId && !ticket.appointmentId.startsWith('walkin:')) {
+        const w = getWork(ticket.appointmentId);
+        if (w) {
+          const covered = new Map<string, number>();
+          for (const l of lines) {
+            if (l.kind !== 'service') continue;
+            const n = (l.name ?? '').trim();
+            if (n) covered.set(n, (covered.get(n) ?? 0) + 1);
+          }
+          for (const q of state.queue) {
+            if (q.status !== 'inProgress' || q.originalAppointment?.id !== ticket.appointmentId) continue;
+            for (const sv of q.services ?? []) covered.set(sv, (covered.get(sv) ?? 0) + 1);
+          }
+          const kept: Svc[] = [];
+          const dropped: string[] = [];
+          for (const sv of w.services) {
+            const left = covered.get(sv) ?? 0;
+            if (left > 0) { covered.set(sv, left - 1); kept.push(sv); }
+            else dropped.push(sv);
+          }
+          if (dropped.length > 0 && kept.length > 0) {
+            console.info(`[ticket] removing unpaid service(s) from booking ${ticket.appointmentId}: ${dropped.join(', ')}`);
+            w.services = kept;
+            w.touched = true;
+            // Intentional drop: a leftover waiting entry may still carry the
+            // name, and the backed-work guard would otherwise put it back.
+            w.renamed = true;
+          }
         }
       }
 
@@ -2297,7 +2342,7 @@ export default function TicketModal({
     const giftErr = await giftOverdraftError();
     if (giftErr) { setBusy('idle'); setError(giftErr); return; }
     // Save edits first so payment is captured against current totals.
-    const saved = await doSave();
+    const saved = await doSave({ closing: true });
     if (!saved) return;
 
     setBusy('processing');
