@@ -1151,6 +1151,28 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     }
   }
 
+  // How many times `svcName` was actually done (non-voided completed rows)
+  // for this booking — the booking's own rows plus any add-child rows on the
+  // same visit, matched the same way removeSvcFromAppt matches them.
+  function doneCountForService(appt: Appointment, svcName: string): { forSvc: number; any: number } {
+    const root = (id: string) => {
+      const m = id.replace(/^walkin:/, '').match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      return m ? m[0].toLowerCase() : null;
+    };
+    const apptRoot = root(appt.id);
+    let forSvc = 0;
+    let any = 0;
+    for (const c of state.completed) {
+      if (c.voided) continue;
+      if (c.originalAppointmentId !== appt.id && !(apptRoot && root(c.id) === apptRoot)) continue;
+      for (const sv of c.services ?? []) {
+        any += 1;
+        if (sv === svcName) forSvc += 1;
+      }
+    }
+    return { forSvc, any };
+  }
+
   function deleteSvcBlock(e: React.MouseEvent, appt: Appointment, svcName: string, occurrence: number) {
     e.stopPropagation();
     removeSvcFromAppt(appt, svcName, occurrence);
@@ -2108,6 +2130,36 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
                     </button>
                   </div>
                 )}
+                {/* Paid booking: the trash button comes back ONLY on a service
+                    that was never done (customer changed her mind and it was
+                    left off the ticket), so a leftover slot can be cleared
+                    without touching anything that was paid. Requires at least
+                    one done service on the booking, so this can never empty
+                    out a paid booking. (Tony 2026-10-29, Megan Smith.) */}
+                {height > 36 && isCheckedOut && (() => {
+                  const { forSvc, any } = doneCountForService(appt, serviceName);
+                  // forSvc must be 0, not just <= occurrence: removing a block voids any add-child
+                  // credit carrying this service name, which would undo real paid work.
+                  if (any === 0 || forSvc > 0) return null;
+                  return (
+                    <div className="flex gap-1 mt-auto opacity-0 group-hover:opacity-100 transition-opacity"
+                      style={{ paddingLeft: pl }}
+                      draggable={false}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      onClick={(e) => e.stopPropagation()}>
+                      <button
+                        draggable={false}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onDragStart={(e) => e.preventDefault()}
+                        onClick={(e) => deleteSvcBlock(e, appt, serviceName, occurrence)}
+                        title="Remove this service (not on the paid ticket)"
+                        className="p-0.5 rounded bg-red-100 text-red-500 hover:bg-red-200">
+                        <Trash2 size={9} />
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           );
