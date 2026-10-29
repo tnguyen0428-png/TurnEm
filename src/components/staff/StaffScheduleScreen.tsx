@@ -154,6 +154,8 @@ function TimeOffTab() {
     startDate: string;
     endDate: string;
     reason: string;
+    /** Set when editing an existing entry; absent when adding a new one. */
+    editingId?: string;
   } | null>(null);
 
   const byTech = useMemo(() => {
@@ -172,10 +174,33 @@ function TimeOffTab() {
     setAdding({ manicuristId, startDate: today, endDate: today, reason: '' });
   }
 
+  function openEdit(t: StaffTimeOff) {
+    setAdding({
+      manicuristId: t.manicuristId,
+      startDate: t.startDate,
+      endDate: t.endDate,
+      reason: t.reason ?? '',
+      editingId: t.id,
+    });
+  }
+
   function saveAdd() {
     if (!adding) return;
     if (adding.endDate < adding.startDate) {
       alert('End date must be on or after start date.');
+      return;
+    }
+    if (adding.editingId) {
+      dispatch({
+        type: 'UPDATE_STAFF_TIME_OFF',
+        id: adding.editingId,
+        updates: {
+          startDate: adding.startDate,
+          endDate: adding.endDate,
+          reason: adding.reason.trim(),
+        },
+      });
+      setAdding(null);
       return;
     }
     dispatch({
@@ -238,12 +263,24 @@ function TimeOffTab() {
                           <div className="font-mono text-[11px] text-gray-400 mt-0.5">{t.reason}</div>
                         )}
                       </div>
-                      <button
-                        onClick={() => deleteOne(t.id)}
-                        className="text-gray-300 hover:text-red-500"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => openEdit(t)}
+                          title="Edit time off"
+                          aria-label="Edit time off"
+                          className="text-gray-300 hover:text-pink-500"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={() => deleteOne(t.id)}
+                          title="Delete time off"
+                          aria-label="Delete time off"
+                          className="text-gray-300 hover:text-red-500"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -262,7 +299,10 @@ function TimeOffTab() {
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4" onClick={() => setAdding(null)}>
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="font-mono text-sm font-bold text-gray-800">Add time off</h3>
+              <h3 className="font-mono text-sm font-bold text-gray-800">
+                {adding.editingId ? 'Edit time off' : 'Add time off'}
+                {' — '}{state.manicurists.find((mm) => mm.id === adding.manicuristId)?.name ?? ''}
+              </h3>
               <button onClick={() => setAdding(null)} className="text-gray-400 hover:text-gray-600">
                 <X size={18} />
               </button>
