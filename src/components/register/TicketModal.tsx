@@ -3467,8 +3467,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Row({ label, value, bold, highlight }: { label: string; value: string; bold?: boolean; highlight?: boolean }) {
   return (
     <div className="flex items-center justify-between">
-      <span className={`font-mono text-base ${bold ? 'font-bold text-gray-900' : 'text-gray-700'}`}>{label}</span>
-      <span className={`font-mono text-base ${bold ? 'font-bold' : ''} ${highlight ? 'text-pink-600' : 'text-gray-900'}`}>{value}</span>
+      <span className={`font-mono ${bold ? 'text-xl font-bold text-gray-900' : 'text-base text-gray-700'}`}>{label}</span>
+      <span className={`font-mono ${bold ? 'text-2xl font-bold' : 'text-base'} ${highlight ? 'text-pink-600' : 'text-gray-900'}`}>{value}</span>
     </div>
   );
 }
