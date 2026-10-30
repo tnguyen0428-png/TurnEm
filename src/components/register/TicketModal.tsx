@@ -2765,7 +2765,7 @@ export default function TicketModal({
                   <input
                     type="text" value={clientFirstName} onChange={(e) => setClientFirstName(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
+                    className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
                     placeholder="Walk-in"
                   />
                 </Field>
@@ -2773,7 +2773,7 @@ export default function TicketModal({
                   <input
                     type="text" value={clientLastName} onChange={(e) => setClientLastName(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
+                    className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
                     placeholder="—"
                   />
                 </Field>
@@ -2781,7 +2781,7 @@ export default function TicketModal({
                   <input
                     type="tel" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
+                    className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
                     placeholder="(555) 555-5555"
                   />
                 </Field>
@@ -2790,7 +2790,7 @@ export default function TicketModal({
                     value={primaryManicuristId ?? ''}
                     onChange={(e) => setPrimaryManicuristId(e.target.value || null)}
                     disabled={!canEdit}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
+                    className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
                   >
                     <option value="">—</option>
                     {manicurists.map((m) => (
@@ -2802,7 +2802,7 @@ export default function TicketModal({
 
               {/* Line items grid — scrolls inside if needed so the rest stays in view */}
               <div className="border border-gray-200 rounded-xl overflow-hidden flex flex-col min-h-0">
-                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_36px_30px] gap-2 px-3 py-1.5 bg-gray-100 border-b border-gray-200 text-[11px] tracking-wider font-mono font-semibold text-gray-700 uppercase">
+                <div className="grid grid-cols-[46px_60px_1fr_130px_90px_90px_36px_30px] gap-2 px-3 py-1.5 bg-gray-100 border-b border-gray-200 text-xs tracking-wider font-mono font-semibold text-gray-700 uppercase">
                   <span className="text-center">#</span>
                   <span className="text-center">Qty</span>
                   <span>Service</span>
@@ -2814,7 +2814,7 @@ export default function TicketModal({
                 </div>
                 <div className="flex-1 min-h-0 overflow-y-auto">
                   {lines.length === 0 ? (
-                    <div className="px-3 py-4 text-center font-mono text-xs text-gray-600">
+                    <div className="px-3 py-4 text-center font-mono text-base text-gray-600">
                       No line items yet.
                     </div>
                   ) : (
@@ -2848,7 +2848,7 @@ export default function TicketModal({
                             type="number" min={1} step={1} value={line.quantity}
                             onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value || '1', 10)) })}
                             disabled={!canEdit}
-                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-center focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
+                            className="h-11 px-1.5 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-base text-center focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           />
                           {/* Service name + per-line SWAP dropdown.
                               The dropdown is grouped by category via
@@ -2867,7 +2867,7 @@ export default function TicketModal({
                               onChange={(e) => updateLine(idx, { name: e.target.value })}
                               disabled={!canEdit}
                               placeholder="Service name"
-                              className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
+                              className="flex-1 min-w-0 h-11 px-1.5 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-base focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                             />
                             {line.kind === 'service' && (
                               <select
@@ -2909,7 +2909,7 @@ export default function TicketModal({
                                 disabled={!canEdit}
                                 title="Swap to a different service"
                                 aria-label="Swap service"
-                                className="w-6 px-0 py-1 rounded-md border border-transparent text-gray-400 hover:border-gray-300 hover:text-gray-700 font-mono text-xs focus:outline-none cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                className="w-6 h-11 px-0 rounded-md border border-transparent text-gray-400 hover:border-gray-300 hover:text-gray-700 font-mono text-xs focus:outline-none cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                               >
                                 <option value=""></option>
                                 {availableCategories.map((cat) => (
@@ -2935,7 +2935,7 @@ export default function TicketModal({
                               });
                             }}
                             disabled={!canEdit}
-                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
+                            className="h-11 px-1.5 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-base focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           >
                             <option value="">—</option>
                             {manicurists.map((m) => (
@@ -2947,9 +2947,9 @@ export default function TicketModal({
                             onChange={(e) => updateLine(idx, { priceInput: e.target.value, priceEdited: true })}
                             onBlur={(e) => updateLine(idx, { priceInput: (parseDollarsToCents(e.target.value) / 100).toFixed(2) })}
                             disabled={!canEdit}
-                            className="px-1.5 py-1 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-sm text-right focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
+                            className="h-11 px-1.5 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-base text-right focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           />
-                          <span className="px-1.5 py-1 font-mono text-sm font-semibold text-gray-900 text-right">
+                          <span className="px-1.5 font-mono text-base font-semibold text-gray-900 text-right">
                             {formatMoneyCents(ext)}
                           </span>
                           {isService ? (
@@ -2970,7 +2970,7 @@ export default function TicketModal({
                           {canEdit ? (
                             <button onClick={() => removeLine(idx)}
                               className="p-1 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors">
-                              <Trash2 size={14} />
+                              <Trash2 size={16} />
                             </button>
                           ) : <span />}
                         </div>
@@ -3443,7 +3443,7 @@ function formatBusinessDate(iso: string): string {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <label className="font-mono text-[10px] tracking-wider font-semibold text-gray-600 uppercase">{label}</label>
+      <label className="font-mono text-xs tracking-wider font-semibold text-gray-600 uppercase">{label}</label>
       {children}
     </div>
   );
