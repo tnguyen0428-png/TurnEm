@@ -2765,7 +2765,7 @@ export default function TicketModal({
                   <input
                     type="text" value={clientFirstName} onChange={(e) => setClientFirstName(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
+                    className="w-full h-11 px-2.5 rounded-lg border-2 border-gray-500 font-mono text-base font-semibold text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-800 disabled:bg-gray-100 disabled:text-gray-900"
                     placeholder="Walk-in"
                   />
                 </Field>
@@ -2773,7 +2773,7 @@ export default function TicketModal({
                   <input
                     type="text" value={clientLastName} onChange={(e) => setClientLastName(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
+                    className="w-full h-11 px-2.5 rounded-lg border-2 border-gray-500 font-mono text-base font-semibold text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-800 disabled:bg-gray-100 disabled:text-gray-900"
                     placeholder="—"
                   />
                 </Field>
@@ -2781,7 +2781,7 @@ export default function TicketModal({
                   <input
                     type="tel" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)}
                     disabled={!canEdit}
-                    className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
+                    className="w-full h-11 px-2.5 rounded-lg border-2 border-gray-500 font-mono text-base font-semibold text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-800 disabled:bg-gray-100 disabled:text-gray-900"
                     placeholder="(555) 555-5555"
                   />
                 </Field>
@@ -2790,7 +2790,7 @@ export default function TicketModal({
                     value={primaryManicuristId ?? ''}
                     onChange={(e) => setPrimaryManicuristId(e.target.value || null)}
                     disabled={!canEdit}
-                    className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-700"
+                    className="w-full h-11 px-2.5 rounded-lg border-2 border-gray-500 font-mono text-base font-semibold text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-800 disabled:bg-gray-100 disabled:text-gray-900"
                   >
                     <option value="">—</option>
                     {manicurists.map((m) => (
@@ -3443,7 +3443,7 @@ function formatBusinessDate(iso: string): string {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <label className="font-mono text-xs tracking-wider font-semibold text-gray-600 uppercase">{label}</label>
+      <label className="font-mono text-xs tracking-wider font-bold text-gray-800 uppercase">{label}</label>
       {children}
     </div>
   );
