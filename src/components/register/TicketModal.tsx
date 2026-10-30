@@ -45,7 +45,7 @@ import { useServiceCategories } from '../../hooks/useServiceCategories';
 import { supabase } from '../../lib/supabase';
 import { lookupGiftCardBalance, normalizeSerial, type GiftCardBalance } from '../../lib/giftCertificates';
 import { reconcileServiceRequests } from '../../lib/serviceRequests';
-import type { PaymentMethod, ServiceType, Ticket } from '../../types';
+import type { PaymentMethod, QueueEntry, ServiceType, Ticket } from '../../types';
 
 interface Props {
   ticket: Ticket;
@@ -414,6 +414,23 @@ export default function TicketModal({
   }, [state.manicurists, ticket.primaryManicuristId, lines]);
   function manicuristById(id: string | null) {
     return id ? state.manicurists.find((m) => m.id === id) ?? null : null;
+  }
+
+  // Turn value one service contributes to a queue entry: the catalog value,
+  // or the request rate (Combo 1 / anything else 0.5) when it was a client
+  // request — the same rule as MultiServiceAssign and the completed-row
+  // recompute in doSave.
+  function serviceTurn(name: string, requested: boolean): number {
+    const svc = state.salonServices.find((s) => s.name === name);
+    const base = Number(svc?.turnValue ?? 0);
+    if (base <= 0) return 0;
+    return requested ? (svc?.category === 'Combo' ? 1 : 0.5) : base;
+  }
+  function isRequestOnEntry(entry: QueueEntry, name: string): boolean {
+    const staff = entry.assignedManicuristId;
+    return (entry.serviceRequests ?? []).some(
+      (r) => r.service === name && r.clientRequest === true && (!staff || (r.manicuristIds ?? []).includes(staff)),
+    ) || (!!entry.isRequested && !!staff && entry.requestedManicuristId === staff);
   }
 
   // When a fresh service line on an existing (parent) ticket gets a staff
@@ -1740,10 +1757,15 @@ export default function TicketModal({
       if (idx === -1) continue;
       const updatedServices = [...entry.services];
       updatedServices[idx] = newName as ServiceType;
-      const newTurnValue = updatedServices.reduce((sum, sv) => {
-        const cat = state.salonServices.find((s) => s.name === sv);
-        return sum + Number(cat?.turnValue ?? 0);
-      }, 0);
+      // Swap only the renamed service's share of the turn, keeping its
+      // request rate. Re-summing catalog values here dropped the request
+      // half-turn: Maureen x BRIAN, Dip Manicure -> Dip Only at the register,
+      // was paid at checkout as a full 1 turn (2026-10-30, ticket #34).
+      const req = !!l.isRequested || isRequestOnEntry(entry, oldName);
+      const newTurnValue = Math.max(
+        0,
+        (Number(entry.turnValue) || 0) - serviceTurn(oldName, req) + serviceTurn(newName, req),
+      );
       dispatch({
         type: 'UPDATE_CLIENT',
         id: entry.id,
@@ -1806,10 +1828,13 @@ export default function TicketModal({
             }
             dispatch({ type: 'REMOVE_CLIENT', id: entry.id });
           } else {
-            const newTurnValue = updatedServices.reduce((sum, sv) => {
-              const cat = state.salonServices.find((s) => s.name === sv);
-              return sum + Number(cat?.turnValue ?? 0);
-            }, 0);
+            // Take off only the removed service's share (at its request rate
+            // if it was one), not a catalog re-sum that would also strip the
+            // request discount off every service left on the entry.
+            const newTurnValue = Math.max(
+              0,
+              (Number(entry.turnValue) || 0) - serviceTurn(oldName, isRequestOnEntry(entry, oldName)),
+            );
             dispatch({
               type: 'UPDATE_CLIENT',
               id: entry.id,
