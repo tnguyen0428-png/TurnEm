@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { LogOut, Bell, BellOff, CheckCircle, Clock, Volume2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase, fetchAllRows } from '../../lib/supabase';
+import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../../lib/manicuristStatus';
 import {
   getPermissionState,
   isPushSupported,
@@ -367,6 +368,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
                 timeAdjustments: r.time_adjustments || {}, pinCode: r.pin_code || '',
                 breakStartTime: r.break_start_time ? Number(r.break_start_time) : null,
                 smsOptIn: r.sms_opt_in || false,
+                isReceptionist: r.is_receptionist || false,
               })),
               queue: queueRows.map((r: any) => ({
                 id: r.id, clientName: r.client_name,
@@ -760,13 +762,21 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
     return initial ? `${parts[0]} ${initial}.` : parts[0];
   }
 
-  // Queue position: rank among clocked-in available manicurists by turn count
+  // Queue position: rank among clocked-in available manicurists by turn count.
+  // Must match the computer's ManicuristPanel turn order exactly: skip
+  // desk-only receptionists (no skills) and correct busy status from the
+  // queue first. Without this a clocked-in front-desk receptionist at 0 turns
+  // sat at #1 here and pushed every tech down one (Kayla / Joe, 2026-10-30).
   const queuePosition = useMemo(() => {
     if (!manicurist.clockedIn) return null;
-    if (manicurist.status !== 'available') return null;
+    const busyIndex = buildQueueBusyIndex(state.queue);
+    const self = reconcileBusyFromQueue(manicurist, busyIndex);
+    if (self.status !== 'available') return null;
 
     const available = state.manicurists
-      .filter((m) => m.clockedIn && m.status === 'available')
+      .filter((m) => m.clockedIn && !(m.isReceptionist && (m.skills?.length ?? 0) === 0))
+      .map((m) => reconcileBusyFromQueue(m, busyIndex))
+      .filter((m) => m.status === 'available')
       .sort((a, b) => {
         const aFloor = Math.floor(a.totalTurns);
         const bFloor = Math.floor(b.totalTurns);
@@ -776,7 +786,7 @@ export default function StaffPortalScreen({ manicurist: initialManicurist, onLog
 
     const idx = available.findIndex((m) => m.id === manicurist.id);
     return idx === -1 ? null : idx + 1;
-  }, [state.manicurists, manicurist]);
+  }, [state.manicurists, state.queue, manicurist]);
 
   // ---- In-app alert when assigned a client or becoming next up ----
   const [alert, setAlert] = useState<{ type: 'assigned' | 'nextup'; clientName?: string; services?: string[] } | null>(null);
