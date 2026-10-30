@@ -1057,6 +1057,7 @@ export async function reconcileMissingTicketsForDate(
       queueEntryId: visitId,
       appointmentId: null,
       clientName: c.clientName,
+      clientPhone: c.clientPhone ?? '',
       primaryManicuristId: c.manicuristId,
       primaryManicuristName: c.manicuristName,
       primaryManicuristColor: c.manicuristColor,

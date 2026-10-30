@@ -182,7 +182,22 @@ export default function TicketModal({
     return idx === -1 ? '' : ticket.clientName.slice(idx + 1);
   });
   const clientName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim();
-  const [clientPhone, setClientPhone] = useState(ticket.clientPhone);
+  // Tickets created before the phone was carried over (and ones opened by the
+  // reconcile path) have a blank phone. Fill it from the linked booking —
+  // by the ticket's appointment id, else the visit's queue entry — so the
+  // cashier sees it and the next save persists it.
+  const [clientPhone, setClientPhone] = useState(() => {
+    if (ticket.clientPhone?.trim()) return ticket.clientPhone;
+    const appt = ticket.appointmentId
+      ? state.appointments.find((a) => a.id === ticket.appointmentId)
+      : undefined;
+    if (appt?.clientPhone) return appt.clientPhone;
+    const visitId = ticket.queueEntryId;
+    const q = visitId
+      ? state.queue.find((e) => (e.id === visitId || e.parentQueueId === visitId) && e.originalAppointment?.clientPhone)
+      : undefined;
+    return q?.originalAppointment?.clientPhone ?? '';
+  });
   const [primaryManicuristId, setPrimaryManicuristId] = useState<string | null>(
     ticket.primaryManicuristId,
   );
@@ -3028,12 +3043,12 @@ export default function TicketModal({
                     type="text"
                     value={note} onChange={(e) => setNote(e.target.value)}
                     disabled={!canEdit}
-                    className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100"
+                    className="flex-1 h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100"
                     placeholder="Discount note…"
                   />
                   {canEdit && !note && (
                     <button onClick={() => setShowNote(false)}
-                      className="px-2 py-1.5 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 font-mono text-xs">
+                      className="h-11 px-3 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 font-mono text-base">
                       ×
                     </button>
                   )}
@@ -3041,7 +3056,7 @@ export default function TicketModal({
               ) : (
 canEdit && (
                   <button onClick={() => setShowNote(true)}
-                    className="self-start px-2 py-1 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 font-mono text-xs">
+                    className="self-start h-11 px-3 rounded-lg text-gray-700 hover:text-gray-900 hover:bg-gray-100 font-mono text-base font-semibold">
                     + Discount Note
                   </button>
                 )
@@ -3083,10 +3098,10 @@ canEdit && (
                     <div className="border border-gray-200 rounded-xl divide-y divide-gray-100">
                       {pending.map((p, idx) => (
                         <div key={idx} className="px-2.5 py-2 flex items-center gap-1.5">
-                          <span className="font-mono text-sm font-bold text-gray-700 w-16">
+                          <span className="font-mono text-base font-bold text-gray-700 w-16">
                             {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
                           </span>
-                          <span className="font-mono text-sm text-gray-600">$</span>
+                          <span className="font-mono text-base text-gray-600">$</span>
                           <input
                             type="text" inputMode="decimal" value={p.amountInput}
                             onChange={(e) => {
@@ -3104,11 +3119,11 @@ canEdit && (
                                 : formatted;
                               patchPending(idx, { amountInput: capped });
                             }}
-                            className="flex-1 px-2 py-1 rounded-md border border-gray-300 font-mono text-base text-right text-gray-900 focus:outline-none focus:border-gray-500"
+                            className="flex-1 min-w-0 h-11 px-2 rounded-md border border-gray-300 font-mono text-base text-right text-gray-900 focus:outline-none focus:border-gray-500"
                           />
                           <button onClick={() => removePending(idx)}
                             className="p-1 rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50">
-                            <Trash2 size={14} />
+                            <Trash2 size={16} />
                           </button>
                         </div>
                       ))}
@@ -3141,7 +3156,7 @@ canEdit && (
                                   value={p.giftCardCode ?? ''}
                                   onChange={(e) => patchPending(idx, { giftCardCode: e.target.value })}
                                   onBlur={(e) => { void refreshGiftBalance(e.target.value); }}
-                                  className="mt-1 w-full px-2 py-1 rounded-md border border-gray-300 font-mono text-base text-gray-900 focus:outline-none focus:border-gray-500"
+                                  className="mt-1 w-full h-11 px-2 rounded-md border border-gray-300 font-mono text-base text-gray-900 focus:outline-none focus:border-gray-500"
                                   placeholder="GC-####"
                                 />
                               </div>
@@ -3169,11 +3184,11 @@ canEdit && (
                 <>
                   <div className="border border-gray-200 rounded-xl divide-y divide-gray-100">
                     {ticket.payments.length === 0 ? (
-                      <div className="px-3 py-2.5 font-mono text-sm text-gray-600 text-center">No payments captured.</div>
+                      <div className="px-3 py-2.5 font-mono text-base text-gray-600 text-center">No payments captured.</div>
                     ) : (
                       ticket.payments.map((p) => (
                         <div key={p.id} className="px-2.5 py-2 flex items-center justify-between">
-                          <span className="font-mono text-sm font-bold text-gray-700 flex items-center gap-2">
+                          <span className="font-mono text-base font-bold text-gray-700 flex items-center gap-2">
                             {p.method === 'visa_mc' ? 'CARD' : p.method.toUpperCase()}
                             {p.method === 'gift' && (p.giftCardCode ?? '').trim() && (
                               <span className="font-mono text-[11px] font-semibold text-gray-500">#{(p.giftCardCode ?? '').trim()}</span>
@@ -3263,11 +3278,11 @@ canEdit && (
                   })));
                   if (!payRes) { setError('Saved items but could not save the payment.'); return; }
                 }} disabled={busy !== 'idle'}
-                  className="px-5 py-2.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-sm font-bold disabled:opacity-50">
+                  className="px-5 py-2.5 rounded-lg border-2 font-bebas text-lg tracking-widest border-gray-400 text-gray-800 hover:bg-gray-100 disabled:opacity-50">
                   {busy === 'saving' ? 'SAVING…' : 'SAVE'}
                 </button>
                 <button onClick={handleVoid} disabled={busy !== 'idle'}
-                  className="px-5 py-2.5 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 font-mono text-sm font-bold disabled:opacity-50">
+                  className="px-5 py-2.5 rounded-lg border-2 font-bebas text-lg tracking-widest border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50">
                   {busy === 'voiding' ? 'VOIDING…' : 'VOID'}
                 </button>
                 <button
@@ -3282,7 +3297,7 @@ canEdit && (
                         : `Payments ${formatMoneyCents(pendingPaidCents)} ≠ total ${formatMoneyCents(totalCents)}.`
                       : undefined
                   }
-                  className="px-6 py-2.5 rounded-lg bg-gray-900 text-white font-mono text-sm font-bold hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-900"
+                  className="px-6 py-2.5 rounded-lg border-2 font-bebas text-lg tracking-widest border-gray-900 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-900"
                 >
                   {busy === 'processing' ? 'PROCESSING…' : 'PROCESS'}
                 </button>
@@ -3291,18 +3306,18 @@ canEdit && (
             {!isOpen && !unlockedForEdit && (
               <>
                 <button onClick={() => setShowEditGate(true)}
-                  className="px-3 py-1.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-xs font-bold">
+                  className="px-5 py-2.5 rounded-lg border-2 font-bebas text-lg tracking-widest border-gray-400 text-gray-800 hover:bg-gray-100">
                   EDIT
                 </button>
                 <button onClick={onClose}
-                  className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800">
+                  className="px-5 py-2.5 rounded-lg border-2 font-bebas text-lg tracking-widest border-gray-900 bg-gray-900 text-white hover:bg-gray-800">
                   CLOSE
                 </button>
               </>
             )}
             {!isOpen && unlockedForEdit && (
               <>
-                <span className="w-px h-6 bg-gray-200 mx-1" />
+                <span className="w-px h-8 bg-gray-200 mx-1" />
                 <button onClick={async () => {
                   // Persist items/header via doSave, then for closed tickets
                   // also replace the payments table so method/amount edits
@@ -3331,7 +3346,7 @@ canEdit && (
                   if (!payRes) { setError('Saved items but could not update payments.'); return; }
                   onClose();
                 }} disabled={busy !== 'idle'}
-                  className="px-4 py-1.5 rounded-lg bg-gray-900 text-white font-mono text-xs font-bold hover:bg-gray-800 disabled:opacity-50">
+                  className="px-5 py-2.5 rounded-lg border-2 font-bebas text-lg tracking-widest border-gray-900 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50">
                   {busy === 'saving' ? 'SAVING…' : 'SAVE'}
                 </button>
                 {/* VOID on a closed ticket — same PIN-gated flow as VOID on an
@@ -3339,11 +3354,11 @@ canEdit && (
                     state so the status flip + completed_services rollback both
                     run. Per user request 2026-05-22. */}
                 <button onClick={handleVoid} disabled={busy !== 'idle'}
-                  className="px-3 py-1.5 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 font-mono text-xs font-bold disabled:opacity-50">
+                  className="px-5 py-2.5 rounded-lg border-2 font-bebas text-lg tracking-widest border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50">
                   {busy === 'voiding' ? 'VOIDING…' : 'VOID'}
                 </button>
                 <button onClick={onClose}
-                  className="px-3 py-1.5 rounded-lg border border-gray-400 text-gray-800 hover:bg-gray-100 font-mono text-xs font-bold">
+                  className="px-5 py-2.5 rounded-lg border-2 font-bebas text-lg tracking-widest border-gray-400 text-gray-800 hover:bg-gray-100">
                   CANCEL
                 </button>
               </>
@@ -3473,7 +3488,7 @@ function RowEdit({
     <div className="flex items-center justify-between gap-2" title={title}>
       <span className="font-mono text-base text-gray-700">{label}</span>
       <div className="flex items-center gap-1">
-        <span className="font-mono text-sm text-gray-600">$</span>
+        <span className="font-mono text-base text-gray-600">$</span>
         <input
           type="text" inputMode="decimal" value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -3533,7 +3548,7 @@ function FooterBtn({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`px-5 py-2.5 rounded-lg border ${toneClasses} font-mono text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors`}
+      className={`px-5 py-2.5 rounded-lg border-2 ${toneClasses} font-bebas text-lg tracking-widest disabled:opacity-40 disabled:cursor-not-allowed transition-colors`}
     >
       {label}
     </button>

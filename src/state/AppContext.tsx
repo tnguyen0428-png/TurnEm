@@ -2833,6 +2833,7 @@ async function syncQueue(queue: QueueEntry[], prev: QueueEntry[], onError: (msg:
             queueEntryId: visitId,
             appointmentId: entry.originalAppointment?.id ?? null,
             clientName: entry.clientName,
+            clientPhone: entry.originalAppointment?.clientPhone ?? '',
             primaryManicuristId: m?.id ?? null,
             primaryManicuristName: m?.name ?? '',
             primaryManicuristColor: m?.color ?? '#9ca3af',
