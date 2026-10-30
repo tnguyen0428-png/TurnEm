@@ -2499,10 +2499,15 @@ export default function TicketModal({
     if (ticket.queueEntryId) {
       const visitId = ticket.queueEntryId;
       const addChildPrefix = `${visitId}-add-`;
+      // Strip the per-service `#svcN` / `#N` slot suffix: a multi-service
+      // entry's lines are keyed `${entry.id}#svc0`, `${entry.id}#svc1`, but
+      // the queue entry itself is just `${entry.id}`. Matching the raw line id
+      // found no entry, so a tech doing 2+ services on one card was never
+      // finalized at payment and stayed BUSY (Suzette x Kimberly, 2026-10-30).
       const lineQueueIds = new Set(
         lines
           .filter((l): l is typeof l & { queueEntryId: string } => l.kind === 'service' && !!l.queueEntryId)
-          .map((l) => l.queueEntryId)
+          .map((l) => l.queueEntryId.split('#')[0])
       );
       for (const qid of lineQueueIds) {
         if (qid.startsWith(addChildPrefix)) {
