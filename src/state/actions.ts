@@ -22,7 +22,10 @@ export type AppAction =
   | { type: 'SET_EDITING_CLIENT'; clientId: string | null }
   | { type: 'REMOVE_CLIENT'; id: string }
   | { type: 'ASSIGN_CLIENT'; clientId: string; manicuristId: string }
-  | { type: 'COMPLETE_SERVICE'; manicuristId: string; queueEntryId?: string }
+  // ticketRequestedServices: services the CLOSED ticket shows with an R for
+  // this entry. Checkout passes them so the completed row agrees with the
+  // receipt even when the queue entry lost its request flag on the way.
+  | { type: 'COMPLETE_SERVICE'; manicuristId: string; queueEntryId?: string; ticketRequestedServices?: string[] }
   // `discard` = this card should not exist at all: delete the queue entry
   // instead of returning it to the waiting list. Only meaningful for split
   // children (see the reducer) — a backed-out split otherwise has no exit but

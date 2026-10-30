@@ -1884,6 +1884,27 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         client.services && client.services.length > 0
           ? client.services
           : fallbackServicesFromRequests;
+      // The closed ticket is the authority on requests. If the receipt shows
+      // an R on a service this entry doesn't count as requested (a register
+      // service swap re-summed the entry at the full catalog turn — Maureen x
+      // BRIAN, Dip Only, 2026-10-30), record it as a request and take the
+      // request rate (Combo 1 / anything else 0.5) instead of the full turn.
+      let completedTurnValue = Number(client.turnValue) || 0;
+      let ticketAddedRequest = false;
+      if (action.ticketRequestedServices && !wholeEntryRequested) {
+        for (const name of action.ticketRequestedServices) {
+          if (!recordedServices.includes(name as ServiceType)) continue;
+          if (requestedServices.includes(name as ServiceType)) continue;
+          requestedServices.push(name as ServiceType);
+          ticketAddedRequest = true;
+          const svc = state.salonServices.find((s) => s.name === name);
+          const base = Number(svc?.turnValue ?? 0);
+          if (base > 0) {
+            const reqRate = svc?.category === 'Combo' ? 1 : 0.5;
+            completedTurnValue = Math.max(0, completedTurnValue - base + reqRate);
+          }
+        }
+      }
       // Deterministic ID — the queue entry's own id. A queue entry can only be
       // completed once (it's removed from the queue below), so using its id as
       // the completed_services row id makes COMPLETE_SERVICE idempotent at the
@@ -1894,7 +1915,7 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         id: client.id,
         clientName: client.clientName,
         services: recordedServices,
-        turnValue: client.turnValue,
+        turnValue: completedTurnValue,
         manicuristId: creditMani.id,
         manicuristName: creditMani.name,
         manicuristColor: creditMani.color,
@@ -1902,7 +1923,9 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
         completedAt: now,
         requestedServices: requestedServices.length > 0 ? requestedServices : undefined,
         isAppointment: !!client.isAppointment,
-        isRequested: wholeEntryRequested,
+        // Same rule as the register's save-time recompute (is_requested =
+        // any service requested) when the ticket supplied the request.
+        isRequested: wholeEntryRequested || ticketAddedRequest,
         // Link back to the appointment book entry so the register can flip the
         // appt to 'completed' (black) when the ticket is closed.
         originalAppointmentId: client.originalAppointment?.id,

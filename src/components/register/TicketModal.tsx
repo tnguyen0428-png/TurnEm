@@ -253,6 +253,16 @@ export default function TicketModal({
           );
           if (matched) isRequested = true;
         }
+        // (4) The live queue entry — a walk-in requested at assign time that
+        //     the tech hasn't finished yet has no completed row and no booking,
+        //     so (1)–(3) all miss and the ticket showed no R, which then let
+        //     checkout record a full turn for a request.
+        if (!isRequested) {
+          const live = state.queue.find((q) => q.id === visitId);
+          if (live && (!it.staff1Id || live.assignedManicuristId === it.staff1Id) && isRequestOnEntry(live, it.name)) {
+            isRequested = true;
+          }
+        }
       }
       return {
         existingId: it.id,
@@ -2575,7 +2585,22 @@ export default function TicketModal({
         }
         const entry = state.queue.find((q) => q.id === qid);
         if (!entry || !entry.assignedManicuristId) continue;
-        dispatch({ type: 'COMPLETE_SERVICE', manicuristId: entry.assignedManicuristId, queueEntryId: qid });
+        // Hand the receipt's R marks to the completion so the turn record and
+        // History agree with what the ticket shows.
+        const ticketRequestedServices = lines
+          .filter((l) =>
+            l.kind === 'service' &&
+            l.isRequested &&
+            !!l.queueEntryId &&
+            l.queueEntryId.split('#')[0] === qid &&
+            (!l.staff1Id || l.staff1Id === entry.assignedManicuristId))
+          .map((l) => l.name.trim());
+        dispatch({
+          type: 'COMPLETE_SERVICE',
+          manicuristId: entry.assignedManicuristId,
+          queueEntryId: qid,
+          ticketRequestedServices,
+        });
       }
       // ── Turn-credit consistency heal: REMOVED 2026-06-19 ──────────────
       // This loop used to force every completed_services row's tech to match
