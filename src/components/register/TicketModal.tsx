@@ -805,26 +805,6 @@ export default function TicketModal({
     // No ensureManicuristBusyForAddedLine here — staff is null at this point.
   }
 
-  function addBlankCustomLine() {
-    setLines((prev) => [
-      ...prev,
-      {
-        serviceId: null,
-        name: '',
-        staff1Id: null,
-        staff1Name: '',
-        staff1Color: '#9ca3af',
-        staff2Id: null,
-        staff2Name: '',
-        staff2Color: '#9ca3af',
-        priceInput: '0.00',
-        discountInput: '0.00',
-        quantity: 1,
-        kind: 'service',
-      },
-    ]);
-  }
-
   /**
    * Add a gift-card-sale line for the given serial, value (cents), and the
    * staff member who sold it (credited via staff1 so it shows up in the
@@ -3002,14 +2982,14 @@ export default function TicketModal({
 
                 {/* Add line */}
                 {canEdit && (
-                  <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-center px-3 py-1.5 bg-gray-100 border-t border-gray-200">
+                  <div className="grid grid-cols-3 gap-2 items-center px-3 py-2 bg-gray-100 border-t border-gray-200">
                     <select
                       value={pickerCategory}
                       onChange={(e) => {
                         setPickerCategory(e.target.value);
                         setPickerServiceId('');
                       }}
-                      className="px-2 py-1.5 rounded-md border border-gray-300 font-mono text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-500"
+                      className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 bg-white focus:outline-none focus:border-gray-500"
                     >
                       <option value="">Category…</option>
                       {availableCategories.map((cat) => (
@@ -3026,20 +3006,16 @@ export default function TicketModal({
                         setPickerCategory('');
                         setPickerServiceId('');
                       }}
-                      className="px-2 py-1.5 rounded-md border border-gray-300 font-mono text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+                      className="w-full h-11 px-2.5 rounded-lg border border-gray-300 font-mono text-base text-gray-900 bg-white focus:outline-none focus:border-gray-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                     >
                       <option value="">Service…</option>
                       {servicesInCategory.map((s) => (
                         <option key={s.id} value={s.id}>{s.name} — ${s.price.toFixed(2)}</option>
                       ))}
                     </select>
-                    <button onClick={addBlankCustomLine}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-300 text-gray-800 hover:bg-white font-mono text-xs font-semibold transition-colors">
-                      <Plus size={14} /> CUSTOM
-                    </button>
                     <button onClick={() => { void openGiftModal(); }}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-pink-300 bg-pink-50 text-pink-800 hover:bg-pink-100 hover:border-pink-400 font-mono text-xs font-semibold transition-colors">
-                      <Plus size={14} /> GIFT
+                      className="w-full h-11 flex items-center justify-center gap-1.5 px-2.5 rounded-lg border border-pink-300 bg-pink-50 text-pink-800 hover:bg-pink-100 hover:border-pink-400 font-mono text-base font-semibold transition-colors">
+                      <Plus size={16} /> GIFT
                     </button>
                   </div>
                 )}
@@ -3053,7 +3029,7 @@ export default function TicketModal({
                     value={note} onChange={(e) => setNote(e.target.value)}
                     disabled={!canEdit}
                     className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-300 font-mono text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-gray-500 disabled:bg-gray-100"
-                    placeholder="Note…"
+                    placeholder="Discount note…"
                   />
                   {canEdit && !note && (
                     <button onClick={() => setShowNote(false)}
@@ -3066,7 +3042,7 @@ export default function TicketModal({
 canEdit && (
                   <button onClick={() => setShowNote(true)}
                     className="self-start px-2 py-1 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 font-mono text-xs">
-                    + Add note
+                    + Discount Note
                   </button>
                 )
               )}
