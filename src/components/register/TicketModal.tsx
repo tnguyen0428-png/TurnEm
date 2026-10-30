@@ -1104,6 +1104,38 @@ export default function TicketModal({
     // confusing in the logs).
     if (removedItemIds.length > 0) setRemovedItemIds([]);
 
+    // Stamp the new rows' ids onto the lines that created them. onChanged
+    // hands `saved` back as the `ticket` prop, which rebuilds
+    // originalStaffByItemId to include these rows — but `lines` kept them as
+    // unsaved (no existingId). The NEXT save then saw a saved row with no
+    // matching line, treated it as removed, and the removed-line sync dropped
+    // the tech's add-child queue entry, deleting its book block while the
+    // ticket line and turn stayed (Simran × MIA Gel Pedicure, #61 2026-10-30:
+    // block made 22:06:50, saved 22:06:53, second save 22:06:57 deleted it).
+    {
+      const claimed = new Set(lines.filter((l) => l.existingId).map((l) => l.existingId as string));
+      const fresh = saved.items.filter((it) => !claimed.has(it.id));
+      const matched = lines.map((l) => {
+        if (l.existingId) return null;
+        const i = fresh.findIndex(
+          (it) =>
+            it.kind === l.kind &&
+            (it.name ?? '').trim() === (l.name ?? '').trim() &&
+            (it.staff1Id ?? null) === (l.staff1Id ?? null),
+        );
+        return i === -1 ? null : fresh.splice(i, 1)[0];
+      });
+      if (matched.some(Boolean)) {
+        const savedLines = lines;
+        setLines((prev) => prev.map((l, i) => {
+          const it = matched[i];
+          // Only stamp a line the cashier hasn't touched since this save began.
+          if (!it || prev[i] !== savedLines[i]) return l;
+          return { ...l, existingId: it.id, queueEntryId: l.queueEntryId ?? it.queueEntryId ?? null };
+        }));
+      }
+    }
+
     // ─── Removed service lines → clean up the tech's completed_services row ──
     // Without this the row survives the line's deletion and keeps showing (and
     // paying, via the catalog fallback) work that was never billed.
