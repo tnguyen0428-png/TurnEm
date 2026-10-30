@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { registerServiceWorker } from './utils/pushNotifications';
+import { startAutoUpdate } from './utils/autoUpdate';
 
 // Which build is this tab actually running? Vite content-hashes the bundle, so
 // import.meta.url ends in `main-<hash>.js` and identifies the deploy exactly.
@@ -14,6 +15,7 @@ import { registerServiceWorker } from './utils/pushNotifications';
 console.info('[turnem] build', import.meta.url);
 
 registerServiceWorker();
+startAutoUpdate();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
