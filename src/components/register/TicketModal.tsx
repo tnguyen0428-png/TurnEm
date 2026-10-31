@@ -2087,8 +2087,16 @@ export default function TicketModal({
 
       let target: Bucket | undefined;
       const lineVisit = visitIdOf(l.queueEntryId);
-      if (lineVisit && bucketByEntry.has(lineVisit)) {
-        target = bucketByEntry.get(lineVisit);
+      // An id hit only counts when the row belongs to the line's own tech. A
+      // cashier-added line is stored under the bare visit id (`${visit}#1`),
+      // which is ALSO the first tech's row id, so an id-only match welded the
+      // added tech's service onto the first tech's History row and credited
+      // it twice (Simran #61, 2026-10-30: MIA's added Gel Pedicure landed on
+      // JOE's Gel Manicure row as well as MIA's own). On a staff mismatch,
+      // fall through to the staff-matched branches below.
+      const idHit = lineVisit ? bucketByEntry.get(lineVisit) : undefined;
+      if (idHit && (!l.staff1Id || !idHit.entry.manicuristId || idHit.entry.manicuristId === l.staff1Id)) {
+        target = idHit;
       } else if (
         candidateEntries.length === 1 &&
         (!l.staff1Id || candidateEntries[0].manicuristId === l.staff1Id)
