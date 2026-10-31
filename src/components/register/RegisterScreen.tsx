@@ -2,7 +2,7 @@
 // (Closed-shift viewing wired in.)
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer, CalendarPlus, X } from 'lucide-react';
+import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, AlertTriangle, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer, CalendarPlus, X } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import {
@@ -16,6 +16,7 @@ import {
   type DroppedLine,
 } from '../../lib/tickets';
 import { fetchShiftsForDate } from '../../lib/shifts';
+import { findTicketHistoryMismatches, type TicketHistoryMismatch } from '../../lib/ticketHistoryCheck';
 import { getTodayLA, getLocalDateStr } from '../../utils/time';
 import type { Shift, Ticket } from '../../types';
 import TicketModal from './TicketModal';
@@ -73,6 +74,23 @@ export default function RegisterScreen() {
     setDroppedLines(await fetchUnbilledDroppedLines(dateLA));
   }, [dateLA]);
   useEffect(() => { void refreshDropped(); }, [refreshDropped, tickets]);
+
+  // Live ticket ↔ History check (see lib/ticketHistoryCheck). Turn order is
+  // decided during the day, so a closed ticket whose turn records disagree
+  // with it is surfaced here immediately, not in a nightly report. Today only:
+  // state.completed holds just the current day. The 15s tick re-evaluates
+  // tickets once their post-payment grace period has passed.
+  const [checkTick, setCheckTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setCheckTick((n) => n + 1), 15000);
+    return () => window.clearInterval(id);
+  }, []);
+  const historyMismatches = useMemo<TicketHistoryMismatch[]>(() => {
+    void checkTick;
+    if (dateLA !== getTodayLA()) return [];
+    const names = new Map(state.manicurists.map((m) => [m.id, m.name]));
+    return findTicketHistoryMismatches(tickets, state.completed, state.appointments, state.salonServices, names);
+  }, [checkTick, dateLA, tickets, state.completed, state.appointments, state.salonServices, state.manicurists]);
 
   // Realtime: any insert / update / delete on tickets, ticket_items, or
   // payments for any ticket on this business date should trigger a refetch
@@ -406,6 +424,40 @@ export default function RegisterScreen() {
                     MARK HANDLED
                   </button>
                 </div>
+              );
+            })}
+          </div>
+        )}
+
+        {historyMismatches.length > 0 && (
+          <div className="rounded-2xl border border-amber-400 bg-amber-50 px-4 py-3 flex flex-col gap-2">
+            <div className="flex items-center gap-2 font-mono text-sm font-bold text-amber-800">
+              <AlertTriangle size={16} />
+              {historyMismatches.length === 1
+                ? 'TURNS / HISTORY DON\'T MATCH 1 TICKET LINE — FIX IN HISTORY'
+                : `TURNS / HISTORY DON'T MATCH ${historyMismatches.length} TICKET LINES — FIX IN HISTORY`}
+            </div>
+            {historyMismatches.map((m, i) => {
+              const t = tickets.find((x) => x.id === m.ticketId);
+              const what =
+                m.kind === 'missing_in_history' ? `on the ticket but missing from ${m.staffName}'s History`
+                : m.kind === 'extra_in_history' ? `in ${m.staffName}'s History but not on the ticket for ${m.staffName}`
+                : m.kind === 'request_not_recorded' ? `booked as a request (R) but History doesn't show it as one`
+                : `History credits ${m.recordedTurn} turn${m.recordedTurn === 1 ? '' : 's'}, should be ${m.expectedTurn}`;
+              return (
+                <button
+                  key={`${m.ticketId}-${m.kind}-${m.staffName}-${m.service}-${i}`}
+                  onClick={() => { if (t) setOpenTicket(t); }}
+                  className="flex flex-wrap items-center gap-2 font-mono text-xs text-amber-900 text-left hover:underline"
+                >
+                  <span className="font-bold">#{m.ticketNumber}</span>
+                  <span>{m.clientName}</span>
+                  <span className="text-amber-600">·</span>
+                  <span className="font-bold">{m.staffName}</span>
+                  <span className="text-amber-600">·</span>
+                  <span>{m.service}</span>
+                  <span className="text-amber-700">— {what}</span>
+                </button>
               );
             })}
           </div>
