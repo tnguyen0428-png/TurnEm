@@ -2095,7 +2095,21 @@ export default function TicketModal({
       // JOE's Gel Manicure row as well as MIA's own). On a staff mismatch,
       // fall through to the staff-matched branches below.
       const idHit = lineVisit ? bucketByEntry.get(lineVisit) : undefined;
-      if (idHit && (!l.staff1Id || !idHit.entry.manicuristId || idHit.entry.manicuristId === l.staff1Id)) {
+      // A line bound to its OWN live queue entry (an added service the tech
+      // is still doing) belongs to that entry, not to a finished History row.
+      // Its row is written when that entry hits DONE. Folding it into the
+      // finished row as well recorded the service twice and credited its
+      // turn twice (Jill × JOE, 2026-11-02: an added Manicure in progress as
+      // `${visit}-mani-17` was also merged into JOE's finished Pedicure row,
+      // so that row became Pedicure + Manicure = 1.5 and JOE showed 2 turns).
+      if (
+        !idHit &&
+        l.queueEntryId &&
+        state.queue.some((q) => q.id === l.queueEntryId && !state.completed.some((c) => c.id === q.id))
+      ) {
+        continue;
+      }
+      if (idHit &&(!l.staff1Id || !idHit.entry.manicuristId || idHit.entry.manicuristId === l.staff1Id)) {
         target = idHit;
       } else if (
         candidateEntries.length === 1 &&
