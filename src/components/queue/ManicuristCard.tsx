@@ -390,7 +390,9 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
           <div className="bg-red-50 rounded-lg p-1.5 mb-1.5">
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-1 min-w-0">
-                <p className="font-mono text-[10px] font-semibold text-gray-900 truncate">
+                {/* Client name, timer and services scaled up (Tony 2026-11-04) so
+                    the front desk can read who's in each chair at a glance. */}
+                <p className="font-mono text-sm font-semibold text-gray-900 truncate">
                   {currentClient.clientName}
                 </p>
                 {/* Only a real customer request earns the R — a booking parked
@@ -425,15 +427,16 @@ function ManicuristCardImpl({ manicurist, currentClient, clientHasWax, isFirst, 
                 startedAt={currentClient.startedAt}
                 totalDurationMs={clientDurationMs}
                 status={manicurist.status}
+                size="lg"
               />
               <UpcomingApptWarning manicuristId={manicurist.id} />
             </div>
             {currentClient.services.length > 0 && (
-              <div className="flex flex-wrap gap-0.5 mt-1">
+              <div className="flex flex-wrap gap-1 mt-1">
                 {currentClient.services.map((svc) => (
                   <span
                     key={svc}
-                    className="font-mono text-[9px] bg-red-100 text-gray-900 rounded px-1 py-0.5 leading-none font-semibold"
+                    className="font-mono text-xs bg-red-100 text-gray-900 rounded px-1.5 py-1 leading-none font-semibold"
                   >
                     {svc}
                   </span>
