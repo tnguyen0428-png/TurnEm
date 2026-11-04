@@ -20,9 +20,11 @@ function BreakElapsedBadgeImpl({ breakStartTime }: Props) {
   if (!breakStartTime || !elapsed) return null;
   return (
     <div className="bg-amber-50 rounded-lg px-2 py-1.5 mb-1.5 flex items-center gap-1.5">
-      <Clock size={11} className="text-amber-500 shrink-0" />
-      <span className="font-mono text-[11px] font-bold text-amber-700 tabular-nums">{elapsed}</span>
-      <span className="font-mono text-[9px] text-amber-500 tracking-wider">ON BREAK</span>
+      {/* Sized to match the service countdown on a busy card (Tony
+          2026-11-04) so the two read the same across the grid. */}
+      <Clock size={13} className="text-amber-500 shrink-0" />
+      <span className="font-mono text-[13px] font-bold text-amber-700 tabular-nums">{elapsed}</span>
+      <span className="font-mono text-[11px] text-amber-500 tracking-wider">ON BREAK</span>
     </div>
   );
 }
