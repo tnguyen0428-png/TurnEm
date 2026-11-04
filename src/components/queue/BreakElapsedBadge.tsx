@@ -24,7 +24,7 @@ function BreakElapsedBadgeImpl({ breakStartTime }: Props) {
           2026-11-04) so the two read the same across the grid. */}
       <Clock size={13} className="text-amber-500 shrink-0" />
       <span className="font-mono text-[13px] font-bold text-amber-700 tabular-nums">{elapsed}</span>
-      <span className="font-mono text-[11px] text-amber-500 tracking-wider">ON BREAK</span>
+      <span className="font-mono text-[13px] font-bold text-amber-600 tracking-wider">ON BREAK</span>
     </div>
   );
 }
