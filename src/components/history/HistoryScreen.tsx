@@ -89,12 +89,14 @@ function SortableTurnsRow({
         style={{ backgroundColor: entry.color }}
       />
 
-      <div className="w-24 flex-shrink-0 min-w-0">
-        <p className="font-mono text-xs font-bold text-gray-900 truncate leading-tight">
+      {/* Name 12→16px, clock-in 9→11px (Tony 2026-11-04) — hard to read at a
+          glance. Column widened so names like KIMBERLY don't truncate. */}
+      <div className="w-32 flex-shrink-0 min-w-0">
+        <p className="font-mono text-base font-bold text-gray-900 truncate leading-tight">
           {entry.name}
         </p>
         {entry.clockInTime && (
-          <p className="font-mono text-[9px] text-gray-400 truncate leading-tight">
+          <p className="font-mono text-[11px] text-gray-400 truncate leading-tight">
             {entry.clockInTime}
           </p>
         )}

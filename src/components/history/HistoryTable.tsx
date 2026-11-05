@@ -25,9 +25,9 @@ type SortMode = 'ticket' | 'time' | 'client' | 'manicurist';
 // (Tony 2026-08-30). History keeps the tighter original scale — it's read at
 // a desk, and a full day of rows there benefits from fitting on one screen.
 // Opt-in, so History is untouched by default.
-// 'history' (Tony 2026-11-04) is the History screen: the 'large' table, with
-// the SORT / FILTER toolbar at twice the default size because it was hard to
-// hit and read. Kept separate so the clock-in list's toolbar is unchanged.
+// 'history' (Tony 2026-11-04) is the History screen: rows at the default 12px,
+// matching the TURNS PER MANICURIST rows above it, with the SORT / FILTER
+// toolbar raised from 10px to the same 12px. 20px was tried and was too big.
 type TableSize = 'default' | 'large' | 'history';
 
 const SIZES = {
@@ -52,14 +52,14 @@ const SIZES = {
     icon:    14,
   },
   history: {
-    cell:    'px-4 py-3.5 font-mono text-base',
-    head:    'text-left px-4 py-3.5 font-mono text-base text-gray-900 tracking-wider font-bold',
-    pill:    'font-mono text-xs font-bold rounded-full px-2 py-0.5 tracking-wider',
-    dot:     'w-3.5 h-3.5',
-    badge:   'lg' as const,
-    toolbar: 'font-mono text-xl',
-    control: 'px-4 py-2.5 font-mono text-xl font-semibold',
-    icon:    20,
+    cell:    'px-4 py-3 font-mono text-xs',
+    head:    'text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold',
+    pill:    'font-mono text-[9px] font-bold rounded-full px-1.5 py-0.5 tracking-wider',
+    dot:     'w-2.5 h-2.5',
+    badge:   'sm' as const,
+    toolbar: 'font-mono text-xs',
+    control: 'px-2.5 py-1.5 font-mono text-xs font-semibold',
+    icon:    12,
   },
 };
 
