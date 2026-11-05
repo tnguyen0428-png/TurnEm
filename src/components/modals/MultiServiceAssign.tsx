@@ -18,6 +18,7 @@ import {
   getDistinctServices,
   getEligibleForService,
   getSuggestedForService,
+  getCommittedElsewhereIds,
   ServiceHistory,
   getMinsToNextAppt,
   APPT_PILL_WINDOW_MINS,
@@ -107,6 +108,11 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
     setNotNowRows((prev) => { const s = new Set(prev); s.delete(rowKey); return s; });
   }
 
+  const committedElsewhereIds = useMemo(
+    () => getCommittedElsewhereIds(client, state.queue, state.manicurists, state.appointments, state.completed),
+    [client, state.queue, state.manicurists, state.appointments, state.completed],
+  );
+
   function getEligibleForRow(service: ServiceType, rowKey: string): (Manicurist & { _takenByOther: boolean; _isSuggested: boolean; _isExplicitlyRequested: boolean; _almostDone: boolean })[] {
     const skilled = getEligibleForService(service, state.manicurists, state.salonServices, state.queue);
     const takenByOtherIds = new Set(
@@ -114,7 +120,18 @@ export function MultiServiceAssign({ client }: { client: QueueEntry }) {
         .filter(([k, id]) => k !== rowKey && id !== null)
         .map(([, id]) => id as string)
     );
-    const suggested = getSuggestedForService(service, state.manicurists, state.salonServices, takenByOtherIds, state.queue);
+    // Pass over techs owed to a requested client who is waiting or about to
+    // arrive; plain rotation if that leaves nobody. 4th-position services keep
+    // their own fixed-slot rule — dropping a tech would shift the slot.
+    const svcCat = state.salonServices.find((s) => s.name === service);
+    const preferred = svcCat?.isFourthPositionSpecial
+      ? null
+      : getSuggestedForService(
+          service, state.manicurists, state.salonServices,
+          new Set([...takenByOtherIds, ...committedElsewhereIds]), state.queue,
+        );
+    const suggested = preferred
+      ?? getSuggestedForService(service, state.manicurists, state.salonServices, takenByOtherIds, state.queue);
 
     // Do NOT re-query serviceRequests by service name — that would return the same request
     // for every instance of a repeated service, making all rows show the same preferred manicurist.

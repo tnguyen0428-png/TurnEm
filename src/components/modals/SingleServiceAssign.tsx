@@ -13,7 +13,7 @@ import { showSmsToast } from '../shared/SmsToast';
 import type { QueueEntry, ServiceType } from '../../types';
 import { isWaxService, waxRotationCompare } from '../../utils/salonRules';
 import { buildQueueBusyIndex, reconcileBusyFromQueue } from '../../lib/manicuristStatus';
-import { getClientDurationMs, formatServiceList, ServiceHistory, getMinsToNextAppt, APPT_PILL_WINDOW_MINS } from './assignHelpers';
+import { getClientDurationMs, formatServiceList, ServiceHistory, getMinsToNextAppt, APPT_PILL_WINDOW_MINS, getCommittedElsewhereIds } from './assignHelpers';
 
 // Compute the turn_value a queue entry should carry once it's been marked
 // as a customer request for a specific manicurist. Mirrors the convention
@@ -102,7 +102,16 @@ export function SingleServiceAssign({ client }: { client: QueueEntry }) {
     ? baseList.filter(m => requestedIds.has(m.id))
     : baseList;
 
-  const suggestedId = getSuggestedManicurist(client.services, state.manicurists, state.salonServices)?.id ?? null;
+  // Pass over techs owed to a requested client who is waiting or about to
+  // arrive (getCommittedElsewhereIds); plain rotation if that leaves nobody.
+  // 4th-position services keep their fixed-slot rule.
+  const committedElsewhereIds = getCommittedElsewhereIds(
+    client, state.queue, state.manicurists, state.appointments, state.completed,
+  );
+  const suggestedId = (
+    (!is4thSpecial && getSuggestedManicurist(client.services, state.manicurists, state.salonServices, committedElsewhereIds))
+    || getSuggestedManicurist(client.services, state.manicurists, state.salonServices)
+  )?.id ?? null;
 
   function handleWaitForManicurist(manicuristId: string) {
     // User explicitly chose to wait for this manicurist — record an actual

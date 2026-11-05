@@ -219,6 +219,9 @@ export function getMinsToNextAppt(
   includePast = false,
   queue: QueueEntry[] = [],
   completed: CompletedEntry[] = [],
+  /** The client being assigned right now: their own booking is not a claim
+   *  on the tech against themselves. */
+  excludeApptId: string | null = null,
 ): number | null {
   const todayLA = getTodayLA();
   // Current time as minutes-since-midnight in LA.
@@ -270,6 +273,7 @@ export function getMinsToNextAppt(
     if (a.date !== todayLA) continue;
     if (a.status !== 'scheduled' && a.status !== 'checked-in') continue;
     if (handledApptIds.has(a.id)) continue;
+    if (excludeApptId && a.id === excludeApptId) continue;
     // Only honor REQUESTED appointments: ones where the client explicitly
     // asked for this manicurist. Column placements (a.manicuristId, or a
     // serviceRequest without clientRequest=true) are bookings parked under
@@ -301,4 +305,42 @@ export function getMinsToNextAppt(
     }
   }
   return minDelta;
+}
+
+// Techs RECOMMENDED should pass over for `client`: someone else who asked for
+// them by name is already waiting in the queue, or they have a requested
+// appointment inside the pill window (up to APPT_PILL_WINDOW_MINS late — an
+// older one is a probable no-show and should not block her all afternoon).
+//
+// 2026-11-05 1:12 PM: Shana walked in 13 seconds ahead of Kelly Cain, a 1:15
+// booking who requested MIA. MIA was lowest on turns and got RECOMMENDED for
+// Shana's 45-minute Gel Pedicure while Kelly sat waiting for her.
+//
+// A soft rule: callers fall back to plain rotation when it would leave nobody
+// to recommend, and the tech stays in the list to be picked by hand.
+export function getCommittedElsewhereIds(
+  client: QueueEntry,
+  queue: QueueEntry[],
+  manicurists: Manicurist[],
+  appointments: Appointment[],
+  completed: CompletedEntry[],
+): Set<string> {
+  const out = new Set<string>();
+  const clientVisit = client.parentQueueId ?? client.id;
+  for (const q of queue) {
+    if (q.status !== 'waiting') continue;
+    if (q.id === client.id || (q.parentQueueId ?? q.id) === clientVisit) continue;
+    for (const r of q.serviceRequests ?? []) {
+      if (r.clientRequest !== true) continue;
+      for (const id of r.manicuristIds ?? []) out.add(id);
+    }
+    if (q.isRequested && q.requestedManicuristId) out.add(q.requestedManicuristId);
+  }
+  const ownApptId = client.originalAppointment?.id ?? null;
+  for (const m of manicurists) {
+    if (!m.clockedIn || out.has(m.id)) continue;
+    const mins = getMinsToNextAppt(m.id, appointments, true, queue, completed, ownApptId);
+    if (mins !== null && mins < APPT_PILL_WINDOW_MINS && mins > -APPT_PILL_WINDOW_MINS) out.add(m.id);
+  }
+  return out;
 }
