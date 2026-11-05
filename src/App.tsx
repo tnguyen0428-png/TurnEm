@@ -20,6 +20,7 @@ const EditClientModal  = lazy(() => import('./components/modals/EditClientModal'
 const AssignModal      = lazy(() => import('./components/modals/AssignModal'));
 const StaffModal       = lazy(() => import('./components/modals/StaffModal'));
 const AppointmentModal = lazy(() => import('./components/modals/AppointmentModal'));
+const AddAppointmentGate = lazy(() => import('./components/modals/AddAppointmentGate'));
 
 const StaffLoginScreen  = lazy(() => import('./components/staff/StaffLoginScreen'));
 const StaffPortalScreen = lazy(() => import('./components/staff/StaffPortalScreen'));
@@ -85,7 +86,7 @@ function AppContent() {
         {state.modal === 'assignConfirm' && <AssignModal />}
         {state.modal === 'addStaff' && <StaffModal mode="add" />}
         {state.modal === 'editStaff' && <StaffModal mode="edit" />}
-        {state.modal === 'addAppointment' && <AppointmentModal mode="add" />}
+        {state.modal === 'addAppointment' && <AddAppointmentGate />}
         {state.modal === 'editAppointment' && <AppointmentModal mode="edit" />}
       </Suspense>
 
