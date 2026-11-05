@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import HistoryTable from './HistoryTable';
-import { buildInServiceEntries } from '../../lib/todayEntries';
+import { buildInServiceEntries, mergeTodayEntries } from '../../lib/todayEntries';
 import { fetchTicketsForDate, getVisitId } from '../../lib/tickets';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
@@ -202,11 +202,10 @@ export default function HistoryScreen() {
 
   const displayedEntries = viewingPastDay && pastDayEntries !== null
     ? pastDayEntries.filter((e) => !e.voided)
-    : [
-        ...inServiceEntries,
-        ...(state.completed.length > 0 ? state.completed : (todayArchivedEntries ?? []))
-          .filter((e) => !e.voided),
-      ];
+    : mergeTodayEntries(
+        inServiceEntries,
+        state.completed.length > 0 ? state.completed : (todayArchivedEntries ?? []),
+      );
 
   // Ticket # for each row (Tony 2026-11-04: the front desk matches History
   // against the register by ticket number). A row matches a ticket line by

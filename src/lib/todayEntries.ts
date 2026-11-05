@@ -60,8 +60,23 @@ export function buildTodayEntries(
   manicurists: Manicurist[],
   completed: CompletedEntry[],
 ): CompletedEntry[] {
+  return mergeTodayEntries(buildInServiceEntries(queue, manicurists), completed);
+}
+
+// One row per id. A service added on a ticket (`${visit}-add-${staff}`) gets
+// its completed_services row written on ticket SAVE while its queue entry stays
+// live until DONE / checkout, so for that window the same id is both in
+// service and completed — History showed it twice (Lisa Hansen #21 × TAMMY ×
+// Gel Pedicure, 2026-11-05). The live row wins: the tech's card is still BUSY
+// and the book block is still in-service gray. Turn totals already dedupe the
+// same way (recomputeTotalTurns skips a queue entry whose id is completed).
+export function mergeTodayEntries(
+  inService: CompletedEntry[],
+  completed: CompletedEntry[],
+): CompletedEntry[] {
+  const liveIds = new Set(inService.map((e) => e.id));
   return [
-    ...buildInServiceEntries(queue, manicurists),
-    ...completed.filter((e) => !e.voided),
+    ...inService,
+    ...completed.filter((e) => !e.voided && !liveIds.has(e.id)),
   ];
 }
