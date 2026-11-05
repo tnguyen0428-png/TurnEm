@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Clock, User, ChevronDown, CalendarDays, Pencil } from 'lucide-react';
+import { Clock, Hash, User, ChevronDown, CalendarDays, Pencil } from 'lucide-react';
 import Badge, { getTurnBadgeVariant } from '../shared/Badge';
 import type { CompletedEntry } from '../../types';
 
@@ -18,14 +18,17 @@ function groupServices(services: string[]): [string, number][] {
   return Array.from(map.entries());
 }
 
-type SortMode = 'time' | 'client' | 'manicurist';
+type SortMode = 'ticket' | 'time' | 'client' | 'manicurist';
 
 // The queue's CLOCK-IN LIST renders this table at arm's length on the salon
 // tablet and needs it to read at the same size as the turn list above it
 // (Tony 2026-08-30). History keeps the tighter original scale — it's read at
 // a desk, and a full day of rows there benefits from fitting on one screen.
 // Opt-in, so History is untouched by default.
-type TableSize = 'default' | 'large';
+// 'history' (Tony 2026-11-04) is the History screen: the 'large' table, with
+// the SORT / FILTER toolbar at twice the default size because it was hard to
+// hit and read. Kept separate so the clock-in list's toolbar is unchanged.
+type TableSize = 'default' | 'large' | 'history';
 
 const SIZES = {
   default: {
@@ -48,6 +51,16 @@ const SIZES = {
     control: 'px-3 py-2 font-mono text-sm font-semibold',
     icon:    14,
   },
+  history: {
+    cell:    'px-4 py-3.5 font-mono text-base',
+    head:    'text-left px-4 py-3.5 font-mono text-base text-gray-900 tracking-wider font-bold',
+    pill:    'font-mono text-xs font-bold rounded-full px-2 py-0.5 tracking-wider',
+    dot:     'w-3.5 h-3.5',
+    badge:   'lg' as const,
+    toolbar: 'font-mono text-xl',
+    control: 'px-4 py-2.5 font-mono text-xl font-semibold',
+    icon:    20,
+  },
 };
 
 // One row of the table. The pencil opens the edit modal where the user can
@@ -57,10 +70,14 @@ function ServiceRow({
   entry,
   onEdit,
   size,
+  showTicket,
+  ticketNumber,
 }: {
   entry: CompletedEntry;
   onEdit?: (entry: CompletedEntry) => void;
   size: typeof SIZES[TableSize];
+  showTicket: boolean;
+  ticketNumber?: number;
 }) {
   const isVoided = !!entry.voided;
   const isEdited = !!entry.edited;
@@ -77,6 +94,11 @@ function ServiceRow({
         isVoided ? 'bg-gray-50/40 hover:bg-pink-100/60' : 'hover:bg-pink-100/60'
       }`}
     >
+      {showTicket && (
+        <td className={`${size.cell} font-semibold whitespace-nowrap ${ticketNumber != null ? 'text-gray-500' : 'text-gray-300'}`}>
+          {ticketNumber != null ? `#${ticketNumber}` : '—'}
+        </td>
+      )}
       <td className={`${size.cell} font-semibold ${isVoided ? 'text-gray-400' : 'text-gray-900'}`}>
         <div className="flex items-center gap-2 flex-wrap">
           <span>{entry.clientName}</span>
@@ -157,11 +179,15 @@ interface HistoryTableProps {
   entries: CompletedEntry[];
   onEdit?: (entry: CompletedEntry) => void;
   size?: TableSize;
+  /** Entry id → ticket number. When given, the table shows a # column and a
+   *  TICKET sort (newest ticket first), which becomes the default. */
+  ticketNumbers?: Map<string, number>;
 }
 
-export default function HistoryTable({ entries, onEdit, size: sizeName = 'default' }: HistoryTableProps) {
+export default function HistoryTable({ entries, onEdit, size: sizeName = 'default', ticketNumbers }: HistoryTableProps) {
   const size = SIZES[sizeName];
-  const [sortMode, setSortMode] = useState<SortMode>('time');
+  const showTicket = !!ticketNumbers;
+  const [sortMode, setSortMode] = useState<SortMode>(showTicket ? 'ticket' : 'time');
   const [manicuristFilter, setManicuristFilter] = useState<string>('all');
 
   const manicuristNames = useMemo(() => {
@@ -178,7 +204,12 @@ export default function HistoryTable({ entries, onEdit, size: sizeName = 'defaul
     // they sort sensibly alongside finished work (with the in-progress entry
     // appearing as if "completed now" within the manicurist's section).
     const ts = (c: CompletedEntry) => c.completedAt ?? c.startedAt ?? 0;
-    if (sortMode === 'time') {
+    if (sortMode === 'ticket') {
+      // Highest ticket first; rows with no ticket yet go to the bottom.
+      // Lines on the same ticket stay together, newest first.
+      const tn = (c: CompletedEntry) => ticketNumbers?.get(c.id) ?? -1;
+      list.sort((a, b) => tn(b) - tn(a) || ts(b) - ts(a));
+    } else if (sortMode === 'time') {
       list.sort((a, b) => ts(b) - ts(a));
     } else if (sortMode === 'client') {
       list.sort((a, b) => a.clientName.localeCompare(b.clientName));
@@ -186,7 +217,7 @@ export default function HistoryTable({ entries, onEdit, size: sizeName = 'defaul
       list.sort((a, b) => a.manicuristName.localeCompare(b.manicuristName) || ts(b) - ts(a));
     }
     return list;
-  }, [entries, sortMode, manicuristFilter]);
+  }, [entries, sortMode, manicuristFilter, ticketNumbers]);
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
@@ -194,7 +225,7 @@ export default function HistoryTable({ entries, onEdit, size: sizeName = 'defaul
         <div className="flex items-center gap-1.5">
           <span className={`${size.toolbar} text-gray-400 tracking-wider font-semibold`}>SORT</span>
           <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-            {(['time', 'client', 'manicurist'] as SortMode[]).map((mode) => (
+            {((showTicket ? ['ticket', 'time', 'client', 'manicurist'] : ['time', 'client', 'manicurist']) as SortMode[]).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setSortMode(mode)}
@@ -204,10 +235,11 @@ export default function HistoryTable({ entries, onEdit, size: sizeName = 'defaul
                     : 'text-gray-500 hover:bg-gray-50'
                 }`}
               >
+                {mode === 'ticket' && <Hash size={size.icon} />}
                 {mode === 'time' && <Clock size={size.icon} />}
                 {mode === 'client' && <User size={size.icon} />}
                 {mode === 'manicurist' && <CalendarDays size={size.icon} />}
-                {mode.toUpperCase()}
+                {mode === 'ticket' ? 'TICKET' : mode.toUpperCase()}
               </button>
             ))}
           </div>
@@ -236,6 +268,7 @@ export default function HistoryTable({ entries, onEdit, size: sizeName = 'defaul
         <table className="w-full">
           <thead>
             <tr className="border-b border-gray-100">
+              {showTicket && <th className={size.head}>#</th>}
               <th className={size.head}>CLIENT</th>
               <th className={size.head}>SERVICE</th>
               <th className={size.head}>TURNS</th>
@@ -256,6 +289,8 @@ export default function HistoryTable({ entries, onEdit, size: sizeName = 'defaul
                 entry={entry}
                 onEdit={onEdit}
                 size={size}
+                showTicket={showTicket}
+                ticketNumber={ticketNumbers?.get(entry.id)}
               />
             ))}
           </tbody>

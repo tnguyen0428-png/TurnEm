@@ -11,6 +11,7 @@ import {
 import { useApp } from '../../state/AppContext';
 import HistoryTable from './HistoryTable';
 import { buildInServiceEntries } from '../../lib/todayEntries';
+import { fetchTicketsForDate, getVisitId } from '../../lib/tickets';
 import EmptyState from '../shared/EmptyState';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import { PinVerifyModal } from '../shared/AdminPinGate';
@@ -204,6 +205,44 @@ export default function HistoryScreen() {
         ...(state.completed.length > 0 ? state.completed : (todayArchivedEntries ?? []))
           .filter((e) => !e.voided),
       ];
+
+  // Ticket # for each row (Tony 2026-11-04: the front desk matches History
+  // against the register by ticket number). A row matches a ticket line by
+  // its exact queue-entry id first; split children whose line was re-keyed
+  // fall back to the visit id. Voided tickets only fill gaps, so a re-rung
+  // visit shows its live ticket. Refetched whenever the rows change, which
+  // covers check-ins, splits, and checkouts without a separate subscription.
+  const ticketDate = viewingPastDay && selectedDate ? selectedDate : today;
+  const rowKey = displayedEntries.map((e) => e.id).join('|');
+  const [ticketNumbers, setTicketNumbers] = useState<Map<string, number>>(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    void fetchTicketsForDate(ticketDate, 'all').then((tickets) => {
+      if (cancelled) return;
+      const byEntry = new Map<string, number>();
+      const byVisit = new Map<string, number>();
+      const ordered = [
+        ...tickets.filter((t) => t.status === 'voided'),
+        ...tickets.filter((t) => t.status !== 'voided'),
+      ];
+      for (const t of ordered) {
+        const ids = [t.queueEntryId, ...t.items.map((i) => i.queueEntryId)];
+        for (const id of ids) {
+          if (!id) continue;
+          byEntry.set(id, t.ticketNumber);
+          byVisit.set(getVisitId(id), t.ticketNumber);
+        }
+      }
+      const out = new Map<string, number>();
+      for (const e of displayedEntries) {
+        const n = byEntry.get(e.id) ?? byVisit.get(getVisitId(e.id));
+        if (n != null) out.set(e.id, n);
+      }
+      setTicketNumbers(out);
+    });
+    return () => { cancelled = true; };
+    // displayedEntries is rebuilt every render; rowKey is its stable identity.
+  }, [ticketDate, rowKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Per-manicurist turn totals.
   //
@@ -598,6 +637,8 @@ export default function HistoryScreen() {
           <HistoryTable
             entries={displayedEntries}
             onEdit={!viewingPastDay ? setEditingEntry : undefined}
+            ticketNumbers={ticketNumbers}
+            size="history"
           />
         )}
       </DndContext>
