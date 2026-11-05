@@ -40,6 +40,7 @@ const SIZES = {
     toolbar: 'font-mono text-[10px]',
     control: 'px-2.5 py-1.5 font-mono text-[10px] font-semibold',
     icon:    10,
+    name:    '',
   },
   large: {
     cell:    'px-4 py-3.5 font-mono text-base',
@@ -50,6 +51,7 @@ const SIZES = {
     toolbar: 'font-mono text-sm',
     control: 'px-3 py-2 font-mono text-sm font-semibold',
     icon:    14,
+    name:    '',
   },
   history: {
     cell:    'px-4 py-3 font-mono text-xs',
@@ -60,6 +62,9 @@ const SIZES = {
     toolbar: 'font-mono text-xs',
     control: 'px-2.5 py-1.5 font-mono text-xs font-semibold',
     icon:    12,
+    // Client name stays at 16px so it's readable across the desk (Tony
+    // 2026-11-04) while the rest of the row matches the turns list at 12px.
+    name:    'text-base',
   },
 };
 
@@ -101,7 +106,7 @@ function ServiceRow({
       )}
       <td className={`${size.cell} font-semibold ${isVoided ? 'text-gray-400' : 'text-gray-900'}`}>
         <div className="flex items-center gap-2 flex-wrap">
-          <span>{entry.clientName}</span>
+          <span className={size.name}>{entry.clientName}</span>
           {isInService && (
             <span className={`${size.pill} text-emerald-700 bg-emerald-100 border border-emerald-200`}>
               IN SERVICE

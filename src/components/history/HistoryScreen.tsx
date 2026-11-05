@@ -109,7 +109,7 @@ function SortableTurnsRow({
         />
       </div>
 
-      <span className="font-mono text-xs font-semibold text-gray-700 w-10 text-right flex-shrink-0">
+      <span className="font-mono text-base font-bold text-gray-700 w-12 text-right flex-shrink-0">
         {entry.turns.toFixed(1)}
       </span>
     </div>
