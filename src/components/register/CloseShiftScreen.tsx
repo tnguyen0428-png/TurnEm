@@ -17,6 +17,7 @@ import {
   fetchTicketsForShift,
   parseDollarsToCents,
   updatePayment,
+  updatePaymentMethod,
 } from '../../lib/tickets';
 import type { Manicurist, Payment, PaymentMethod, Shift, Ticket } from '../../types';
 import TicketModal from './TicketModal';
@@ -844,7 +845,9 @@ function PaymentTransactionsTab({
         <p className="font-bebas text-base tracking-widest text-gray-900">{title.toUpperCase()}</p>
         <span className="font-mono text-base text-gray-400">{filtered.length} entries</span>
         {!readOnly && (
-          <span className="font-mono text-base text-pink-600 font-semibold">CLICK AMOUNT TO EDIT</span>
+          <span className="font-mono text-base text-pink-600 font-semibold">
+            CLICK AMOUNT{title.toLowerCase().includes('gift') ? '' : ' OR TYPE'} TO EDIT
+          </span>
         )}
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <label className="flex items-center gap-2">
@@ -924,6 +927,21 @@ function PaymentRow({
     setEditing(false);
   }
 
+  // Cash <-> card swap for tenders rung up under the wrong type. Gift is
+  // excluded because it's tied to a gift card balance.
+  const canSwapMethod = !readOnly && payment.method !== 'gift';
+  async function swapMethod() {
+    if (!canSwapMethod || saving) return;
+    const next = payment.method === 'cash' ? 'visa_mc' : 'cash';
+    const label = next === 'cash' ? 'CASH' : 'CARD';
+    if (!window.confirm(`Change this ${formatMoneyCents(payment.amountCents)} payment (ticket #${payment.ticketNumber}) to ${label}?`)) return;
+    setSaving(true);
+    const ok = await updatePaymentMethod(payment.id, next);
+    setSaving(false);
+    if (ok) onUpdated?.();
+    else window.alert('Could not change payment type. Please try again.');
+  }
+
   return (
     <div className="grid grid-cols-[1fr_100px_90px_70px_140px] gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100">
       <span className="font-mono text-base text-gray-900 truncate">{payment.clientName}</span>
@@ -957,7 +975,19 @@ function PaymentRow({
         </button>
       )}
       <span>
-        <MethodPill method={payment.method} />
+        {canSwapMethod ? (
+          <button
+            type="button"
+            onClick={() => void swapMethod()}
+            disabled={saving}
+            title={`Click to change to ${payment.method === 'cash' ? 'CARD' : 'CASH'}`}
+            className={`rounded-full hover:ring-2 hover:ring-pink-300 ${saving ? 'opacity-50' : ''}`}
+          >
+            <MethodPill method={payment.method} />
+          </button>
+        ) : (
+          <MethodPill method={payment.method} />
+        )}
       </span>
       <span className="font-mono text-base text-gray-700 text-right">#{payment.ticketNumber}</span>
       <span className="font-mono text-base text-gray-700 truncate">{payment.staffName || '—'}</span>

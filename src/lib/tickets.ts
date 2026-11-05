@@ -3413,6 +3413,44 @@ export async function updatePayment(
 }
 
 /**
+ * Switch a recorded payment between cash and card before shift close — for
+ * when a tender was rung up under the wrong type and the drawer won't
+ * balance. Gift payments are excluded (they're tied to a gift card balance).
+ *
+ * Cash → card clears tendered/change (no physical cash changed hands).
+ * Card → cash sets tendered = amount with zero change, so the drawer math
+ * picks up exactly the payment amount.
+ */
+export async function updatePaymentMethod(
+  paymentId: string,
+  newMethod: 'cash' | 'visa_mc',
+): Promise<boolean> {
+  const { data: existing, error: rErr } = await supabase
+    .from('payments')
+    .select('id, method, amount_cents')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (rErr || !existing) {
+    console.error('[tickets] updatePaymentMethod read:', rErr?.message ?? 'not found');
+    return false;
+  }
+  const row = existing as { id: string; method: 'cash' | 'visa_mc' | 'gift'; amount_cents: number };
+  if (row.method === 'gift') return false;
+  if (row.method === newMethod) return true;
+
+  const patch: Record<string, string | number | null> =
+    newMethod === 'cash'
+      ? { method: 'cash', tendered_cents: row.amount_cents, change_cents: 0 }
+      : { method: 'visa_mc', tendered_cents: null, change_cents: 0 };
+  const { error: uErr } = await supabase.from('payments').update(patch).eq('id', paymentId);
+  if (uErr) {
+    console.error('[tickets] updatePaymentMethod update:', uErr.message);
+    return false;
+  }
+  return true;
+}
+
+/**
  * Brute-force dedupe pass: ensure a single-service queue entry has AT MOST
  * one ticket line, and that line's staff matches the entry's current
  * assigned manicurist.
