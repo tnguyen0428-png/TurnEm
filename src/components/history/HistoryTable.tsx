@@ -61,7 +61,7 @@ const SIZES = {
     head:    'text-left px-4 py-3 font-mono text-base text-gray-900 tracking-wider font-bold',
     pill:    'font-mono text-xs font-bold rounded-full px-2 py-0.5 tracking-wider',
     dot:     'w-3.5 h-3.5',
-    badge:   'xl' as const,
+    badge:   'lg' as const,
     toolbar: 'font-mono text-xs',
     control: 'px-2.5 py-1.5 font-mono text-xs font-semibold',
     icon:    12,
