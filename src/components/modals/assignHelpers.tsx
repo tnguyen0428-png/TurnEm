@@ -230,24 +230,39 @@ export function getMinsToNextAppt(
   const nm = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10);
   const nowMins = nh * 60 + nm;
 
-  // Suppress the warning for appointments that are already in motion or
-  // already finished — the manicurist is on it or done with it, no point
-  // flashing "Appt N late" at them. "In motion" = a queue entry that links
-  // back to this appointment (status waiting or inProgress, by way of the
-  // originalAppointment snapshot taken at promote-to-queue time). "Done" =
-  // a non-voided completed_services row whose originalAppointmentId matches.
-  // Mia and Katelyn observed flashing while mid-service / post-DONE on
-  // 2026-05-27 and 2026-05-28; this filter closes both cases.
-  const handledApptIds = new Set<string>();
+  // Suppress the warning once THIS tech is on the appointment or done with it
+  // — no point flashing "Appt N late" at her mid-service / post-DONE (Mia and
+  // Katelyn, 2026-05-27 / 05-28). Links come from the queue entry's
+  // originalAppointment snapshot and completed_services.originalAppointmentId.
+  //
+  // A client who has only checked in (queue entry still WAITING) does NOT
+  // count. That used to clear the pill too, so the moment Kelly Cain checked
+  // in for MIA at 1:12 PM (2026-11-05) the warning vanished and MIA wore
+  // RECOMMENDED for Shana, a walk-in 13 seconds ahead of her. A requested
+  // client waiting in the lobby is the most urgent case for the pill.
+  //
+  // If every linked entry has started or finished and none is still waiting,
+  // the visit went to other techs (or a split is fully under way): handled.
+  const mineApptIds = new Set<string>();
+  const startedApptIds = new Set<string>();
+  const waitingApptIds = new Set<string>();
   for (const q of queue) {
-    if ((q.status === 'inProgress' || q.status === 'waiting') && q.originalAppointment?.id) {
-      handledApptIds.add(q.originalAppointment.id);
+    const id = q.originalAppointment?.id;
+    if (!id) continue;
+    if (q.status === 'waiting') waitingApptIds.add(id);
+    if (q.status === 'inProgress') {
+      startedApptIds.add(id);
+      if (q.assignedManicuristId === manicuristId) mineApptIds.add(id);
     }
   }
   for (const c of completed) {
-    if (!c.voided && c.originalAppointmentId) {
-      handledApptIds.add(c.originalAppointmentId);
-    }
+    if (c.voided || !c.originalAppointmentId) continue;
+    startedApptIds.add(c.originalAppointmentId);
+    if (c.manicuristId === manicuristId) mineApptIds.add(c.originalAppointmentId);
+  }
+  const handledApptIds = new Set<string>(mineApptIds);
+  for (const id of startedApptIds) {
+    if (!waitingApptIds.has(id)) handledApptIds.add(id);
   }
 
   let minDelta: number | null = null;
