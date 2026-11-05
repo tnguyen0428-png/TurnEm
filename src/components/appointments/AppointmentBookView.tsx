@@ -396,6 +396,15 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
       const aid = q.originalAppointment?.id;
       if (aid) m.set(aid, q);
     }
+    // Add-child link: a "+ Add line" entry has no originalAppointment and a
+    // parentQueueId (so the name pass below skips it), but its block id is
+    // always exactly `walkin:${entry.id}`. Without this the block falls through
+    // to checked-in green mid-service and shows the re-queue Q button
+    // (Jonie x Christina, 2026-11-05). Never overrides an existing link.
+    for (const q of state.queue) {
+      const wid = `walkin:${q.id}`;
+      if (!m.has(wid)) m.set(wid, q);
+    }
     // Second pass: soft-match by client name for any of TODAY's appts that
     // still have no entry attached. This catches the case where the appt's
     // status sync to Supabase lagged (block stays scheduled-color even
