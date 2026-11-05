@@ -55,8 +55,8 @@ const SIZES = {
   },
   history: {
     // Every cell at 16px, the client name's size (Tony 2026-11-04: "all these
-    // fonts same size"), service pills included. The SORT / FILTER toolbar
-    // stays at 12px — 20px was too big.
+    // fonts same size"). Service pills one step down at 14px — 16px pills
+    // were out of proportion with the row. SORT / FILTER toolbar at 12px.
     cell:    'px-4 py-3 font-mono text-base',
     head:    'text-left px-4 py-3 font-mono text-base text-gray-900 tracking-wider font-bold',
     pill:    'font-mono text-xs font-bold rounded-full px-2 py-0.5 tracking-wider',
@@ -136,7 +136,7 @@ function ServiceRow({
               <span key={s} className="inline-flex items-center gap-1">
                 {wasRequested && (
                   <span className={`inline-flex items-center justify-center rounded-full bg-red-500 text-white font-bold ${
-                    size.badge === 'xl' ? 'w-6 h-6 text-sm' : size.badge === 'lg' ? 'w-5 h-5 text-xs' : 'w-4 h-4 text-[9px]'
+                    size.badge === 'lg' ? 'w-5 h-5 text-xs' : 'w-4 h-4 text-[9px]'
                   }`}>
                     R
                   </span>
