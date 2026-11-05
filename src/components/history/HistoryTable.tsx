@@ -54,17 +54,18 @@ const SIZES = {
     name:    '',
   },
   history: {
-    cell:    'px-4 py-3 font-mono text-xs',
-    head:    'text-left px-4 py-3 font-mono text-xs text-gray-900 tracking-wider font-bold',
-    pill:    'font-mono text-[9px] font-bold rounded-full px-1.5 py-0.5 tracking-wider',
-    dot:     'w-2.5 h-2.5',
-    badge:   'sm' as const,
+    // Every cell at 16px, the client name's size (Tony 2026-11-04: "all these
+    // fonts same size"), service pills included. The SORT / FILTER toolbar
+    // stays at 12px — 20px was too big.
+    cell:    'px-4 py-3 font-mono text-base',
+    head:    'text-left px-4 py-3 font-mono text-base text-gray-900 tracking-wider font-bold',
+    pill:    'font-mono text-xs font-bold rounded-full px-2 py-0.5 tracking-wider',
+    dot:     'w-3.5 h-3.5',
+    badge:   'xl' as const,
     toolbar: 'font-mono text-xs',
     control: 'px-2.5 py-1.5 font-mono text-xs font-semibold',
     icon:    12,
-    // Client name stays at 16px so it's readable across the desk (Tony
-    // 2026-11-04) while the rest of the row matches the turns list at 12px.
-    name:    'text-base',
+    name:    '',
   },
 };
 
@@ -135,7 +136,7 @@ function ServiceRow({
               <span key={s} className="inline-flex items-center gap-1">
                 {wasRequested && (
                   <span className={`inline-flex items-center justify-center rounded-full bg-red-500 text-white font-bold ${
-                    size.badge === 'lg' ? 'w-5 h-5 text-xs' : 'w-4 h-4 text-[9px]'
+                    size.badge === 'xl' ? 'w-6 h-6 text-sm' : size.badge === 'lg' ? 'w-5 h-5 text-xs' : 'w-4 h-4 text-[9px]'
                   }`}>
                     R
                   </span>
