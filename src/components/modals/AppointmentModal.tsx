@@ -178,6 +178,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       notes: string;
       permanentNote: boolean;
     };
+    // Set only when an EXISTING appointment is being moved to another day.
+    // CONFIRM dispatches this UPDATE instead of ADDing pendingAppts (which
+    // then holds the moved booking purely for the ghost preview). fromDate
+    // is the day it is leaving, shown on the recap.
+    pendingUpdate?: {
+      id: string;
+      allowDroppingBackedServices: boolean;
+      updates: Partial<Appointment>;
+      fromDate: string;
+    };
   }>(null);
   // Pre-fill name + phone from the appointment draft. Used when the
   // BOOK APPT button on the ticket modal opens this flow — the customer's
@@ -1091,29 +1101,92 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       }
     }
 
+    // Name a tech ONLY for a client request. requestedManicuristIds is
+    // populated only when clientRequest is true (see where serviceRequests is
+    // built below, and the reload at ~424), so a non-empty list IS the
+    // request test.
+    //
+    // The old `?? appointmentManicuristId` fallback is why this was wrong: a
+    // non-request line still gets a column placement — auto-assigned, or
+    // picked by the receptionist — but that placement is not a promise. The
+    // queue hands the client to whoever is free, and stripping manicuristIds
+    // from non-request entries is exactly what the book already does on the
+    // way to the queue. Naming that tech in the recap read as a commitment
+    // the booking never made (Tony 2026-08-28).
+    const serviceLines = selectedServices.map((s) => {
+      const mId = s.requestedManicuristIds[0] ?? null;
+      const staffName = mId
+        ? (state.manicurists.find((m) => m.id === mId)?.name ?? '?')
+        : 'Unassigned';
+      return { service: s.serviceName as string, staffName };
+    });
+    const staff = appointmentManicuristId
+      ? state.manicurists.find((m) => m.id === appointmentManicuristId)?.name ?? ''
+      : '';
+
     if (mode === 'edit' && editing) {
       const editingReceptionistId = state.appointmentDraft?.editingReceptionistId ?? null;
+      const updates: Partial<Appointment> = {
+        clientName: name,
+        clientPhone: clientPhone.trim(),
+        service: services[0],
+        services,
+        serviceRequests,
+        manicuristId: appointmentManicuristId,
+        date,
+        time,
+        notes: notes.trim(),
+        sameTime: autoPerService && selectedServices.length > 1 ? true : sameTime,
+        partyId,
+        caution,
+        lastEditedByReceptionistId: editingReceptionistId,
+      };
+      // Moving to another day gets the same confirm step as a new booking.
+      // Saving straight away closed the form, and closing the form puts the
+      // book back on the day it was opened from — so the receptionist never
+      // saw where the appointment landed (Tony 2026-11-11). Staged, not
+      // saved: the form stays mounted (so the book stays on the new day) and
+      // CONFIRM below dispatches the update.
+      if (date !== editing.date) {
+        const receptionist = editingReceptionistId
+          ? state.manicurists.find((m) => m.id === editingReceptionistId)
+          : null;
+        const moved: Appointment = { ...editing, ...updates };
+        setRecap({
+          appointmentId: editing.id,
+          clientName: name,
+          services: services as string[],
+          date,
+          time,
+          staffName: staff,
+          serviceLines,
+          receptionistName: receptionist?.name ?? '',
+          pendingAppts: [moved],
+          pendingCustomer: {
+            firstName: clientFirstName,
+            lastName: clientLastName,
+            phone: clientPhone,
+            notes: notes.trim(),
+            permanentNote,
+          },
+          pendingUpdate: {
+            id: editing.id,
+            allowDroppingBackedServices,
+            updates,
+            fromDate: editing.date,
+          },
+        });
+        dispatch({ type: 'SET_PENDING_APPOINTMENT_PREVIEW', appointments: [moved] });
+        moveBookToDate(date);
+        return;
+      }
       dispatch({
         type: 'UPDATE_APPOINTMENT',
         id: editing.id,
         // Only ever true when the receptionist was shown the on-the-floor
         // work above and explicitly confirmed the removal.
         allowDroppingBackedServices,
-        updates: {
-          clientName: name,
-          clientPhone: clientPhone.trim(),
-          service: services[0],
-          services,
-          serviceRequests,
-          manicuristId: appointmentManicuristId,
-          date,
-          time,
-          notes: notes.trim(),
-          sameTime: autoPerService && selectedServices.length > 1 ? true : sameTime,
-          partyId,
-          caution,
-          lastEditedByReceptionistId: editingReceptionistId,
-        },
+        updates,
       });
     } else {
       // New booking — the receptionist already authenticated when they
@@ -1259,28 +1332,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const receptionist = receptionistId
         ? state.manicurists.find((m) => m.id === receptionistId)
         : null;
-      const staff = appointmentManicuristId
-        ? state.manicurists.find((m) => m.id === appointmentManicuristId)?.name ?? ''
-        : '';
-      // Name a tech ONLY for a client request. requestedManicuristIds is
-      // populated only when clientRequest is true (see where serviceRequests is
-      // built below, and the reload at ~424), so a non-empty list IS the
-      // request test.
-      //
-      // The old `?? appointmentManicuristId` fallback is why this was wrong: a
-      // non-request line still gets a column placement — auto-assigned, or
-      // picked by the receptionist — but that placement is not a promise. The
-      // queue hands the client to whoever is free, and stripping manicuristIds
-      // from non-request entries is exactly what the book already does on the
-      // way to the queue. Naming that tech in the recap read as a commitment
-      // the booking never made (Tony 2026-08-28).
-      const serviceLines = selectedServices.map((s) => {
-        const mId = s.requestedManicuristIds[0] ?? null;
-        const staffName = mId
-          ? (state.manicurists.find((m) => m.id === mId)?.name ?? '?')
-          : 'Unassigned';
-        return { service: s.serviceName as string, staffName };
-      });
       setRecap({
         appointmentId: appt.id,
         clientName: name,
@@ -1314,6 +1365,13 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
 
     // Edit path: dispatch already ran above. Sync the customer profile and
     // close the modal.
+    syncEditedCustomer();
+    handleClose();
+  }
+
+  // Customer-profile write for a saved edit. Shared by the same-day SAVE above
+  // and the CONFIRM of a moved appointment.
+  function syncEditedCustomer() {
     void (async () => {
       const cid = await upsertCustomerFromIntake({
         firstName: clientFirstName,
@@ -1327,8 +1385,6 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           .eq('id', cid);
       }
     })();
-
-    handleClose();
   }
 
   // Move the appointment book behind this modal to whatever date was just
@@ -1392,6 +1448,19 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           // the modal. Nothing was written to state before this point so
           // backing out via EDIT leaves no orphan rows.
           const r = recap;
+          if (r.pendingUpdate) {
+            // A moved appointment: pendingAppts is only the ghost preview.
+            dispatch({
+              type: 'UPDATE_APPOINTMENT',
+              id: r.pendingUpdate.id,
+              allowDroppingBackedServices: r.pendingUpdate.allowDroppingBackedServices,
+              updates: r.pendingUpdate.updates,
+            });
+            syncEditedCustomer();
+            setRecap(null);
+            handleClose();
+            return;
+          }
           for (const appt of r.pendingAppts) {
             dispatch({ type: 'ADD_APPOINTMENT', appointment: appt });
           }
@@ -2606,10 +2675,12 @@ function BookingRecapModal({
       notes: string;
       permanentNote: boolean;
     };
+    pendingUpdate?: { fromDate: string };
   };
   onClose: () => void;
   onEdit: () => void;
 }) {
+  const movedFrom = info.pendingUpdate?.fromDate ?? null;
   function formatDate(iso: string): string {
     const d = new Date(iso + 'T12:00:00');
     return new Intl.DateTimeFormat('en-US', {
@@ -2738,10 +2809,12 @@ function BookingRecapModal({
         <div className="space-y-3">
           <div className="space-y-1.5">
             <h2 className="font-bebas text-4xl leading-tight tracking-[3px] text-gray-900">
-              CONFIRM THIS BOOKING
+              {movedFrom ? 'CONFIRM THIS MOVE' : 'CONFIRM THIS BOOKING'}
             </h2>
             <p className="font-mono text-base leading-relaxed text-sky-700">
-              Check the highlighted block in the book behind.
+              {movedFrom
+                ? `Moving from ${formatDate(movedFrom)}. Check the highlighted block in the book behind.`
+                : 'Check the highlighted block in the book behind.'}
             </p>
           </div>
 
@@ -2775,7 +2848,7 @@ function BookingRecapModal({
 
           {info.receptionistName && (
             <p className="font-mono text-base leading-relaxed text-gray-400">
-              booked by {info.receptionistName}
+              {movedFrom ? 'moved' : 'booked'} by {info.receptionistName}
             </p>
           )}
         </div>
@@ -2793,7 +2866,7 @@ function BookingRecapModal({
             onClick={onClose}
             className="px-8 py-3.5 rounded-lg bg-sky-400 hover:bg-sky-500 text-white font-mono text-base font-bold tracking-wider transition-colors"
           >
-            CONFIRM APPOINTMENT
+            {movedFrom ? 'CONFIRM MOVE' : 'CONFIRM APPOINTMENT'}
           </button>
         </div>
       </div>
