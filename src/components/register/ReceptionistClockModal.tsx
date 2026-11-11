@@ -40,7 +40,6 @@ function formatTime(ms: number): string {
   }).format(new Date(ms));
 }
 
-const MS_DAY = 24 * 60 * 60 * 1000;
 const MS_HOUR = 60 * 60 * 1000;
 // Overtime thresholds — same California-style rule the admin Receptionist
 // Hours report uses, so the two never disagree: daily OT past 8h, weekly OT
@@ -81,11 +80,20 @@ function startOfWeekSun(ms: number): number {
   return d.getTime();
 }
 
+// Calendar-day step. Not `ms + n * 24h`: a daylight-saving week has a 25-
+// or 23-hour day, so fixed hours land on the wrong date (the Nov 1 2026 week
+// read Nov 1 – Nov 6 in the Blueprint report, Tony 2026-11-11).
+function addDays(ms: number, n: number): number {
+  const d = new Date(ms);
+  d.setDate(d.getDate() + n);
+  return d.getTime();
+}
+
 // "Jun 14 – Jun 20" for the week beginning weekStartMs.
 function weekRangeLabel(weekStartMs: number): string {
   const fmt = (ms: number) =>
     new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(ms));
-  return `${fmt(weekStartMs)} – ${fmt(weekStartMs + 6 * MS_DAY)}`;
+  return `${fmt(weekStartMs)} – ${fmt(addDays(weekStartMs, 6))}`;
 }
 
 // ms duration → "8h 05m" / "—" when unknown.
@@ -130,7 +138,7 @@ export default function ReceptionistClockModal({
   // Pull the receptionist's events back to the start of LAST week (Sunday) —
   // enough for the this-week / last-week toggle, nothing more.
   async function loadEvents(staffId: string) {
-    const since = startOfWeekSun(Date.now()) - 7 * MS_DAY;
+    const since = addDays(startOfWeekSun(Date.now()), -7);
     const rows = await getEventsForStaff(staffId, since);
     setEvents(rows);
   }
@@ -351,8 +359,8 @@ function WeekHoursPanel({
   const [offset, setOffset] = useState(0); // 0 = this week, 1 = last week
 
   const thisWeekStart = startOfWeekSun(Date.now());
-  const weekStart = thisWeekStart - offset * 7 * MS_DAY;
-  const weekEnd = weekStart + 7 * MS_DAY;
+  const weekStart = addDays(thisWeekStart, -7 * offset);
+  const weekEnd = addDays(weekStart, 7);
 
   const sessions: ClockSession[] = events
     ? sessionsFromEvents(events).filter((s) => s.staffId === staffId)

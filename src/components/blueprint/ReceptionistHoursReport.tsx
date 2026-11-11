@@ -48,8 +48,17 @@ function startOfWeek(d: Date): number {
   x.setHours(0, 0, 0, 0);
   return x.getTime();
 }
+// Calendar-day arithmetic. Never `ms + n * 24h`: a daylight-saving week has a
+// 25- or 23-hour day, so adding fixed hours lands on the wrong date. The week
+// of Nov 1 2026 (DST ended that Sunday) came out as Nov 1 – Nov 6 and dropped
+// Saturday's shifts entirely (Tony 2026-11-11).
+function addDays(ms: number, n: number): number {
+  const x = new Date(ms);
+  x.setDate(x.getDate() + n);
+  return x.getTime();
+}
 function endOfWeek(d: Date): number {
-  return endOfDay(new Date(startOfWeek(d) + 6 * 24 * 60 * 60 * 1000));
+  return endOfDay(new Date(addDays(startOfWeek(d), 6)));
 }
 function startOfMonth(d: Date): number {
   const x = new Date(d.getFullYear(), d.getMonth(), 1);
@@ -96,7 +105,7 @@ function formatDuration(ms: number | null): string {
 // "Jun 1 – Jun 7, 2026" for the week beginning weekStartMs (Sun → Sat).
 function formatWeekRange(weekStartMs: number): string {
   const start = new Date(weekStartMs);
-  const end = new Date(weekStartMs + 6 * 24 * 60 * 60 * 1000);
+  const end = new Date(addDays(weekStartMs, 6));
   const startStr = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(start);
   const endStr = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(end);
   return `${startStr} – ${endStr}`;
@@ -429,7 +438,7 @@ export default function ReceptionistHoursReport() {
             <label className="block font-mono text-[10px] font-bold text-gray-400 tracking-wider mb-1">WEEK</label>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setWeekAnchor((a) => a - 7 * 24 * 60 * 60 * 1000)}
+                onClick={() => setWeekAnchor((a) => addDays(a, -7))}
                 className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
                 title="Previous week"
               >
@@ -439,7 +448,7 @@ export default function ReceptionistHoursReport() {
                 {formatWeekRange(from)}
               </span>
               <button
-                onClick={() => setWeekAnchor((a) => a + 7 * 24 * 60 * 60 * 1000)}
+                onClick={() => setWeekAnchor((a) => addDays(a, 7))}
                 className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
                 title="Next week"
               >
