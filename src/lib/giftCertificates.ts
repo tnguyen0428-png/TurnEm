@@ -35,6 +35,15 @@ export interface GiftCertificate {
   redeemedTicketNumber: number | null;
   redeemedClientName: string | null;
   redeemedAmountCents: number | null;
+
+  /** All uses, not just the first. */
+  usedCents: number;
+  balanceCents: number;
+  redemptionCount: number;
+  lastRedeemedDate: string | null;
+  /** Loaded by the 2026-05-18 SalonBiz import: the "sale" is the balance it
+   *  carried, so its date/buyer are not a real purchase. */
+  importedFromSalonBiz: boolean;
 }
 
 interface DbSaleRow {
@@ -63,6 +72,7 @@ interface DbRedemptionRow {
     ticket_number: number;
     business_date: string;
     client_name: string;
+    status?: string;
   } | null;
 }
 
@@ -121,7 +131,7 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
     for (let offset = 0; ; offset += PAGE) {
       const { data, error } = await supabase
         .from('payments')
-        .select('id, gift_card_code, amount_cents, captured_at, ticket_id, tickets(id, ticket_number, business_date, client_name)')
+        .select('id, gift_card_code, amount_cents, captured_at, ticket_id, tickets(id, ticket_number, business_date, client_name, status)')
         .eq('method', 'gift')
         .range(offset, offset + PAGE - 1);
       if (error) {
@@ -139,13 +149,22 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
   // Index redemptions by normalized serial. Keep the earliest redemption
   // when more than one row claims the same serial (rare data-entry typo).
   const redemptionByNorm = new Map<string, DbRedemptionRow>();
+  // Totals across EVERY use of a serial (a card can be used more than once).
+  const usesByNorm = new Map<string, { cents: number; count: number; lastDate: string | null }>();
   for (const r of redemptions) {
     const norm = normalizeSerial(r.gift_card_code);
     if (!norm) continue;
+    if (r.tickets?.status === 'voided') continue;
     const existing = redemptionByNorm.get(norm);
     if (!existing || new Date(r.captured_at) < new Date(existing.captured_at)) {
       redemptionByNorm.set(norm, r);
     }
+    const agg = usesByNorm.get(norm) ?? { cents: 0, count: 0, lastDate: null };
+    agg.cents += Number(r.amount_cents || 0);
+    agg.count += 1;
+    const d = r.tickets?.business_date ?? null;
+    if (d && (!agg.lastDate || d > agg.lastDate)) agg.lastDate = d;
+    usesByNorm.set(norm, agg);
   }
 
   const out: GiftCertificate[] = [];
@@ -155,7 +174,14 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
     if (!ticket) continue; // orphaned sale line — skip
     if (ticket.status === 'voided') continue; // voided sale — not a real cert, serial is free
     const redemption = norm ? redemptionByNorm.get(norm) ?? null : null;
+    const agg = norm ? usesByNorm.get(norm) : undefined;
+    const usedCents = agg?.cents ?? 0;
     out.push({
+      usedCents,
+      balanceCents: Math.max(0, s.ext_price_cents - usedCents),
+      redemptionCount: agg?.count ?? 0,
+      lastRedeemedDate: agg?.lastDate ?? null,
+      importedFromSalonBiz: (ticket.client_name ?? '') === SALONBIZ_IMPORT_CLIENT,
       serial: display,
       normalizedSerial: norm,
       purchaseDate: ticket.business_date,

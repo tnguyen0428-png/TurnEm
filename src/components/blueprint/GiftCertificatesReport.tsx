@@ -74,29 +74,31 @@ export default function GiftCertificatesReport() {
     });
   }, [certs, query]);
 
+  // A search looks across ALL dates — you're looking for a card, not a
+  // period. The date range only applies while the search box is empty.
+  const searching = query.trim().length > 0;
+
   // OPEN list: certs sold in the date range that haven't been redeemed yet.
   const open = useMemo(
     () => queryFiltered.filter(
       (c) => c.redeemedAtMs == null
-        && c.purchaseDate >= range.from
-        && c.purchaseDate <= range.to,
+        && (searching || (c.purchaseDate >= range.from && c.purchaseDate <= range.to)),
     ),
-    [queryFiltered, range.from, range.to],
+    [queryFiltered, range.from, range.to, searching],
   );
 
   // USED list: certs redeemed in the date range, regardless of when sold.
   const used = useMemo(
     () => queryFiltered.filter(
       (c) => c.redeemedDate != null
-        && c.redeemedDate >= range.from
-        && c.redeemedDate <= range.to,
+        && (searching || (c.redeemedDate >= range.from && c.redeemedDate <= range.to)),
     ),
-    [queryFiltered, range.from, range.to],
+    [queryFiltered, range.from, range.to, searching],
   );
 
   const summary = useMemo(() => {
     const openValue = open.reduce((s, c) => s + c.valueCents, 0);
-    const usedValue = used.reduce((s, c) => s + (c.redeemedAmountCents ?? c.valueCents), 0);
+    const usedValue = used.reduce((s, c) => s + c.usedCents, 0);
     return { openValue, usedValue, openCount: open.length, usedCount: used.length };
   }, [open, used]);
 
@@ -156,7 +158,9 @@ export default function GiftCertificatesReport() {
           )}
         </label>
         <span className="font-mono text-[10px] text-gray-400 tracking-wider">
-          OPEN filtered by purchase date · USED filtered by redemption date
+          {searching
+            ? 'Searching ALL dates — the date range is ignored while searching'
+            : 'OPEN filtered by purchase date · USED filtered by redemption date'}
         </span>
       </div>
 
@@ -184,6 +188,7 @@ export default function GiftCertificatesReport() {
         certs={open}
         kind="open"
         emptyText={loading ? 'Loading…' : query ? 'No open certificates match the search.' : 'No open gift certificates.'}
+        onPick={setQuery}
       />
 
       <CertList
@@ -192,19 +197,22 @@ export default function GiftCertificatesReport() {
         certs={used}
         kind="used"
         emptyText={loading ? 'Loading…' : query ? 'No used certificates match the search.' : 'No used gift certificates yet.'}
+        onPick={setQuery}
       />
     </div>
   );
 }
 
 function CertList({
-  title, subtitle, certs, kind, emptyText,
+  title, subtitle, certs, kind, emptyText, onPick,
 }: {
   title: string;
   subtitle: string;
   certs: GiftCertificate[];
   kind: 'open' | 'used';
   emptyText: string;
+  /** Clicking a row opens that card's history. */
+  onPick: (serial: string) => void;
 }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
@@ -216,40 +224,52 @@ function CertList({
         <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">{emptyText}</div>
       ) : (
         <div>
-          <div className="grid grid-cols-[110px_120px_1fr_110px_120px_1fr_110px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+          <div className="grid grid-cols-[120px_120px_1fr_100px_100px_140px_1fr] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
             <span>Serial</span>
-            <span>Purchased</span>
-            <span>Purchaser</span>
-            <span className="text-right">Value</span>
+            <span>Sold</span>
+            <span>Bought by</span>
+            <span className="text-right">Amount</span>
+            <span className="text-right">Balance</span>
             <span>Redeemed</span>
-            <span>Redeemer</span>
-            <span className="text-right">Used</span>
+            <span>Redeemed by</span>
           </div>
           {certs.map((c, idx) => (
-            <div
+            <button
+              type="button"
               key={`${c.purchaseTicketId}:${c.normalizedSerial || c.serial}`}
-              className={`grid grid-cols-[110px_120px_1fr_110px_120px_1fr_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
+              onClick={() => onPick(c.serial)}
+              title="Show this certificate's history"
+              className={`w-full text-left grid grid-cols-[120px_120px_1fr_100px_100px_140px_1fr] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
                 idx % 2 === 1 ? 'bg-gray-50' : ''
               }`}
             >
               <span className="font-mono text-sm font-bold text-gray-800">#{c.serial || '—'}</span>
-              <span className="font-mono text-xs text-gray-700">{formatDate(c.purchaseDate)}</span>
+              {/* SalonBiz imports: the 5/18 "sale" is only the balance carried
+                  over, so don't present it as a purchase date or buyer. */}
+              <span className="font-mono text-xs text-gray-700">
+                {c.importedFromSalonBiz ? 'SalonBiz' : formatDate(c.purchaseDate)}
+              </span>
               <span className="font-mono text-sm text-gray-800 truncate" title={c.purchaseClientName}>
-                {c.purchaseClientName}
+                {c.importedFromSalonBiz ? '—' : c.purchaseClientName}
               </span>
               <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoneyCents(c.valueCents)}</span>
+              <span className={`font-mono text-sm font-bold text-right ${c.balanceCents > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                {formatMoneyCents(c.balanceCents)}
+              </span>
               <span className="font-mono text-xs text-gray-700">
-                {kind === 'open' ? '—' : formatDate(c.redeemedDate)}
+                {kind === 'open'
+                  ? '—'
+                  : <>
+                      {formatDate(c.lastRedeemedDate ?? c.redeemedDate)}
+                      {c.redemptionCount > 1 && (
+                        <span className="text-gray-400"> · {c.redemptionCount} uses</span>
+                      )}
+                    </>}
               </span>
               <span className="font-mono text-sm text-gray-800 truncate" title={c.redeemedClientName ?? ''}>
                 {kind === 'open' ? '—' : (c.redeemedClientName || '—')}
               </span>
-              <span className="font-mono text-sm text-gray-700 text-right">
-                {kind === 'open'
-                  ? '—'
-                  : formatMoneyCents(c.redeemedAmountCents ?? 0)}
-              </span>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -318,11 +338,11 @@ function CertHistoryPanel({
     const events: Ev[] = [
       ...history.loads.map((l, i) => ({
         key: `load-${i}`,
-        date: l.date,
+        // A SalonBiz card's 5/18 date is the import, not a purchase — show
+        // "SalonBiz" there instead of a date (Tony, 2026-11-23).
+        date: l.importedFromSalonBiz ? null : l.date,
         sort: `${l.date ?? ''}-0`,
-        what: l.importedFromSalonBiz
-          ? <span>Imported from SalonBiz <span className="text-gray-400">(balance at the time)</span></span>
-          : 'Sold',
+        what: l.importedFromSalonBiz ? 'SalonBiz card — balance carried over' : 'Sold',
         ticket: l.importedFromSalonBiz ? '—' : (l.ticketNumber != null ? `#${l.ticketNumber}` : '—'),
         client: l.importedFromSalonBiz ? '—' : (l.clientName || 'Walk-in'),
         amount: <span className="text-emerald-600">+{formatMoneyCents(l.amountCents)}</span>,
@@ -356,7 +376,7 @@ function CertHistoryPanel({
             className={`grid grid-cols-[120px_1fr_80px_1fr_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${e.voided ? 'opacity-50 line-through' : ''}`}
             title={e.voided ? 'On a voided ticket — not counted' : undefined}
           >
-            <span className="font-mono text-xs text-gray-700">{formatDate(e.date)}</span>
+            <span className="font-mono text-xs text-gray-700">{e.date === null && e.key.startsWith('load') ? 'SalonBiz' : formatDate(e.date)}</span>
             <span className="font-mono text-xs text-gray-800">{e.what}</span>
             <span className="font-mono text-xs text-gray-700">{e.ticket}</span>
             <span className="font-mono text-sm text-gray-800 truncate">{e.client}</span>
