@@ -2,7 +2,7 @@
 // (Closed-shift viewing wired in.)
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, AlertTriangle, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer, CalendarPlus, X } from 'lucide-react';
+import { Receipt, ChevronLeft, ChevronRight, Calendar, Lock, AlertTriangle, Unlock, RefreshCw, Sun, Moon, ArrowUp, ArrowDown, Printer, CalendarPlus, X, Gift } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import { supabase } from '../../lib/supabase';
 import {
@@ -23,6 +23,7 @@ import TicketModal from './TicketModal';
 import OpenShiftModal from './OpenShiftModal';
 import CloseShiftScreen from './CloseShiftScreen';
 import ReceptionistClockModal from './ReceptionistClockModal';
+import GiftCertLookupModal from './GiftCertLookupModal';
 import { printReceipt } from './printReceipt';
 import DatePickerPopover from '../shared/DatePickerPopover';
 import { PinVerifyModal } from '../shared/AdminPinGate';
@@ -244,6 +245,7 @@ export default function RegisterScreen() {
   // keeps the gate meaningful.
   const [pendingViewShift, setPendingViewShift] = useState<Shift | null>(null);
   const [showClockModal, setShowClockModal] = useState(false);
+  const [showGiftLookup, setShowGiftLookup] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey>('time');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -347,10 +349,10 @@ export default function RegisterScreen() {
             <button
               onClick={() => setShowClockModal(true)}
               title="Clock in / Clock out"
-              className="relative flex items-center justify-center h-12 w-12 rounded-lg border border-gray-200 bg-gradient-to-br from-amber-50 to-indigo-50 hover:from-amber-100 hover:to-indigo-100 text-gray-700"
+              className="relative flex items-center justify-center h-12 w-[72px] rounded-lg border border-gray-200 bg-gradient-to-br from-amber-50 to-indigo-50 hover:from-amber-100 hover:to-indigo-100 text-gray-700"
             >
-              <Sun size={20} className="text-amber-500 -mr-1.5" />
-              <Moon size={18} className="text-indigo-500" />
+              <Sun size={30} strokeWidth={2.25} className="text-amber-500 -mr-2" />
+              <Moon size={26} strokeWidth={2.25} className="text-indigo-500" />
             </button>
             {closedShifts.map((cs) => (
               <button
@@ -393,6 +395,14 @@ export default function RegisterScreen() {
               title={needsShiftOpen ? 'Open the shift before ringing up a ticket' : undefined}
               className="h-12 px-4 flex items-center gap-2 rounded-lg border border-yellow-400 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 hover:border-yellow-500 font-mono text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-yellow-50 disabled:hover:border-yellow-400">
               + NEW TICKET
+            </button>
+            <button
+              onClick={() => setShowGiftLookup(true)}
+              title="Gift certificate lookup"
+              aria-label="Gift certificate lookup"
+              className="h-12 w-12 flex items-center justify-center rounded-lg border border-pink-300 bg-pink-50 text-pink-600 hover:bg-pink-100 hover:border-pink-400 transition-colors"
+            >
+              <Gift size={24} strokeWidth={2.25} />
             </button>
           </div>
         </div>
@@ -569,6 +579,7 @@ export default function RegisterScreen() {
           onClosed={() => setViewShift(null)}
         />
       )}
+      {showGiftLookup && <GiftCertLookupModal onClose={() => setShowGiftLookup(false)} />}
       {showClockModal && (
         <ReceptionistClockModal
           receptionists={state.manicurists.filter((m) => m.isReceptionist)}
