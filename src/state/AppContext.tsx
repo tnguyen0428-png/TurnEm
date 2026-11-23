@@ -2495,8 +2495,23 @@ async function syncManicurists(
   onError: (msg: string) => void,
   isTombstoned: (id: string) => boolean = () => false,
 ) {
+  // Save ONLY the columns this device actually changed (KATELYN, 2026-11-23).
+  //
+  // This used to upsert the WHOLE row for any tech with any local change. A
+  // device that had not yet caught up (asleep, flaky wifi, realtime frame
+  // missed) still held the old picture — KATELYN busy with Emily Dewitt —
+  // and the next unrelated change it made for her (a card reorder, a local
+  // turn recompute, a clock-in tweak) re-sent that stale status and
+  // current_client_id along with it, overwriting the "available" the DONE had
+  // just written. Her card sat busy on a finished client for 40 minutes and
+  // the rotation skipped her. A reorder did it to EVERY tech at once, since
+  // the sort index counts as a change for each of them.
+  //
+  // Same lesson as total_turns (see manicuristToRow): a device must only
+  // write what it changed, never re-assert values it merely holds.
   const prevById = new Map(prev.map((m, idx) => [m.id, { m, idx }]));
-  const changed: ReturnType<typeof manicuristToRow>[] = [];
+  const inserts: ReturnType<typeof manicuristToRow>[] = [];
+  const patches: Array<{ id: string; patch: Record<string, unknown> }> = [];
   manicurists.forEach((m, idx) => {
     // Never push an id we just deleted back into the DB — see
     // manicuristTombstonesRef above. Without this, a stale realtime echo
@@ -2504,12 +2519,37 @@ async function syncManicurists(
     // otherwise get faithfully re-saved right here.
     if (isTombstoned(m.id)) return;
     const previous = prevById.get(m.id);
-    if (previous && manicuristUnchanged(previous.m, m, previous.idx, idx)) return;
-    changed.push(manicuristToRow(m, idx));
+    if (!previous) {
+      // A tech this device just added: the whole row is new information.
+      inserts.push(manicuristToRow(m, idx));
+      return;
+    }
+    if (manicuristUnchanged(previous.m, m, previous.idx, idx)) return;
+    const before = manicuristToRow(previous.m, previous.idx) as Record<string, unknown>;
+    const after = manicuristToRow(m, idx) as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+    for (const key of Object.keys(after)) {
+      if (key === 'id') continue;
+      if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) patch[key] = after[key];
+    }
+    // e.g. only totalTurns moved — the DB owns that, nothing to send.
+    if (Object.keys(patch).length > 0) patches.push({ id: m.id, patch });
   });
-  if (changed.length === 0) return;
-  const { error } = await withRetry(() => supabase.from('manicurists').upsert(changed, { onConflict: 'id' }));
-  if (error) { console.error('[syncManicurists] error:', error); onError('Sync failed — data may not be saved. Check connection.'); }
+  if (inserts.length === 0 && patches.length === 0) return;
+
+  const results = await Promise.all([
+    ...(inserts.length > 0
+      ? [withRetry(() => supabase.from('manicurists').upsert(inserts, { onConflict: 'id' }))]
+      : []),
+    ...patches.map(({ id, patch }) =>
+      withRetry(() => supabase.from('manicurists').update(patch).eq('id', id)),
+    ),
+  ]);
+  const failed = results.find((r) => r.error);
+  if (failed?.error) {
+    console.error('[syncManicurists] error:', failed.error);
+    onError('Sync failed — data may not be saved. Check connection.');
+  }
 }
 
 function queueEntryUnchanged(a: QueueEntry, b: QueueEntry): boolean {
