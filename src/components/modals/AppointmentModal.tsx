@@ -13,6 +13,9 @@ import {
   searchCustomers, displayCustomerName, normalizePhone, matchAppointments,
   appointmentStaffLabel, updateCustomer,
 } from '../../lib/customers';
+
+/** The salon's own area code, prefilled on a new booking's phone. */
+const DEFAULT_AREA_CODE_PREFIX = '559-';
 import type { Customer } from '../../types';
 import { useServiceCategories } from '../../hooks/useServiceCategories';
 import { getTodayLA } from '../../utils/time';
@@ -199,7 +202,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   // Combined name used everywhere else in this modal (save payload, display).
   // The two inputs stay the single source of truth.
   const clientName = `${clientFirstName.trim()} ${clientLastName.trim()}`.trim();
-  const [clientPhone, setClientPhone] = useState(_draftName?.clientPhone ?? '');
+  // A new booking starts with the salon's area code filled in, so the desk
+  // only types the last 7 digits; they can clear it for a non-559 number
+  // (Tony, 2026-11-23). An edit keeps whatever the appointment has.
+  const [clientPhone, setClientPhone] = useState(
+    _draftName?.clientPhone || (mode === 'add' ? DEFAULT_AREA_CODE_PREFIX : ''),
+  );
+  // What the phone field actually holds as a number. The prefilled "559-" on
+  // its own is NOT a phone: it must not search customers by "559" (that
+  // matches half the city) or be saved onto the appointment / profile.
+  const phoneValue = normalizePhone(clientPhone).length <= 3 ? '' : clientPhone.trim();
 
   // Debounced live search for existing customer profiles. Pass first/last/phone
   // separately so the search can require BOTH names to match when both are
@@ -208,7 +220,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
   useEffect(() => {
     const fn = clientFirstName.trim();
     const ln = clientLastName.trim();
-    const ph = clientPhone.trim();
+    const ph = phoneValue;
     if (!fn && !ln && normalizePhone(ph).length < 3) { setMatches([]); return; }
     let cancelled = false;
     const handle = setTimeout(async () => {
@@ -216,7 +228,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       if (!cancelled) setMatches(rows);
     }, 200);
     return () => { cancelled = true; clearTimeout(handle); };
-  }, [clientFirstName, clientLastName, clientPhone]);
+  }, [clientFirstName, clientLastName, phoneValue]);
 
   // Drop the pinned match if the form diverges from it.
   useEffect(() => {
@@ -225,9 +237,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       matchedCustomer.firstName === clientFirstName.trim() &&
       matchedCustomer.lastName === clientLastName.trim();
     const samePhone =
-      normalizePhone(matchedCustomer.phone) === normalizePhone(clientPhone);
+      normalizePhone(matchedCustomer.phone) === normalizePhone(phoneValue);
     if (!sameName || !samePhone) setMatchedCustomer(null);
-  }, [matchedCustomer, clientFirstName, clientLastName, clientPhone]);
+  }, [matchedCustomer, clientFirstName, clientLastName, phoneValue]);
 
   function selectCustomer(c: Customer) {
     setClientFirstName(c.firstName);
@@ -1128,7 +1140,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const editingReceptionistId = state.appointmentDraft?.editingReceptionistId ?? null;
       const updates: Partial<Appointment> = {
         clientName: name,
-        clientPhone: clientPhone.trim(),
+        clientPhone: phoneValue,
         service: services[0],
         services,
         serviceRequests,
@@ -1165,7 +1177,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           pendingCustomer: {
             firstName: clientFirstName,
             lastName: clientLastName,
-            phone: clientPhone,
+            phone: phoneValue,
             notes: notes.trim(),
             permanentNote,
           },
@@ -1196,7 +1208,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const appt: Appointment = {
         id: crypto.randomUUID(),
         clientName: name,
-        clientPhone: clientPhone.trim(),
+        clientPhone: phoneValue,
         service: services[0],
         services,
         serviceRequests,
@@ -1348,7 +1360,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
         pendingCustomer: {
           firstName: clientFirstName,
           lastName: clientLastName,
-          phone: clientPhone,
+          phone: phoneValue,
           notes: notes.trim(),
           permanentNote,
         },
@@ -1376,7 +1388,7 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
       const cid = await upsertCustomerFromIntake({
         firstName: clientFirstName,
         lastName: clientLastName,
-        phone: clientPhone,
+        phone: phoneValue,
       });
       if (cid && permanentNote) {
         await supabase
