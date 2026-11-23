@@ -454,7 +454,9 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
           serviceId: svc?.id || svcName,
           serviceName: svcName,
           turnValue: svc?.turnValue ?? 1,
-          requestedManicuristIds: (req?.clientRequest === true) ? (req.manicuristIds || []) : [],
+          // One requested tech per service; an older booking saved with several
+          // opens with just the first (the one the book and queue already used).
+          requestedManicuristIds: (req?.clientRequest === true) ? (req.manicuristIds || []).slice(0, 1) : [],
           durationAdjustment: req?.durationAdjustment ?? 0,
         };
       });
@@ -475,17 +477,16 @@ export default function AppointmentModal({ mode }: AppointmentModalProps) {
     );
   }
 
+  // ONE requested tech per service (Tony, 2026-11-23). Clicking a tech picks
+  // them and replaces any earlier pick; clicking the picked tech clears it.
+  // It used to add to a list, so a single service could end up requesting
+  // several techs at once — everything downstream only ever used the first.
   function toggleManicurist(index: number, manicuristId: string) {
     setSelectedServices((prev) =>
       prev.map((s, i) => {
         if (i !== index) return s;
-        const has = s.requestedManicuristIds.includes(manicuristId);
-        return {
-          ...s,
-          requestedManicuristIds: has
-            ? s.requestedManicuristIds.filter((id) => id !== manicuristId)
-            : [...s.requestedManicuristIds, manicuristId],
-        };
+        const has = s.requestedManicuristIds[0] === manicuristId;
+        return { ...s, requestedManicuristIds: has ? [] : [manicuristId] };
       })
     );
   }
