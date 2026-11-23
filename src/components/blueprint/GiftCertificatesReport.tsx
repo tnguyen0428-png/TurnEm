@@ -168,25 +168,25 @@ export default function GiftCertificatesReport() {
     <div className="p-6 overflow-y-auto h-full space-y-5">
       <ReportRangeHeader title="GIFT CERTIFICATES" range={range} onRangeChange={setRange} />
       <div className="flex items-center gap-3 flex-wrap">
-        <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 min-w-[280px]">
-          <Search size={14} className="text-gray-400" />
+        <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-4 py-3 min-w-[460px]">
+          <Search size={20} className="text-gray-400" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search serial, customer or who sold it — full serial shows its history"
-            className="flex-1 font-mono text-xs bg-transparent focus:outline-none"
+            className="flex-1 font-mono text-base bg-transparent focus:outline-none"
           />
           {query && (
             <button
               onClick={() => setQuery('')}
-              className="font-mono text-[10px] text-gray-400 hover:text-gray-700 uppercase tracking-wider"
+              className="font-mono text-sm text-gray-400 hover:text-gray-700 uppercase tracking-wider"
             >
               clear
             </button>
           )}
         </label>
-        <span className="font-mono text-[10px] text-gray-400 tracking-wider">
+        <span className="font-mono text-sm text-gray-400 tracking-wider">
           {searching
             ? 'Searching ALL dates — the date range is ignored while searching'
             : 'OPEN filtered by purchase date · USED filtered by redemption date'}
@@ -200,6 +200,7 @@ export default function GiftCertificatesReport() {
           loading={historyLoading}
           nearMisses={nearMisses}
           onPick={(s) => setQuery(s)}
+          large
         />
       )}
 
@@ -262,18 +263,18 @@ function CertList({
   return (
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
-        <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">{title}</h3>
-        <span className="font-mono text-[10px] text-gray-400">{subtitle}</span>
+        <h3 className="font-bebas text-3xl tracking-[3px] text-gray-800">{title}</h3>
+        <span className="font-mono text-sm text-gray-400">{subtitle}</span>
       </div>
       {certs.length === 0 ? (
-        <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">{emptyText}</div>
+        <div className="px-5 py-8 text-center font-mono text-base text-gray-400">{emptyText}</div>
       ) : (
         // On a narrow screen the 8 columns don't fit; scroll sideways rather
         // than squeezing "Bought by" to nothing and clipping Amount, Balance
         // and Redeemed off the right edge.
         <div className="overflow-x-auto">
-         <div className="min-w-[960px]">
-          <div className="grid grid-cols-[120px_110px_100px_1fr_95px_95px_140px_1fr] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+         <div className="min-w-[1280px]">
+          <div className="grid grid-cols-[160px_150px_130px_1fr_130px_130px_200px_1fr] gap-3 px-5 py-3 bg-gray-50 border-b border-gray-100 font-mono text-sm tracking-wider font-semibold text-gray-400 uppercase">
             <span>Serial</span>
             <span>Sold</span>
             <span>Sold by</span>
@@ -289,27 +290,27 @@ function CertList({
               key={`${c.purchaseTicketId}:${c.normalizedSerial || c.serial}`}
               onClick={() => onPick(c.serial)}
               title="Show this certificate's history"
-              className={`w-full text-left grid grid-cols-[120px_110px_100px_1fr_95px_95px_140px_1fr] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
+              className={`w-full text-left grid grid-cols-[160px_150px_130px_1fr_130px_130px_200px_1fr] gap-3 px-5 py-4 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
                 idx % 2 === 1 ? 'bg-gray-50' : ''
               }`}
             >
-              <span className="font-mono text-sm font-bold text-gray-800">#{c.serial || '—'}</span>
+              <span className="font-mono text-lg font-bold text-gray-800">#{c.serial || '—'}</span>
               {/* SalonBiz imports: the 5/18 "sale" is only the balance carried
                   over, so don't present it as a purchase date or buyer. */}
-              <span className="font-mono text-xs text-gray-700">
+              <span className="font-mono text-base text-gray-700">
                 {c.importedFromSalonBiz ? 'SalonBiz' : formatDate(c.purchaseDate)}
               </span>
-              <span className="font-mono text-xs font-semibold text-gray-800 truncate" title={c.soldByName ?? ''}>
+              <span className="font-mono text-base font-semibold text-gray-800 truncate" title={c.soldByName ?? ''}>
                 {c.importedFromSalonBiz ? '—' : (c.soldByName || '—')}
               </span>
-              <span className="font-mono text-sm text-gray-800 truncate" title={c.purchaseClientName}>
+              <span className="font-mono text-lg text-gray-800 truncate" title={c.purchaseClientName}>
                 {c.importedFromSalonBiz ? '—' : c.purchaseClientName}
               </span>
-              <span className="font-mono text-sm font-bold text-gray-900 text-right">{formatMoneyCents(c.valueCents)}</span>
-              <span className={`font-mono text-sm font-bold text-right ${c.balanceCents > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+              <span className="font-mono text-lg font-bold text-gray-900 text-right">{formatMoneyCents(c.valueCents)}</span>
+              <span className={`font-mono text-lg font-bold text-right ${c.balanceCents > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
                 {formatMoneyCents(c.balanceCents)}
               </span>
-              <span className="font-mono text-xs text-gray-700">
+              <span className="font-mono text-base text-gray-700">
                 {kind === 'open'
                   ? '—'
                   : <>
@@ -319,7 +320,7 @@ function CertList({
                       )}
                     </>}
               </span>
-              <span className="font-mono text-sm text-gray-800 truncate" title={c.redeemedClientName ?? ''}>
+              <span className="font-mono text-lg text-gray-800 truncate" title={c.redeemedClientName ?? ''}>
                 {kind === 'open' ? '—' : (c.redeemedClientName || '—')}
               </span>
             </button>
@@ -339,17 +340,17 @@ function Kpi({
   sb?: string; tm?: string;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 px-4 py-4">
-      <div className="font-mono text-[10px] font-bold text-gray-400 tracking-wider uppercase">{label}</div>
+    <div className="bg-white rounded-2xl border border-gray-100 px-5 py-5">
+      <div className="font-mono text-sm font-bold text-gray-400 tracking-wider uppercase">{label}</div>
       {sb != null && tm != null && !loading && (
-        <div className="mt-2 space-y-0.5 font-mono text-xs text-gray-600">
+        <div className="mt-3 space-y-1 font-mono text-lg text-gray-600">
           <div className="flex justify-between gap-2"><span className="text-gray-400">SalonBiz</span><span className="font-semibold">{sb}</span></div>
           <div className="flex justify-between gap-2"><span className="text-gray-400">TurnEm</span><span className="font-semibold">{tm}</span></div>
         </div>
       )}
       <div className={`flex justify-between items-baseline gap-2 ${sb != null ? 'mt-1.5 pt-1.5 border-t border-gray-100' : 'mt-1'}`}>
-        {sb != null && <span className="font-mono text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total</span>}
-        <span className={`font-mono text-2xl font-bold ${accent === 'emerald' ? 'text-emerald-600' : 'text-gray-900'}`}>
+        {sb != null && <span className="font-mono text-sm font-bold text-gray-400 uppercase tracking-wider">Total</span>}
+        <span className={`font-mono text-4xl font-bold ${accent === 'emerald' ? 'text-emerald-600' : 'text-gray-900'}`}>
           {loading ? '…' : value}
         </span>
       </div>
