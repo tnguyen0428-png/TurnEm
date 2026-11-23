@@ -257,6 +257,144 @@ export async function lookupGiftCardBalance(
   return { found: true, originalCents, usedCents, balanceCents };
 }
 
+// ── full history of ONE certificate (Blueprint → Gift Certificates search) ───
+//
+// Everything TurnEm knows about a serial: every sale/load line (including
+// ones on voided tickets, flagged), every redemption, and the balance. A card
+// imported from SalonBiz on 2026-05-18 shows that import as its "load" — the
+// import carried only the balance left at that time, never the card's
+// SalonBiz-era purchases and uses.
+export const SALONBIZ_IMPORT_CLIENT = 'Gift Cert Migration (SalonBiz)';
+
+export interface GiftCertHistoryLoad {
+  date: string | null;            // business date
+  ticketNumber: number | null;
+  ticketStatus: string | null;    // 'closed' | 'open' | 'voided'
+  clientName: string | null;
+  amountCents: number;
+  importedFromSalonBiz: boolean;
+}
+export interface GiftCertHistoryUse {
+  date: string | null;
+  capturedAtMs: number | null;
+  ticketNumber: number | null;
+  ticketStatus: string | null;
+  clientName: string | null;
+  amountCents: number;
+  codeAsTyped: string;
+  isRefund: boolean;
+}
+export interface GiftCertHistory {
+  serial: string;                 // normalized
+  found: boolean;
+  lookupError?: boolean;
+  loads: GiftCertHistoryLoad[];
+  uses: GiftCertHistoryUse[];
+  loadedCents: number;            // non-voided loads
+  usedCents: number;
+  balanceCents: number;
+}
+
+export async function fetchGiftCertHistory(rawSerial: string): Promise<GiftCertHistory> {
+  const norm = normalizeSerial(rawSerial);
+  const empty: GiftCertHistory = {
+    serial: norm, found: false, loads: [], uses: [], loadedCents: 0, usedCents: 0, balanceCents: 0,
+  };
+  if (!norm) return empty;
+  const padded = norm.padStart(5, '0');
+
+  type Tk = { status?: string; business_date?: string; client_name?: string; ticket_number?: number };
+  const one = (t: Tk | Tk[] | null | undefined): Tk | null => (Array.isArray(t) ? t[0] ?? null : t ?? null);
+
+  const [salesRes, paysRes] = await Promise.all([
+    supabase
+      .from('ticket_items')
+      .select('name, ext_price_cents, tickets(status, business_date, client_name, ticket_number)')
+      .eq('kind', 'gift_card_sale')
+      .or(`name.ilike.%#${norm},name.ilike.%#${padded}`),
+    supabase
+      .from('payments')
+      .select('amount_cents, gift_card_code, captured_at, refund_of, tickets(status, business_date, client_name, ticket_number)')
+      .eq('method', 'gift')
+      .or(`gift_card_code.ilike.%${norm},gift_card_code.ilike.%${padded}`),
+  ]);
+  if (salesRes.error || paysRes.error) {
+    console.warn('[giftCertificates] fetchGiftCertHistory:', salesRes.error?.message ?? paysRes.error?.message);
+    return { ...empty, lookupError: true };
+  }
+
+  const loads: GiftCertHistoryLoad[] = (salesRes.data ?? [])
+    .filter((r) => serialFromLineName((r as { name?: string }).name ?? '').norm === norm)
+    .map((r) => {
+      const row = r as { ext_price_cents: number | string; tickets?: Tk | Tk[] | null };
+      const tk = one(row.tickets);
+      return {
+        date: tk?.business_date ?? null,
+        ticketNumber: tk?.ticket_number ?? null,
+        ticketStatus: tk?.status ?? null,
+        clientName: tk?.client_name ?? null,
+        amountCents: Number(row.ext_price_cents || 0),
+        importedFromSalonBiz: (tk?.client_name ?? '') === SALONBIZ_IMPORT_CLIENT,
+      };
+    })
+    .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+
+  const uses: GiftCertHistoryUse[] = (paysRes.data ?? [])
+    .filter((r) => normalizeSerial((r as { gift_card_code: string | null }).gift_card_code) === norm)
+    .map((r) => {
+      const row = r as {
+        amount_cents: number | string; gift_card_code: string | null; captured_at: string | null;
+        refund_of: string | null; tickets?: Tk | Tk[] | null;
+      };
+      const tk = one(row.tickets);
+      return {
+        date: tk?.business_date ?? null,
+        capturedAtMs: row.captured_at ? new Date(row.captured_at).getTime() : null,
+        ticketNumber: tk?.ticket_number ?? null,
+        ticketStatus: tk?.status ?? null,
+        clientName: tk?.client_name ?? null,
+        amountCents: Number(row.amount_cents || 0),
+        codeAsTyped: row.gift_card_code ?? '',
+        isRefund: !!row.refund_of,
+      };
+    })
+    .sort((a, b) => (a.capturedAtMs ?? 0) - (b.capturedAtMs ?? 0));
+
+  const loadedCents = loads
+    .filter((l) => l.ticketStatus !== 'voided')
+    .reduce((s, l) => s + l.amountCents, 0);
+  const usedCents = uses
+    .filter((u) => u.ticketStatus !== 'voided')
+    .reduce((s, u) => s + u.amountCents, 0);
+  return {
+    serial: norm,
+    found: loads.length > 0 || uses.length > 0,
+    loads,
+    uses,
+    loadedCents,
+    usedCents,
+    balanceCents: Math.max(0, loadedCents - usedCents),
+  };
+}
+
+/** Serials that differ from `serial` by one digit, or by two neighbouring
+ *  digits swapped — the usual ways a number gets misread or mistyped. */
+export function nearMissSerials(serial: string, known: Iterable<string>): string[] {
+  const s = normalizeSerial(serial);
+  const out = new Set<string>();
+  for (const k of known) {
+    if (!k || k === s || k.length !== s.length) continue;
+    let diffs = 0;
+    const at: number[] = [];
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] !== k[i]) { diffs++; at.push(i); if (diffs > 2) break; }
+    }
+    if (diffs === 1) out.add(k);
+    else if (diffs === 2 && at[1] === at[0] + 1 && s[at[0]] === k[at[1]] && s[at[1]] === k[at[0]]) out.add(k);
+  }
+  return [...out].sort();
+}
+
 // ── full detail for the redemption dialog ────────────────────────────────────
 //
 // Like lookupGiftCardBalance but also returns the purchase date/buyer and the

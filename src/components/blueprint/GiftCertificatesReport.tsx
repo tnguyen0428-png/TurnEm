@@ -9,13 +9,22 @@
 //   - purchase date (substring of YYYY-MM-DD)
 //   - customer name (purchaser or redeemer)
 // Empty query shows everything.
+//
+// Typing a full certificate number (4+ digits, or TM + digits) also opens a
+// HISTORY panel for that one card: how it was loaded (sold here, or imported
+// from SalonBiz on 5/18), every use, and the balance. When the number isn't
+// in TurnEm at all it says so plainly and lists one-digit-off / swapped
+// numbers that are (Tony, 2026-11-23: card 1606822889).
 
 import { useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import {
   fetchGiftCertificates,
+  fetchGiftCertHistory,
+  nearMissSerials,
   normalizeSerial,
   type GiftCertificate,
+  type GiftCertHistory,
 } from '../../lib/giftCertificates';
 import { formatMoneyCents } from '../../lib/tickets';
 import { ReportRangeHeader, useReportRange } from './reportShared';
@@ -91,6 +100,39 @@ export default function GiftCertificatesReport() {
     return { openValue, usedValue, openCount: open.length, usedCount: used.length };
   }, [open, used]);
 
+  // One-card history: only once the search looks like a whole serial.
+  const historySerial = useMemo(() => {
+    const q = query.trim().replace(/\s+/g, '');
+    return /^#?(TM)?\d{4,}$/i.test(q) ? normalizeSerial(q) : '';
+  }, [query]);
+  const [history, setHistory] = useState<GiftCertHistory | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  useEffect(() => {
+    if (!historySerial) {
+      setHistory(null);
+      return;
+    }
+    let cancelled = false;
+    setHistoryLoading(true);
+    const t = setTimeout(async () => {
+      const h = await fetchGiftCertHistory(historySerial);
+      if (!cancelled) {
+        setHistory(h);
+        setHistoryLoading(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [historySerial]);
+  const nearMisses = useMemo(
+    () => (history && !history.found
+      ? nearMissSerials(history.serial, certs.map((c) => c.normalizedSerial))
+      : []),
+    [history, certs],
+  );
+
   return (
     <div className="p-6 overflow-y-auto h-full space-y-5">
       <ReportRangeHeader title="GIFT CERTIFICATES" range={range} onRangeChange={setRange} />
@@ -101,7 +143,7 @@ export default function GiftCertificatesReport() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search serial or customer…"
+            placeholder="Search serial or customer — full serial shows its history"
             className="flex-1 font-mono text-xs bg-transparent focus:outline-none"
           />
           {query && (
@@ -117,6 +159,16 @@ export default function GiftCertificatesReport() {
           OPEN filtered by purchase date · USED filtered by redemption date
         </span>
       </div>
+
+      {historySerial && (
+        <CertHistoryPanel
+          serial={historySerial}
+          history={history}
+          loading={historyLoading}
+          nearMisses={nearMisses}
+          onPick={(s) => setQuery(s)}
+        />
+      )}
 
       {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -201,6 +253,134 @@ function CertList({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function CertHistoryPanel({
+  serial, history, loading, nearMisses, onPick,
+}: {
+  serial: string;
+  history: GiftCertHistory | null;
+  loading: boolean;
+  nearMisses: string[];
+  onPick: (serial: string) => void;
+}) {
+  const header = (
+    <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3 flex-wrap">
+      <h3 className="font-bebas text-lg tracking-[2px] text-gray-800">HISTORY · #{serial}</h3>
+      {history?.found && !loading && (
+        <span className="font-mono text-[11px] text-gray-500">
+          Loaded {formatMoneyCents(history.loadedCents)} · Used {formatMoneyCents(history.usedCents)} ·{' '}
+          <span className="font-bold text-emerald-600">Balance {formatMoneyCents(history.balanceCents)}</span>
+        </span>
+      )}
+    </div>
+  );
+
+  let body: React.ReactNode;
+  if (loading || !history) {
+    body = <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">Looking up #{serial}…</div>;
+  } else if (history.lookupError) {
+    body = (
+      <div className="px-4 py-6 text-center font-mono text-xs text-rose-600">
+        Couldn't load this certificate's history. Check the connection and try again.
+      </div>
+    );
+  } else if (!history.found) {
+    body = (
+      <div className="px-4 py-4 space-y-2 font-mono text-xs text-gray-700">
+        <p>
+          <span className="font-bold">No record of #{serial} in TurnEm.</span> It was never sold or used
+          here, and it was not in the SalonBiz import on May 18, 2026 — that import only brought over
+          certificates that still had a balance. Any history from before then is only in SalonBiz.
+        </p>
+        {nearMisses.length > 0 && (
+          <p className="text-gray-500">
+            Close numbers that do exist (one digit off, or two digits swapped):{' '}
+            {nearMisses.map((s, i) => (
+              <span key={s}>
+                {i > 0 && ', '}
+                <button
+                  onClick={() => onPick(s)}
+                  className="font-bold text-pink-600 hover:underline"
+                >
+                  #{s}
+                </button>
+              </span>
+            ))}
+          </p>
+        )}
+      </div>
+    );
+  } else {
+    type Ev = { key: string; date: string | null; sort: string; what: React.ReactNode; ticket: string; client: string; amount: React.ReactNode; voided: boolean };
+    const events: Ev[] = [
+      ...history.loads.map((l, i) => ({
+        key: `load-${i}`,
+        date: l.date,
+        sort: `${l.date ?? ''}-0`,
+        what: l.importedFromSalonBiz
+          ? <span>Imported from SalonBiz <span className="text-gray-400">(balance at the time)</span></span>
+          : 'Sold',
+        ticket: l.importedFromSalonBiz ? '—' : (l.ticketNumber != null ? `#${l.ticketNumber}` : '—'),
+        client: l.importedFromSalonBiz ? '—' : (l.clientName || 'Walk-in'),
+        amount: <span className="text-emerald-600">+{formatMoneyCents(l.amountCents)}</span>,
+        voided: l.ticketStatus === 'voided',
+      })),
+      ...history.uses.map((u, i) => ({
+        key: `use-${i}`,
+        date: u.date,
+        sort: `${u.date ?? ''}-1-${String(u.capturedAtMs ?? 0).padStart(15, '0')}`,
+        what: u.isRefund ? 'Refunded to card' : 'Used',
+        ticket: u.ticketNumber != null ? `#${u.ticketNumber}` : '—',
+        client: u.clientName || 'Walk-in',
+        amount: <span className="text-gray-900">−{formatMoneyCents(u.amountCents)}</span>,
+        voided: u.ticketStatus === 'voided',
+      })),
+    ].sort((a, b) => a.sort.localeCompare(b.sort));
+
+    const importedOnly = history.loads.length > 0 && history.loads.every((l) => l.importedFromSalonBiz);
+    body = (
+      <div>
+        <div className="grid grid-cols-[120px_1fr_80px_1fr_110px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+          <span>Date</span>
+          <span>What</span>
+          <span>Ticket</span>
+          <span>Client</span>
+          <span className="text-right">Amount</span>
+        </div>
+        {events.map((e) => (
+          <div
+            key={e.key}
+            className={`grid grid-cols-[120px_1fr_80px_1fr_110px] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center ${e.voided ? 'opacity-50 line-through' : ''}`}
+            title={e.voided ? 'On a voided ticket — not counted' : undefined}
+          >
+            <span className="font-mono text-xs text-gray-700">{formatDate(e.date)}</span>
+            <span className="font-mono text-xs text-gray-800">{e.what}</span>
+            <span className="font-mono text-xs text-gray-700">{e.ticket}</span>
+            <span className="font-mono text-sm text-gray-800 truncate">{e.client}</span>
+            <span className="font-mono text-sm font-bold text-right">{e.amount}</span>
+          </div>
+        ))}
+        {history.loads.length === 0 && (
+          <div className="px-4 py-2 font-mono text-[11px] text-amber-700 bg-amber-50">
+            Used in TurnEm, but no sale or SalonBiz import was found for this number.
+          </div>
+        )}
+        {importedOnly && (
+          <div className="px-4 py-2 font-mono text-[11px] text-gray-500 bg-gray-50">
+            Bought before TurnEm. Its original purchase and any uses before May 18, 2026 are only in SalonBiz.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border-2 border-pink-200 overflow-hidden">
+      {header}
+      {body}
     </div>
   );
 }
