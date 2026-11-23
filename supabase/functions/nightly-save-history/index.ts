@@ -13,7 +13,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
  *   1. completed_services rows whose completed_at is older than
  *      COMPLETED_RETENTION_DAYS (30) days — keeps the live service list lean.
  *   2. daily_history rows whose date is older than HISTORY_RETENTION_DAYS
- *      (30) days — ages out the archive so it does not grow forever.
+ *      (90) days — ages out the archive so it does not grow forever.
  *
  * Today's rows in completed_services are NOT cleared — the manual "clear" via
  * the UI is still the intended flow for end-of-day reset.
@@ -22,8 +22,15 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 /** How many days of completed_services rows to retain before nightly purge. */
 const COMPLETED_RETENTION_DAYS = 30;
 
-/** How many days of daily_history rows to retain before nightly purge. */
-const HISTORY_RETENTION_DAYS = 30;
+/**
+ * How many days of daily_history rows to retain before nightly purge.
+ *
+ * MUST match public.prune_daily_history(90), which the nightly-save-history
+ * cron job runs just before calling this function. Until 2026-11-23 this was
+ * 30 while the cron said 90, and this purge ran second, so staff History only
+ * ever reached back 30 days.
+ */
+const HISTORY_RETENTION_DAYS = 90;
 
 // MUST stay in sync with mapDbCompleted() in src/state/AppContext.tsx. This
 // archive is one of the LAST writers each night (the merge below lets fresh

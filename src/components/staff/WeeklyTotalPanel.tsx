@@ -14,8 +14,8 @@ import { getTodayLA, getLocalDateStr } from '../../utils/time';
  * grouped by tickets.business_date, fetched across the past 14 days. Refreshes
  * live via realtime on tickets / ticket_items.
  *
- * Retention: daily_history rows older than 14 days are pruned nightly by the
- * pg_cron job `prune_daily_history_14d`.
+ * Retention: daily_history rows older than 90 days are pruned nightly by
+ * prune_daily_history(90) in the nightly-save-history cron job.
  */
 
 interface Props {
