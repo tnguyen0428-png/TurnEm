@@ -38,6 +38,9 @@ export interface GiftCertificate {
   redeemedClientName: string | null;
   redeemedAmountCents: number | null;
 
+  /** Every use (business date + amount), oldest first — so a date-range
+   *  view can count only the uses that happened inside the range. */
+  uses: Array<{ date: string | null; cents: number }>;
   /** All uses, not just the first. */
   usedCents: number;
   balanceCents: number;
@@ -153,7 +156,10 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
   // when more than one row claims the same serial (rare data-entry typo).
   const redemptionByNorm = new Map<string, DbRedemptionRow>();
   // Totals across EVERY use of a serial (a card can be used more than once).
-  const usesByNorm = new Map<string, { cents: number; count: number; lastDate: string | null }>();
+  const usesByNorm = new Map<string, {
+    cents: number; count: number; lastDate: string | null;
+    list: Array<{ date: string | null; cents: number }>;
+  }>();
   for (const r of redemptions) {
     const norm = normalizeSerial(r.gift_card_code);
     if (!norm) continue;
@@ -162,10 +168,11 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
     if (!existing || new Date(r.captured_at) < new Date(existing.captured_at)) {
       redemptionByNorm.set(norm, r);
     }
-    const agg = usesByNorm.get(norm) ?? { cents: 0, count: 0, lastDate: null };
+    const agg = usesByNorm.get(norm) ?? { cents: 0, count: 0, lastDate: null, list: [] };
     agg.cents += Number(r.amount_cents || 0);
     agg.count += 1;
     const d = r.tickets?.business_date ?? null;
+    agg.list.push({ date: d, cents: Number(r.amount_cents || 0) });
     if (d && (!agg.lastDate || d > agg.lastDate)) agg.lastDate = d;
     usesByNorm.set(norm, agg);
   }
@@ -180,6 +187,7 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
     const agg = norm ? usesByNorm.get(norm) : undefined;
     const usedCents = agg?.cents ?? 0;
     out.push({
+      uses: (agg?.list ?? []).slice().sort((x, y) => (x.date ?? '').localeCompare(y.date ?? '')),
       usedCents,
       balanceCents: Math.max(0, s.ext_price_cents - usedCents),
       redemptionCount: agg?.count ?? 0,

@@ -89,20 +89,47 @@ export default function GiftCertificatesReport() {
     [queryFiltered, range.from, range.to, searching],
   );
 
-  // USED list: certs redeemed in the date range, regardless of when sold.
+  // Amount of a cert used INSIDE the range (all of it while searching). A card
+  // used $40 in August and $10 in September counts $10 for September — it
+  // used to be missed entirely there, because only its first use was dated.
+  const usedInRangeCents = useMemo(() => {
+    const m = new Map<GiftCertificate, number>();
+    for (const c of queryFiltered) {
+      const cents = c.uses
+        .filter((u) => searching || (u.date != null && u.date >= range.from && u.date <= range.to))
+        .reduce((s, u) => s + u.cents, 0);
+      if (cents > 0 || (searching && c.uses.length > 0)) m.set(c, cents);
+    }
+    return m;
+  }, [queryFiltered, range.from, range.to, searching]);
+
+  // USED list: certs used at least once in the date range, whenever sold.
   const used = useMemo(
-    () => queryFiltered.filter(
-      (c) => c.redeemedDate != null
-        && (searching || (c.redeemedDate >= range.from && c.redeemedDate <= range.to)),
-    ),
-    [queryFiltered, range.from, range.to, searching],
+    () => queryFiltered.filter((c) => usedInRangeCents.has(c)),
+    [queryFiltered, usedInRangeCents],
   );
 
+  // Totals, split SalonBiz (imported 5/18) vs sold in TurnEm.
   const summary = useMemo(() => {
-    const openValue = open.reduce((s, c) => s + c.valueCents, 0);
-    const usedValue = used.reduce((s, c) => s + c.usedCents, 0);
-    return { openValue, usedValue, openCount: open.length, usedCount: used.length };
-  }, [open, used]);
+    const split = <T,>(list: T[], isSb: (x: T) => boolean, val: (x: T) => number) => {
+      const out = { sbCount: 0, sbValue: 0, tmCount: 0, tmValue: 0 };
+      for (const x of list) {
+        if (isSb(x)) { out.sbCount += 1; out.sbValue += val(x); }
+        else { out.tmCount += 1; out.tmValue += val(x); }
+      }
+      return out;
+    };
+    const o = split(open, (c) => c.importedFromSalonBiz, (c) => c.valueCents);
+    const u = split(used, (c) => c.importedFromSalonBiz, (c) => usedInRangeCents.get(c) ?? 0);
+    return {
+      open: o,
+      used: u,
+      openCount: o.sbCount + o.tmCount,
+      openValue: o.sbValue + o.tmValue,
+      usedCount: u.sbCount + u.tmCount,
+      usedValue: u.sbValue + u.tmValue,
+    };
+  }, [open, used, usedInRangeCents]);
 
   // One-card history: only once the search looks like a whole serial.
   const historySerial = useMemo(() => {
@@ -178,10 +205,26 @@ export default function GiftCertificatesReport() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi label="Open Certificates" value={summary.openCount.toString()} loading={loading} />
-        <Kpi label="Open Value" value={formatMoneyCents(summary.openValue)} accent="emerald" loading={loading} />
-        <Kpi label="Used Certificates" value={summary.usedCount.toString()} loading={loading} />
-        <Kpi label="Used Value" value={formatMoneyCents(summary.usedValue)} loading={loading} />
+        <Kpi
+          label="Open Certificates" loading={loading}
+          value={summary.openCount.toString()}
+          sb={summary.open.sbCount.toString()} tm={summary.open.tmCount.toString()}
+        />
+        <Kpi
+          label="Open Value" accent="emerald" loading={loading}
+          value={formatMoneyCents(summary.openValue)}
+          sb={formatMoneyCents(summary.open.sbValue)} tm={formatMoneyCents(summary.open.tmValue)}
+        />
+        <Kpi
+          label="Used Certificates" loading={loading}
+          value={summary.usedCount.toString()}
+          sb={summary.used.sbCount.toString()} tm={summary.used.tmCount.toString()}
+        />
+        <Kpi
+          label="Used Value" loading={loading}
+          value={formatMoneyCents(summary.usedValue)}
+          sb={formatMoneyCents(summary.used.sbValue)} tm={formatMoneyCents(summary.used.tmValue)}
+        />
       </div>
 
       <CertList
@@ -289,15 +332,26 @@ function CertList({
 }
 
 function Kpi({
-  label, value, accent, loading,
+  label, value, accent, loading, sb, tm,
 }: {
   label: string; value: string; accent?: 'emerald'; loading?: boolean;
+  /** SalonBiz / TurnEm parts of `value` (the total). */
+  sb?: string; tm?: string;
 }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 px-4 py-4">
       <div className="font-mono text-[10px] font-bold text-gray-400 tracking-wider uppercase">{label}</div>
-      <div className={`font-mono text-2xl font-bold mt-1 ${accent === 'emerald' ? 'text-emerald-600' : 'text-gray-900'}`}>
-        {loading ? '…' : value}
+      {sb != null && tm != null && !loading && (
+        <div className="mt-2 space-y-0.5 font-mono text-xs text-gray-600">
+          <div className="flex justify-between gap-2"><span className="text-gray-400">SalonBiz</span><span className="font-semibold">{sb}</span></div>
+          <div className="flex justify-between gap-2"><span className="text-gray-400">TurnEm</span><span className="font-semibold">{tm}</span></div>
+        </div>
+      )}
+      <div className={`flex justify-between items-baseline gap-2 ${sb != null ? 'mt-1.5 pt-1.5 border-t border-gray-100' : 'mt-1'}`}>
+        {sb != null && <span className="font-mono text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total</span>}
+        <span className={`font-mono text-2xl font-bold ${accent === 'emerald' ? 'text-emerald-600' : 'text-gray-900'}`}>
+          {loading ? '…' : value}
+        </span>
       </div>
     </div>
   );
