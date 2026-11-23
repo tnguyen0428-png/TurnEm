@@ -3057,6 +3057,14 @@ export default function TicketModal({
                             className="h-11 px-1.5 rounded-md border border-transparent text-gray-900 hover:border-gray-300 focus:border-gray-500 font-mono text-base focus:outline-none disabled:bg-gray-100 disabled:text-gray-700"
                           >
                             <option value="">—</option>
+                            {/* Keep the saved name visible when that person is
+                                no longer on Staff (e.g. a receptionist who sold
+                                a gift card and has since left) — otherwise the
+                                select has no matching option and reads "—",
+                                hiding who rang the sale up. */}
+                            {line.staff1Id && !manicurists.some((m) => m.id === line.staff1Id) && (
+                              <option value={line.staff1Id}>{line.staff1Name || 'Former staff'}</option>
+                            )}
                             {manicurists.map((m) => (
                               <option key={m.id} value={m.id}>{m.name}</option>
                             ))}
