@@ -225,7 +225,11 @@ function CertList({
       {certs.length === 0 ? (
         <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">{emptyText}</div>
       ) : (
-        <div>
+        // On a narrow screen the 8 columns don't fit; scroll sideways rather
+        // than squeezing "Bought by" to nothing and clipping Amount, Balance
+        // and Redeemed off the right edge.
+        <div className="overflow-x-auto">
+         <div className="min-w-[960px]">
           <div className="grid grid-cols-[120px_110px_100px_1fr_95px_95px_140px_1fr] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
             <span>Serial</span>
             <span>Sold</span>
@@ -277,6 +281,7 @@ function CertList({
               </span>
             </button>
           ))}
+         </div>
         </div>
       )}
     </div>
