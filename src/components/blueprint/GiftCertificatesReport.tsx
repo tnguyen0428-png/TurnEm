@@ -200,7 +200,7 @@ export default function GiftCertificatesReport() {
           loading={historyLoading}
           nearMisses={nearMisses}
           onPick={(s) => setQuery(s)}
-          large
+          size="large"
         />
       )}
 

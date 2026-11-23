@@ -33,6 +33,19 @@ const SIZES = {
     big: 'font-mono text-sm',
     note: 'font-mono text-[11px]',
   },
+  medium: {
+    pad: 'px-5',
+    title: 'font-bebas text-2xl tracking-[3px]',
+    summary: 'font-mono text-base text-gray-600',
+    balance: 'font-bold text-emerald-600 text-xl',
+    message: 'font-mono text-base',
+    grid: 'grid-cols-[140px_1.3fr_90px_1fr_120px]',
+    head: 'py-2.5 font-mono text-xs',
+    row: 'py-3',
+    small: 'font-mono text-base',
+    big: 'font-mono text-lg',
+    note: 'font-mono text-sm',
+  },
   large: {
     pad: 'px-6',
     title: 'font-bebas text-3xl tracking-[3px]',
@@ -49,16 +62,17 @@ const SIZES = {
 } as const;
 
 export default function CertHistoryPanel({
-  serial, history, loading, nearMisses, onPick, large = false,
+  serial, history, loading, nearMisses, onPick, size = 'normal',
 }: {
   serial: string;
   history: GiftCertHistory | null;
   loading: boolean;
   nearMisses: string[];
   onPick: (serial: string) => void;
-  large?: boolean;
+  /** normal = compact; medium = register popup; large = Blueprint. */
+  size?: keyof typeof SIZES;
 }) {
-  const s = large ? SIZES.large : SIZES.normal;
+  const s = SIZES[size];
 
   const header = (
     <div className={`${s.pad} py-3 border-b border-gray-100 flex items-center gap-x-4 gap-y-1 flex-wrap`}>
