@@ -8,7 +8,7 @@ import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType }
 import DayScheduleOverrideModal from './DayScheduleOverrideModal';
 import { resolveScheduleForDate } from '../../utils/schedule';
 import { getPermanentNoteByPhone } from '../../lib/customers';
-import { visitIdForCheckIn } from '../../lib/tickets';
+import { fetchTicketLineForEntry, moveOpenTicketLineForEntry, visitIdForCheckIn } from '../../lib/tickets';
 import CustomerNoteAlert from '../shared/CustomerNoteAlert';
 
 const START_HOUR   = 8;
@@ -1350,15 +1350,28 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
     // Prefer the row currently owned by a tech that's NOT the destination.
     const completedToMove = matchingCompleted.find((c) => c.manicuristId !== mId) ?? matchingCompleted[0];
     if (!completedToMove) return;
-    dispatch({
-      type: 'UPDATE_COMPLETED',
-      id: completedToMove.id,
-      updates: {
-        manicuristId: mId,
-        manicuristName: newMani.name,
-        manicuristColor: newMani.color,
-      },
-    });
+    // Keep the ticket in step: move its open line too. If the ticket is
+    // already paid, the paid ticket decides the tech, so leave History alone
+    // (the database would move it straight back) — the change belongs on the
+    // ticket at the register.
+    void (async () => {
+      const line = await fetchTicketLineForEntry(completedToMove.id);
+      if (line?.status === 'closed') return;
+      await moveOpenTicketLineForEntry(completedToMove.id, {
+        id: newMani.id,
+        name: newMani.name,
+        color: newMani.color,
+      });
+      dispatch({
+        type: 'UPDATE_COMPLETED',
+        id: completedToMove.id,
+        updates: {
+          manicuristId: mId,
+          manicuristName: newMani.name,
+          manicuristColor: newMani.color,
+        },
+      });
+    })();
   }
 
   function onDragStart(e: React.DragEvent, appt: Appointment, svcName: string, occurrence: number) {

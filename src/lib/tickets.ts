@@ -1202,6 +1202,90 @@ export async function fetchTicketByQueueEntry(queueEntryId: string): Promise<Tic
   return fetchTicket((data as { id: string }).id);
 }
 
+// ── the ticket line that bills one History entry ─────────────────────────────
+//
+// The paid ticket decides who did a service (migration 20261123120000): once a
+// ticket is closed, the database moves any History entry whose tech disagrees
+// with its line back to the line's tech. So History must not offer a tech
+// change it can't keep, and while the ticket is still open a tech change in
+// History has to move the ticket line with it (Monique Aoki × TAMMY/HANA,
+// 2026-11-18: History said HANA, the ticket said TAMMY, HANA got paid).
+//
+// EXACT id match only, same as the database rule. A cashier "+ Add line" is
+// stored as `${visit}#n`, which shares its prefix with the first tech's row;
+// a prefix match would hand that row the added tech's line.
+
+export interface EntryTicketLine {
+  lineId: string;
+  ticketId: string;
+  ticketNumber: number;
+  status: 'open' | 'closed';
+  staff1Id: string | null;
+  staff1Name: string | null;
+}
+
+export async function fetchTicketLineForEntry(entryId: string): Promise<EntryTicketLine | null> {
+  if (!entryId) return null;
+  const { data, error } = await supabase
+    .from('ticket_items')
+    .select('id, staff1_id, staff1_name, tickets!inner(id, ticket_number, status, opened_at)')
+    .eq('queue_entry_id', entryId)
+    .eq('kind', 'service')
+    .in('tickets.status', ['open', 'closed']);
+  if (error) {
+    console.warn('[tickets] fetchTicketLineForEntry:', error.message);
+    return null;
+  }
+  type Row = {
+    id: string;
+    staff1_id: string | null;
+    staff1_name: string | null;
+    tickets: { id: string; ticket_number: number; status: 'open' | 'closed'; opened_at: string }
+      | { id: string; ticket_number: number; status: 'open' | 'closed'; opened_at: string }[];
+  };
+  const rows = ((data ?? []) as Row[]).map((r) => ({
+    ...r,
+    t: Array.isArray(r.tickets) ? r.tickets[0] : r.tickets,
+  })).filter((r) => r.t);
+  if (rows.length === 0) return null;
+  // A paid line outranks an open one; otherwise the most recent ticket.
+  rows.sort((a, b) =>
+    (a.t.status === 'closed' ? 0 : 1) - (b.t.status === 'closed' ? 0 : 1) ||
+    b.t.opened_at.localeCompare(a.t.opened_at),
+  );
+  const r = rows[0];
+  return {
+    lineId: r.id,
+    ticketId: r.t.id,
+    ticketNumber: r.t.ticket_number,
+    status: r.t.status,
+    staff1Id: r.staff1_id,
+    staff1Name: r.staff1_name,
+  };
+}
+
+/**
+ * Move the OPEN ticket line that bills this entry to another tech. No-op (and
+ * returns false) when there is no line or its ticket is already closed: a
+ * paid ticket is changed at the register, never from History.
+ */
+export async function moveOpenTicketLineForEntry(
+  entryId: string,
+  manicurist: { id: string; name: string; color: string },
+): Promise<boolean> {
+  const line = await fetchTicketLineForEntry(entryId);
+  if (!line || line.status !== 'open' || line.staff1Id === manicurist.id) return false;
+  const { error } = await supabase
+    .from('ticket_items')
+    .update({ staff1_id: manicurist.id, staff1_name: manicurist.name, staff1_color: manicurist.color })
+    .eq('id', line.lineId);
+  if (error) {
+    console.warn('[tickets] moveOpenTicketLineForEntry:', error.message);
+    return false;
+  }
+  return true;
+}
+
 // fetchTicketByAppointment removed — no callers. Look up by queue entry or
 // re-add this helper if you wire appointments to the register screen.
 

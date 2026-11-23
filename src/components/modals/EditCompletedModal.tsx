@@ -4,6 +4,7 @@ import Modal from '../shared/Modal';
 import { useApp } from '../../state/AppContext';
 import ReceptionistPinGate from '../shared/ReceptionistPinGate';
 import { useServiceCategories } from '../../hooks/useServiceCategories';
+import { fetchTicketLineForEntry, moveOpenTicketLineForEntry, type EntryTicketLine } from '../../lib/tickets';
 import type { CompletedEntry, ServiceType } from '../../types';
 
 interface Props {
@@ -22,6 +23,22 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
   );
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedServiceId, setSelectedServiceId] = useState('');
+
+  // The ticket line that bills this service. Once that ticket is PAID it
+  // decides who did the work, so the tech can't be changed here (the database
+  // would move it straight back). While it's open, a tech change here moves
+  // the ticket line too, so the two can't drift apart.
+  const [ticketLine, setTicketLine] = useState<EntryTicketLine | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchTicketLineForEntry(entry.id).then((l) => {
+      if (!cancelled) setTicketLine(l);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [entry.id]);
+  const paidLine = ticketLine?.status === 'closed' ? ticketLine : null;
 
   // All manicurists (clocked-in or not) so a user can fix a misattribution
   // even if the original tech has since clocked out.
@@ -105,13 +122,18 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
   function handleSave() {
     const parsed = parseFloat(turnValue);
     const safeTurn = Number.isFinite(parsed) && parsed >= 0 ? parsed : entry.turnValue;
-    const m = state.manicurists.find((x) => x.id === manicuristId);
+    // Paid ticket: keep whoever it names, whatever the dropdown says.
+    const finalManicuristId = paidLine ? entry.manicuristId : manicuristId;
+    const m = state.manicurists.find((x) => x.id === finalManicuristId);
     const cleanedRequested = requestedServices.filter((s) => services.includes(s));
+    if (m && finalManicuristId !== entry.manicuristId) {
+      void moveOpenTicketLineForEntry(entry.id, { id: m.id, name: m.name, color: m.color });
+    }
     dispatch({
       type: 'UPDATE_COMPLETED',
       id: entry.id,
       updates: {
-        manicuristId,
+        manicuristId: finalManicuristId,
         manicuristName: m?.name ?? entry.manicuristName,
         manicuristColor: m?.color ?? entry.manicuristColor,
         turnValue: safeTurn,
@@ -248,9 +270,10 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
           </label>
           <select
             id="edit-completed-manicurist"
-            value={manicuristId}
+            value={paidLine ? entry.manicuristId : manicuristId}
             onChange={(e) => setManicuristId(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-xs font-semibold text-gray-700 bg-white focus:outline-none focus:border-gray-400"
+            disabled={!!paidLine}
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 font-mono text-xs font-semibold text-gray-700 bg-white focus:outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
           >
             {manicuristOptions.map((m) => (
               <option key={m.id} value={m.id}>
@@ -258,6 +281,17 @@ export default function EditCompletedModal({ entry, onClose }: Props) {
               </option>
             ))}
           </select>
+          {paidLine && (
+            <p className="mt-1.5 font-mono text-[10px] leading-snug text-amber-700">
+              Paid on ticket #{paidLine.ticketNumber}
+              {paidLine.staff1Name ? ` as ${paidLine.staff1Name}` : ''}. The paid ticket decides who did
+              this service. To change the tech, change it on ticket #{paidLine.ticketNumber} at the
+              register.
+              {paidLine.staff1Id && paidLine.staff1Id !== entry.manicuristId
+                ? ` History will be corrected to ${paidLine.staff1Name ?? 'the ticket'}.`
+                : ''}
+            </p>
+          )}
         </div>
 
         {/* Turn value */}
