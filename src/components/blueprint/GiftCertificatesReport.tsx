@@ -70,6 +70,7 @@ export default function GiftCertificatesReport() {
       if ((c.redeemedDate ?? '').includes(q)) return true;
       if ((c.purchaseClientName || '').toLowerCase().includes(q)) return true;
       if ((c.redeemedClientName || '').toLowerCase().includes(q)) return true;
+      if ((c.soldByName || '').toLowerCase().includes(q)) return true;
       return false;
     });
   }, [certs, query]);
@@ -145,7 +146,7 @@ export default function GiftCertificatesReport() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search serial or customer — full serial shows its history"
+            placeholder="Search serial, customer or who sold it — full serial shows its history"
             className="flex-1 font-mono text-xs bg-transparent focus:outline-none"
           />
           {query && (
@@ -224,9 +225,10 @@ function CertList({
         <div className="px-4 py-6 text-center font-mono text-xs text-gray-400">{emptyText}</div>
       ) : (
         <div>
-          <div className="grid grid-cols-[120px_120px_1fr_100px_100px_140px_1fr] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
+          <div className="grid grid-cols-[120px_110px_100px_1fr_95px_95px_140px_1fr] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 font-mono text-[10px] tracking-wider font-semibold text-gray-400 uppercase">
             <span>Serial</span>
             <span>Sold</span>
+            <span>Sold by</span>
             <span>Bought by</span>
             <span className="text-right">Amount</span>
             <span className="text-right">Balance</span>
@@ -239,7 +241,7 @@ function CertList({
               key={`${c.purchaseTicketId}:${c.normalizedSerial || c.serial}`}
               onClick={() => onPick(c.serial)}
               title="Show this certificate's history"
-              className={`w-full text-left grid grid-cols-[120px_120px_1fr_100px_100px_140px_1fr] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
+              className={`w-full text-left grid grid-cols-[120px_110px_100px_1fr_95px_95px_140px_1fr] gap-2 px-4 py-2.5 border-b border-gray-50 last:border-b-0 items-center transition-colors hover:bg-pink-100 ${
                 idx % 2 === 1 ? 'bg-gray-50' : ''
               }`}
             >
@@ -248,6 +250,9 @@ function CertList({
                   over, so don't present it as a purchase date or buyer. */}
               <span className="font-mono text-xs text-gray-700">
                 {c.importedFromSalonBiz ? 'SalonBiz' : formatDate(c.purchaseDate)}
+              </span>
+              <span className="font-mono text-xs font-semibold text-gray-800 truncate" title={c.soldByName ?? ''}>
+                {c.importedFromSalonBiz ? '—' : (c.soldByName || '—')}
               </span>
               <span className="font-mono text-sm text-gray-800 truncate" title={c.purchaseClientName}>
                 {c.importedFromSalonBiz ? '—' : c.purchaseClientName}
@@ -342,7 +347,9 @@ function CertHistoryPanel({
         // "SalonBiz" there instead of a date (Tony, 2026-11-23).
         date: l.importedFromSalonBiz ? null : l.date,
         sort: `${l.date ?? ''}-0`,
-        what: l.importedFromSalonBiz ? 'SalonBiz card — balance carried over' : 'Sold',
+        what: l.importedFromSalonBiz
+          ? 'SalonBiz card — balance carried over'
+          : <span>Sold{l.soldByName && <> by <span className="font-bold">{l.soldByName}</span></>}</span>,
         ticket: l.importedFromSalonBiz ? '—' : (l.ticketNumber != null ? `#${l.ticketNumber}` : '—'),
         client: l.importedFromSalonBiz ? '—' : (l.clientName || 'Walk-in'),
         amount: <span className="text-emerald-600">+{formatMoneyCents(l.amountCents)}</span>,

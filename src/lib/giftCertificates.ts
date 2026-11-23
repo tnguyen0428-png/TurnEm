@@ -26,6 +26,8 @@ export interface GiftCertificate {
   purchaseTicketId: string;
   purchaseTicketNumber: number;
   purchaseClientName: string;
+  /** Receptionist who sold it — GiftCardSaleModal stores them on staff1. */
+  soldByName: string | null;
   valueCents: number;
 
   // Redemption — null until the cert is used
@@ -50,6 +52,7 @@ interface DbSaleRow {
   id: string;
   name: string;
   ext_price_cents: number;
+  staff1_name: string | null;
   ticket_id: string;
   tickets: {
     id: string;
@@ -113,7 +116,7 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
     for (let offset = 0; ; offset += PAGE) {
       const { data, error } = await supabase
         .from('ticket_items')
-        .select('id, name, ext_price_cents, ticket_id, tickets(id, ticket_number, business_date, client_name, opened_at, status)')
+        .select('id, name, ext_price_cents, staff1_name, ticket_id, tickets(id, ticket_number, business_date, client_name, opened_at, status)')
         .eq('kind', 'gift_card_sale')
         .range(offset, offset + PAGE - 1);
       if (error) {
@@ -189,6 +192,7 @@ export async function fetchGiftCertificates(): Promise<GiftCertificate[]> {
       purchaseTicketId: ticket.id,
       purchaseTicketNumber: ticket.ticket_number,
       purchaseClientName: ticket.client_name || 'Walk-in',
+      soldByName: (s.staff1_name ?? '').trim() || null,
       valueCents: s.ext_price_cents,
       redeemedAtMs: redemption ? new Date(redemption.captured_at).getTime() : null,
       redeemedDate: redemption?.tickets?.business_date ?? null,
@@ -297,6 +301,7 @@ export interface GiftCertHistoryLoad {
   ticketNumber: number | null;
   ticketStatus: string | null;    // 'closed' | 'open' | 'voided'
   clientName: string | null;
+  soldByName: string | null;
   amountCents: number;
   importedFromSalonBiz: boolean;
 }
@@ -335,7 +340,7 @@ export async function fetchGiftCertHistory(rawSerial: string): Promise<GiftCertH
   const [salesRes, paysRes] = await Promise.all([
     supabase
       .from('ticket_items')
-      .select('name, ext_price_cents, tickets(status, business_date, client_name, ticket_number)')
+      .select('name, ext_price_cents, staff1_name, tickets(status, business_date, client_name, ticket_number)')
       .eq('kind', 'gift_card_sale')
       .or(`name.ilike.%#${norm},name.ilike.%#${padded}`),
     supabase
@@ -352,13 +357,14 @@ export async function fetchGiftCertHistory(rawSerial: string): Promise<GiftCertH
   const loads: GiftCertHistoryLoad[] = (salesRes.data ?? [])
     .filter((r) => serialFromLineName((r as { name?: string }).name ?? '').norm === norm)
     .map((r) => {
-      const row = r as { ext_price_cents: number | string; tickets?: Tk | Tk[] | null };
+      const row = r as { ext_price_cents: number | string; staff1_name?: string | null; tickets?: Tk | Tk[] | null };
       const tk = one(row.tickets);
       return {
         date: tk?.business_date ?? null,
         ticketNumber: tk?.ticket_number ?? null,
         ticketStatus: tk?.status ?? null,
         clientName: tk?.client_name ?? null,
+        soldByName: (row.staff1_name ?? '').trim() || null,
         amountCents: Number(row.ext_price_cents || 0),
         importedFromSalonBiz: (tk?.client_name ?? '') === SALONBIZ_IMPORT_CLIENT,
       };
