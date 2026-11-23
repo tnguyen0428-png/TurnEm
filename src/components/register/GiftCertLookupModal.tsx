@@ -39,7 +39,7 @@ export default function GiftCertLookupModal({ onClose }: { onClose: () => void }
   }
 
   return (
-    <Modal title="GIFT CERTIFICATE LOOKUP" onClose={onClose} width="max-w-3xl">
+    <Modal title="GIFT CERTIFICATE LOOKUP" onClose={onClose} width="max-w-6xl">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -47,8 +47,8 @@ export default function GiftCertLookupModal({ onClose }: { onClose: () => void }
         }}
         className="flex items-center gap-2 mb-4"
       >
-        <label className="flex-1 flex items-center gap-2 bg-white border border-gray-300 rounded-lg px-3 h-12 focus-within:border-gray-500">
-          <Search size={18} className="text-gray-400" />
+        <label className="flex-1 flex items-center gap-3 bg-white border border-gray-300 rounded-lg px-4 h-16 focus-within:border-gray-500">
+          <Search size={24} className="text-gray-400" />
           <input
             ref={inputRef}
             type="text"
@@ -56,13 +56,13 @@ export default function GiftCertLookupModal({ onClose }: { onClose: () => void }
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Gift certificate #"
-            className="flex-1 font-mono text-lg bg-transparent focus:outline-none"
+            className="flex-1 font-mono text-2xl bg-transparent focus:outline-none"
           />
         </label>
         <button
           type="submit"
           disabled={!normalizeSerial(input) || loading}
-          className="h-12 px-5 rounded-lg bg-gray-900 text-white hover:bg-gray-800 font-mono text-sm font-bold tracking-wider disabled:opacity-40"
+          className="h-16 px-7 rounded-lg bg-gray-900 text-white hover:bg-gray-800 font-mono text-lg font-bold tracking-wider disabled:opacity-40"
         >
           LOOK UP
         </button>
@@ -75,9 +75,10 @@ export default function GiftCertLookupModal({ onClose }: { onClose: () => void }
           loading={loading}
           nearMisses={[]}
           onPick={() => {}}
+          large
         />
       ) : (
-        <p className="font-mono text-xs text-gray-400">
+        <p className="font-mono text-lg text-gray-400">
           Enter one certificate number to see when it was sold, every time it was used, and what's left.
         </p>
       )}
