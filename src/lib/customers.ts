@@ -317,10 +317,18 @@ export async function upsertCustomerFromIntake(input: {
     //   4. nothing → new profile
     let existing: Customer | null = null;
     if (phoneNorm) {
+      // Look the phone up IN THE DATABASE. This used to fetch the first 200
+      // customers that had any phone and search those in JS — with 3,000+
+      // profiles the real match was almost never in that slice, so every
+      // visit created a fresh profile (Debbie Duran ×16, Grace Souza ×7;
+      // 94 such copies merged away 2026-11-23). Phones are stored dashed
+      // (559-285-6653); match that and a bare-digits form for safety.
+      const dashed = formatPhoneDashed(input.phone ?? '');
+      const forms = Array.from(new Set([dashed, phoneNorm].filter(Boolean)));
       const { data } = await supabase
         .from('customers')
         .select('*')
-        .neq('phone', '')
+        .in('phone', forms)
         .limit(200);
       const rows = (data ?? []) as DbCustomer[];
       const samePhone = rows.filter((r) => normalizePhone(r.phone) === phoneNorm);
