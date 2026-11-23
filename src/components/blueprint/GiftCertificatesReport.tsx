@@ -350,7 +350,7 @@ function Kpi({
       )}
       <div className={`flex justify-between items-baseline gap-2 ${sb != null ? 'mt-1.5 pt-1.5 border-t border-gray-100' : 'mt-1'}`}>
         {sb != null && <span className="font-mono text-sm font-bold text-gray-400 uppercase tracking-wider">Total</span>}
-        <span className={`font-mono text-4xl font-bold ${accent === 'emerald' ? 'text-emerald-600' : 'text-gray-900'}`}>
+        <span className={`font-mono text-2xl font-bold ${accent === 'emerald' ? 'text-emerald-600' : 'text-gray-900'}`}>
           {loading ? '…' : value}
         </span>
       </div>
