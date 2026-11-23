@@ -832,6 +832,10 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'ADD_CLIENT': {
+      // One queue entry per id. A check-in now reuses the visit id when a
+      // client comes back from the appointment book, so a double-tap on
+      // check-in would otherwise put the same id on the board twice.
+      if (state.queue.some((q) => q.id === action.client.id)) return state;
       const nextQueue = [...state.queue, action.client];
       // When a cashier adds a service line to an OPEN ticket and assigns a
       // tech, TicketModal.ensureManicuristBusyForAddedLine creates an

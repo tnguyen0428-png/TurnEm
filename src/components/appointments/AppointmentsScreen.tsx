@@ -14,6 +14,7 @@ import AppointmentBookView from './AppointmentBookView';
 import { SERVICE_TURN_VALUES } from '../../constants/services';
 import { getTodayLA, formatTimeOfDay, getNowMinutesLA } from '../../utils/time';
 import { getPermanentNoteByPhone, appointmentStaffIds } from '../../lib/customers';
+import { resolveCheckInVisitId, visitIdForCheckIn } from '../../lib/tickets';
 import type { Appointment, QueueEntry, ServiceType } from '../../types';
 
 const STATUS_CONFIG: Record<Appointment['status'], { label: string; variant: 'green' | 'blue' | 'amber' | 'pink' | 'red' | 'gray' }> = {
@@ -187,8 +188,15 @@ export default function AppointmentsScreen() {
         const hasReq = serviceRequests.some((r) => r.service === svc && r.clientRequest === true && r.manicuristIds.length > 0);
         return sum + (hasReq && base > 0 ? (s?.category === 'Combo' ? 1 : 0.5) : base);
       }, 0);
+      // Same visit id rule as AppointmentBookView.addApptToQueue: a booking
+      // checked in again keeps its visit, so it keeps its ticket.
+      const candidateVisitId = visitIdForCheckIn(
+        appt.id,
+        new Set(state.queue.map((q) => q.id)),
+        new Set(state.completed.map((c) => c.id)),
+      );
       const newClient: QueueEntry = {
-        id: crypto.randomUUID(),
+        id: '',
         clientName: appt.clientName || 'Walk-in',
         services, turnValue, serviceRequests,
         requestedManicuristId: firstRequestedId,
@@ -200,7 +208,9 @@ export default function AppointmentsScreen() {
         // assignments stripped above).
         originalAppointment: appt,
       };
-      dispatch({ type: 'ADD_CLIENT', client: newClient });
+      void resolveCheckInVisitId(candidateVisitId).then((id) =>
+        dispatch({ type: 'ADD_CLIENT', client: { ...newClient, id } }),
+      );
     };
     // Hold the check-in until the receptionist has seen the notes on this
     // client — the customer's permanent note AND the note typed on this

@@ -8,7 +8,7 @@ import type { Appointment, Manicurist, QueueEntry, ServiceRequest, ServiceType }
 import DayScheduleOverrideModal from './DayScheduleOverrideModal';
 import { resolveScheduleForDate } from '../../utils/schedule';
 import { getPermanentNoteByPhone } from '../../lib/customers';
-import { fetchTicketLineForEntry, moveOpenTicketLineForEntry, visitIdForCheckIn } from '../../lib/tickets';
+import { fetchTicketLineForEntry, moveOpenTicketLineForEntry, resolveCheckInVisitId, visitIdForCheckIn } from '../../lib/tickets';
 import CustomerNoteAlert from '../shared/CustomerNoteAlert';
 
 const START_HOUR   = 8;
@@ -1239,13 +1239,13 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
       // See visitIdForCheckIn — minting a fresh uuid here is what gave Cherie's
       // visit two identities on 2026-09-10, costing her block (deleted 9x
       // mid-service) and producing a phantom duplicate ticket.
-      const reusableVisitId = visitIdForCheckIn(
+      const candidateVisitId = visitIdForCheckIn(
         appt.id,
         new Set(state.queue.map((q) => q.id)),
         new Set(state.completed.map((c) => c.id)),
       );
-      dispatch({ type: 'ADD_CLIENT', client: {
-        id: reusableVisitId ?? crypto.randomUUID(), clientName: appt.clientName || 'Walk-in',
+      const client = {
+        id: '', clientName: appt.clientName || 'Walk-in',
         services, turnValue, serviceRequests, requestedManicuristId: firstRequestedId,
         isRequested, isAppointment: true, assignedManicuristId: null, status: 'waiting',
         arrivedAt: Date.now(), startedAt: null, completedAt: null, extraTimeMs: 0,
@@ -1256,7 +1256,10 @@ export default function AppointmentBookView({ selectedDate, fitAll = false }: Pr
         // which has parked-column manicuristIds cleared so the queue doesn't see
         // them as requests.
         originalAppointment: appt,
-      } as QueueEntry });
+      } as QueueEntry;
+      void resolveCheckInVisitId(candidateVisitId).then((id) =>
+        dispatch({ type: 'ADD_CLIENT', client: { ...client, id } }),
+      );
     };
     // Hold the check-in until the receptionist has seen the notes on this
     // client (Tony 2026-07-27: notes were getting missed because they only

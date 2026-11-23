@@ -119,14 +119,46 @@ export function visitIdForCheckIn(
   liveQueueIds: ReadonlySet<string>,
   completedIds: ReadonlySet<string>,
 ): string | null {
-  if (!apptId.startsWith('walkin:')) return null;
-  const embedded = apptId.slice('walkin:'.length);
+  // Walk-in blocks carry their visit in their id (`walkin:<visitId>`). A
+  // booked appointment's own uuid IS its visit id: checking it in, sending it
+  // back to the book and checking it in again must land on the same visit,
+  // or the database opens a second ticket for the same client (Haley Seder /
+  // Maddie Samuelian, 2026-11-20: 3 and 2 visit ids for one booking each).
+  let embedded: string;
+  if (apptId.startsWith('walkin:')) embedded = apptId.slice('walkin:'.length);
+  else if (BARE_UUID_RE.test(apptId)) embedded = apptId;
+  else return null;
   if (!embedded) return null;
   if (liveQueueIds.has(embedded) || completedIds.has(embedded)) return null;
   const childPrefix = `${embedded}-`;
   for (const id of liveQueueIds) if (id.startsWith(childPrefix)) return null;
   for (const id of completedIds) if (id.startsWith(childPrefix)) return null;
   return embedded;
+}
+
+const BARE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The id a check-in should use. Reuses the candidate from visitIdForCheckIn
+ * unless that visit already has a PAID or VOIDED ticket: the database never
+ * touches a settled ticket again, so a reused id would leave the new visit's
+ * services with no ticket at all. Any doubt (no candidate, lookup error)
+ * falls back to a fresh id, which is the old behaviour.
+ */
+export async function resolveCheckInVisitId(candidate: string | null): Promise<string> {
+  if (!candidate) return crypto.randomUUID();
+  const { data, error } = await supabase
+    .from('tickets')
+    .select('id')
+    .eq('queue_entry_id', candidate)
+    .in('status', ['closed', 'voided'])
+    .limit(1);
+  if (error) {
+    console.warn('[tickets] resolveCheckInVisitId:', error.message);
+    return crypto.randomUUID();
+  }
+  return (data ?? []).length > 0 ? crypto.randomUUID() : candidate;
 }
 
 // ── DB ↔ TS mappers ──────────────────────────────────────────────────────────
