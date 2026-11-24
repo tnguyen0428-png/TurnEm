@@ -1791,6 +1791,34 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       }
       if (!clientId) return state;
       const client = state.queue.find((c) => c.id === clientId);
+
+      // ── Never complete a client nobody is working on ──
+      // A WAITING entry with no assigned tech is back on the waiting list —
+      // typically because CANCEL just took it off this tech. A card that still
+      // points at it is stale (another device's CANCEL had not reached this
+      // screen yet), and pressing DONE on it used to complete the waiting
+      // client under this tech: zero-minute service, turn credited, and the
+      // ticket-on-completion trigger then minted a receipt line in this tech's
+      // name for work they never did. Ramona, 2026-11-23: JOE was cancelled off
+      // her Gel Builder Manicure at 12:22:26 on the queue PC, her card was
+      // edited to Gel Fill, and DONE on a second PC's stale JOE card at
+      // 12:24:03 completed her Gel Fill as JOE's — a service he does not offer.
+      // Free the stale card and leave the client waiting for a real tech.
+      if (client && client.status === 'waiting' && !client.assignedManicuristId) {
+        console.warn(
+          `[reducer] COMPLETE_SERVICE refused: ${client.id} (${client.clientName}) is waiting ` +
+          `with no tech assigned — freeing ${manicurist.name}'s stale card instead of crediting it.`,
+        );
+        return {
+          ...state,
+          manicurists: state.manicurists.map((m) =>
+            m.id === action.manicuristId && (m.currentClient === clientId || m.currentClient === null)
+              ? { ...m, status: 'available' as const, currentClient: null }
+              : m,
+          ),
+        };
+      }
+
       const now = Date.now();
       const clientHadWax = client ? clientHasAnyWaxService(client.services, state.salonServices) : false;
       // Only clear the manicurist's card if it's still pointing at THIS entry
