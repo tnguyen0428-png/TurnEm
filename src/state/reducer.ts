@@ -2542,6 +2542,20 @@ function coreAppReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    // Days another device saved after this one loaded. Only ADDS dates this
+    // device does not have yet — a day already in memory is left alone so a
+    // refresh can never overwrite local edits to it.
+    case 'REMOTE_DAILY_HISTORY_ADD': {
+      const have = new Set(state.dailyHistory.map((d) => d.date));
+      const fresh = action.entries.filter((d) => !have.has(d.date));
+      // Always return a NEW state object, even with nothing fresh: the caller
+      // set isApplyingRemoteRef, and only a re-render consumes that flag. A
+      // bare `return state` would leave it set and silently skip the next
+      // LOCAL change's DB sync.
+      if (fresh.length === 0) return { ...state };
+      return { ...state, dailyHistory: [...state.dailyHistory, ...fresh] };
+    }
+
     // --- Remote-sync handlers ---
     // Each replaces-or-inserts by id. Idempotent: if the row hasn't materially changed,
     // the merge still produces a fresh state reference, but the AppContext sync effect

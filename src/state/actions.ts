@@ -81,6 +81,7 @@ export type AppAction =
   | { type: 'TOGGLE_WAX2'; id: string }
   | { type: 'TOGGLE_WAX3'; id: string }
   | { type: 'SAVE_DAILY_HISTORY'; entry: DailyHistory }
+  | { type: 'REMOTE_DAILY_HISTORY_ADD'; entries: DailyHistory[] }
   | { type: 'DAILY_RESET' }
   // --- Remote-sync actions ---
   // Dispatched by the realtime subscription when another device writes to the DB.

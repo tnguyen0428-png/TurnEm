@@ -22,6 +22,9 @@ interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
   saveTodayHistory: (dateOverride?: string) => Promise<boolean>;
+  // Pull in history days saved by other devices (or the 11:59 PM archive)
+  // since this page loaded. Read-only: never writes back.
+  refreshDailyHistory: () => Promise<void>;
   archiveTodayIfNeeded: (skipHourCheck?: boolean) => Promise<void>;
   syncError: string | null;
   clearSyncError: () => void;
@@ -1546,6 +1549,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Intentionally empty â reads completedRef/dailyHistoryRef, never stale state
 
+  // daily_history is loaded once at startup and has no realtime channel, so a
+  // screen left open overnight never learned that the 11:59 PM archive saved
+  // the day — the History calendar showed it greyed out (Monday 2026-11-23).
+  // Fetch just the dates first, then the full rows only for dates we lack.
+  const refreshDailyHistory = useCallback(async (): Promise<void> => {
+    const { data: dateRows, error: datesErr } = await supabase
+      .from('daily_history')
+      .select('date');
+    if (datesErr) {
+      console.error('[refreshDailyHistory] date list error:', datesErr);
+      return;
+    }
+    const have = new Set(dailyHistoryRef.current.map((d) => d.date));
+    const missing = (dateRows || [])
+      .map((r: { date: string }) => r.date)
+      .filter((d) => !have.has(d));
+    if (missing.length === 0) return;
+    const { data: rows, error: rowsErr } = await supabase
+      .from('daily_history')
+      .select('id, date, entries')
+      .in('date', missing);
+    if (rowsErr) {
+      console.error('[refreshDailyHistory] fetch error:', rowsErr);
+      return;
+    }
+    const entries: DailyHistory[] = (rows || []).map((row: Record<string, unknown>) => ({
+      id: row.id as string,
+      date: row.date as string,
+      entries: (row.entries as CompletedEntry[]) || [],
+    }));
+    if (entries.length === 0) return;
+    // Came from the DB: mark it remote so the sync effect does not write it
+    // straight back (same rule as the realtime handlers).
+    isApplyingRemoteRef.current = true;
+    dispatch({ type: 'REMOTE_DAILY_HISTORY_ADD', entries });
+  }, []);
+
   const archiveTodayIfNeeded = useCallback(async (skipHourCheck = false) => {
     const now = new Date();
     const laHour = Number(
@@ -2329,8 +2369,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [dispatch, setSyncErrorTracked]);
 
   const ctxValue = useMemo(
-    () => ({ state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom, renameServiceCategory }),
-    [state, dispatch, saveTodayHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom, renameServiceCategory],
+    () => ({ state, dispatch, saveTodayHistory, refreshDailyHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom, renameServiceCategory }),
+    [state, dispatch, saveTodayHistory, refreshDailyHistory, archiveTodayIfNeeded, syncError, clearSyncError, saveStatus, setPriority, ensureAppointmentsFrom, renameServiceCategory],
   );
 
   return (

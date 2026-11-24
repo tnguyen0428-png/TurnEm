@@ -140,12 +140,17 @@ function formatDateDisplay(dateStr: string): string {
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export default function HistoryScreen() {
-  const { state, dispatch, saveTodayHistory } = useApp();
+  const { state, dispatch, saveTodayHistory, refreshDailyHistory } = useApp();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showClearPin, setShowClearPin] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
+  // Opening History or BROWSE DAYS picks up days saved elsewhere since this
+  // page loaded, so a day archived overnight is never greyed out.
+  useEffect(() => {
+    void refreshDailyHistory();
+  }, [showCalendar, refreshDailyHistory]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   // Browsing a PAST day is gated behind the master PIN (Tony 2026-08-31).
   // Today's history stays open to everyone — that is the working view the
