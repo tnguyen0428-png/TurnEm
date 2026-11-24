@@ -1029,10 +1029,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Also clean daily_history entries with the same bad pattern
+    // Also clean daily_history entries with the same bad pattern.
+    //
+    // Same is_requested gate as the live-board cleanup above. It was added
+    // there on 2026-08-14 but never here, so every app start on any device
+    // stripped the R list off every GENUINE multi-service request in the last
+    // 90 days of History and wrote that back: 57 entries over 24 days
+    // (10/24-11/23), e.g. Shannon Shebelut / Crystal Bright / Mariana
+    // Eskandar on 11/23, all booked clientRequest: true. A flagged entry is a
+    // real request; only an unflagged all-requested list is the bad pattern.
     const cleanedHistory = dailyHistory.map((day) => ({
       ...day,
       entries: day.entries.map((e) => {
+        if (e.isRequested) return e;
         const rawReq = Array.isArray(e.requestedServices) ? (e.requestedServices as string[]) : [];
         if (rawReq.length === 0 || e.services.length <= 1) return e;
         const reqSet2 = new Set(rawReq);
