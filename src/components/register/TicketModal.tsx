@@ -1561,13 +1561,97 @@ export default function TicketModal({
       // The other cleanup for a removed line (its completed_services row) runs
       // earlier in doSave and writes straight to the DB; this is the booking
       // half, which nothing did.
+      //
+      // Two rules keep this from taking the WRONG slot (Karen Boone, ticket
+      // #11, 2026-11-24: three Gel Pedicures, two saves in a minute, and MIA —
+      // mid-pedicure — fell off the book while an unbacked slot stayed):
+      //
+      //  1. Delete-then-re-add nets out. A line removed and an equivalent one
+      //     (same service, same tech) added back in the same save is a cashier
+      //     tidying a line, not a service leaving the visit. The booking is
+      //     left alone; the added-lines block below stays count-aware, so it
+      //     still adds a slot only if this tech has none.
+      //
+      //  2. Never remove a slot that has work behind it on someone else's
+      //     behalf. The removed line's own tech loses their slot only when
+      //     they hold more slots for this service than lines still on the
+      //     ticket. Otherwise — or when the tech has no slot at all — the
+      //     fallback takes a slot nobody is working (live queue card,
+      //     non-voided completed row, or a line still on the ticket). If every
+      //     slot is backed, NOTHING is removed: a leftover slot is visible and
+      //     one click to delete, a wrongly removed one vanishes silently.
+      const netNewLines = new Map<string, number>();
+      const lineKey = (name: string, staffId: string | null | undefined) => `${name}|${staffId ?? ''}`;
+      for (const l of lines) {
+        if (l.kind !== 'service' || l.existingId) continue;
+        const name = (l.name ?? '').trim();
+        if (!name) continue;
+        const k = lineKey(name, l.staff1Id);
+        netNewLines.set(k, (netNewLines.get(k) ?? 0) + 1);
+      }
       for (const rem of removedServiceLines) {
         const service = (rem.service ?? '').trim();
         if (!service) continue;
+
+        // Rule 1: one re-added equivalent line cancels one removal.
+        const k = lineKey(service, rem.staffId);
+        const readded = netNewLines.get(k) ?? 0;
+        if (readded > 0) {
+          netNewLines.set(k, readded - 1);
+          continue;
+        }
+
         const apptId = resolveApptId({ queueEntryId: rem.queueEntryId, name: service });
         if (!apptId) continue;
         const w = getWork(apptId);
         if (!w) continue;
+
+        // Rule 2: pick the slot.
+        const slotsForService = w.serviceRequests
+          .map((r, i) => ({ r, i }))
+          .filter(({ r }) => r.service === service);
+        let ri = -1;
+        if (slotsForService.length > 0) {
+          const remainingLinesFor = (staffId: string) =>
+            lines.filter(
+              (x) => x.kind === 'service' && (x.name ?? '').trim() === service && x.staff1Id === staffId,
+            ).length;
+          if (rem.staffId) {
+            const own = slotsForService.filter(({ r }) => (r.manicuristIds ?? []).includes(rem.staffId as string));
+            if (own.length > remainingLinesFor(rem.staffId)) ri = own[0].i;
+          }
+          if (ri < 0) {
+            // Who has work behind this service on this booking. The removed
+            // line's own tech is included on purpose: reaching here means
+            // their remaining lines already account for every slot they hold.
+            const backed = new Set<string>();
+            for (const q of state.queue) {
+              if (q.originalAppointment?.id !== apptId || !q.assignedManicuristId) continue;
+              if ((q.services ?? []).includes(service as Svc)) backed.add(q.assignedManicuristId);
+            }
+            for (const c of state.completed) {
+              if (c.originalAppointmentId !== apptId || c.voided || !c.manicuristId) continue;
+              if ((c.services ?? []).includes(service as Svc)) backed.add(c.manicuristId);
+            }
+            for (const x of lines) {
+              if (x.kind === 'service' && (x.name ?? '').trim() === service && x.staff1Id) backed.add(x.staff1Id);
+            }
+            const free = slotsForService.filter(
+              ({ r }) => r.clientRequest !== true && !(r.manicuristIds ?? []).some((id) => backed.has(id)),
+            );
+            // An unstaffed slot first, then any slot nobody is working.
+            const pick = free.find(({ r }) => (r.manicuristIds ?? []).length === 0) ?? free[0];
+            if (pick) ri = pick.i;
+          }
+          if (ri < 0) {
+            console.warn(
+              `[ticket] removed "${service}" line: every "${service}" slot on booking ${apptId} ` +
+              `has work behind it — leaving the booking alone rather than dropping a working tech's slot.`,
+            );
+            continue;
+          }
+        }
+
         const si = w.services.findIndex((sv) => sv === service);
         if (si >= 0) {
           w.services.splice(si, 1);
@@ -1577,14 +1661,6 @@ export default function TicketModal({
           // backed-work guard would otherwise put it straight back.
           w.renamed = true;
         }
-        // Drop the slot that represented it. Matched on staff first so a
-        // multi-tech booking loses the right one; the fallback skips a
-        // customer-requested slot, which must never be the one silently
-        // removed on a name match alone.
-        let ri = w.serviceRequests.findIndex(
-          (r) => r.service === service && (rem.staffId ? (r.manicuristIds ?? []).includes(rem.staffId) : true),
-        );
-        if (ri < 0) ri = w.serviceRequests.findIndex((r) => r.service === service && r.clientRequest !== true);
         if (ri >= 0) {
           w.serviceRequests.splice(ri, 1);
           w.touched = true;
